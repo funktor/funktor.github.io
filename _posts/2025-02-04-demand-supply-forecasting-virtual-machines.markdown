@@ -15,11 +15,20 @@ An optimal pricing algorithm for these spot instances should take into account t
 
 The demand-supply forecasting deals with `700+ different virtual machines` e.g. `standard_d16s_v5`, running across `100+ regions` and running either `linux or windows` OS. Thus, there are approx. 700 * 100 * 2 = `140K` different time series for demand as well as supply or `280K` in total considering both demand and supply together.
 
+Each time series uses last 365 days worth of data i.e. approximately 102M values.
+
 Some lessons learnt and choices made while taking this project to completion are:
 
 1. Using deep learning models from the word go instead of spending time on classical ML techniques such as `ARIMA`, `Gradient Boosting` for forecasting etc.
 
+This is not to say that classical forecasting algorithms and gradient boosting are not good algorithms. But from our experience working with forecasting problems in similar domains, we have found that deep learning models often outperform ARIMA or XGBOOST and also people do not have to spend time on manually creating features such as finding the periodicity using `Fast Fourier Transforms` etc.
+
 2. Modelling all the 280K time series together instead of individually modelling them or creating sub-groups based on VM or region or OS etc.
+
+The advantages of a single model over multiple models are as follows:
+    1. Large number of VM, region and OS pairs have very less data and thus modelling them separately do not make sense.
+    2. Ease of maintenance. It is easier to manage a single model.
+    3. Handling cold start problem. New VMs will not have enough training data.
 
 3. Using distributed `map-reduce` jobs wherever feasible to deal with large datasets and to reduce data processing times. But understanding where map-reduce will be beneficial vs. wherever not.
 
@@ -47,5 +56,7 @@ Some lessons learnt and choices made while taking this project to completion are
 
 15. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
 
-16. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half. 
+16. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
+
+17. Handling cold start problem by not including VM specific features.
     
