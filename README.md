@@ -1,1 +1,0 @@
-# funktor.github.io
