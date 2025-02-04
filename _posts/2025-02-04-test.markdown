@@ -1,7 +1,0 @@
----
-layout: post
-title:  "13 lessons learnt while building a demand-supply forecasting deep learning model"
-date:   2025-02-04 18:50:11 +0530
-categories: jekyll update
----
-Hello !!!
