@@ -4,15 +4,9 @@ title: About
 permalink: /about/
 ---
 
-This is the base Jekyll theme. You can find out more info about customizing your Jekyll theme, as well as basic Jekyll usage documentation at [jekyllrb.com](https://jekyllrb.com/)
+My name is Abhijit Mondal. I am a Machine Learning engineer specializing in Distributed Machine Learning, ML infra, Big Data processing, Forecasting using Deep Learning and Recommender Systems.
 
-You can find the source code for Minima at GitHub:
-[jekyll][jekyll-organization] /
-[minima](https://github.com/jekyll/minima)
+My area of work revolves around optimizing ML production pipelines using efficient infrastructure such as distributed ML, distributed big data processing (Spark, Hive etc.), GPU and CUDA, rewriting CPU intensive workloads in C++ and Rust.
 
-You can find the source code for Jekyll at GitHub:
-[jekyll][jekyll-organization] /
-[jekyll](https://github.com/jekyll/jekyll)
-
-
-[jekyll-organization]: https://github.com/jekyll
+I like writing blogs and I feel that writing is one of the most efficient medium to spread knowledge and information. 
+If you want to connect with me, add me on [LinkedIn](https://www.linkedin.com/in/stokastik/).
