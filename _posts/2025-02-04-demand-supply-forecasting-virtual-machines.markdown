@@ -34,7 +34,7 @@ Running map-reduce over distributed nodes has an additional network overhead due
     1. Driver node has limited memory and cannot run with all data at once.
     2. Driver node has enough memory but CPU time taken is more as compared to solving it in parallel + network overhead.<br/><br/>
 Map-reduce with `Pyspark`:
-````python
+```python
 def mapr(objects):
   def evaluate(object):
     result = do_something(object)
@@ -43,7 +43,7 @@ def mapr(objects):
   rdd = spark.sparkContext.parallelize(objects, len(objects))
   out = rdd.map(evaluate)
   res = out.collect()
-````
+```
 
 6. **Use `static features` corresponding to virtual machines as well other time dependent features apart from demand and supply instead of categorical features to identify virtual machines.**<br/><br/>
 Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using some categorical variables to identify these.<br/><br/>
