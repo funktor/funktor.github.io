@@ -43,13 +43,13 @@ Map-reduce with `Pyspark`:<br/><br/>
          rdd = spark.sparkContext.parallelize(objects, len(objects))
          out = rdd.map(evaluate)
          res = out.collect()
-       ```
+       ```<br/><br/>
 
-6. **Use `static features` corresponding to virtual machines as well other time dependent features apart from demand and supply instead of categorical features to identify virtual machines.**<br/><br/>
-Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using some categorical variables to identify these.<br/><br/>
-The advantage is that if some new (VM, region, OS) tuple is added after the model is built, we can still get predictions for the next 30 days using the last 30 days values for this tuple as well as the static features and the time dependent features.<br/><br/>
+6. **Use `static features` corresponding to virtual machines as well other time dependent features apart from demand and supply.**<br/><br/>
+Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using categorical variables to identify these.<br/><br/>
+The advantage is that if some new (VM, region, OS) tuple is added after the model is built, we can still get predictions for the next 30 days using the last 30 days values for this tuple.<br/><br/>
 If we had used some categorical feature to identify the tuple, we cannot get predictions from the trained model because the model has not seen those features.<br/><br/>
-Some examples of static features are number of CPU cores in a VM, RAM and SSD size, set of hardwares where the VM can run and so on.
+Some examples of static features are number of CPU cores in a VM, RAM and SSD size, set of hardwares where the VM can run and so on.<br/><br/>
 
 8. **Instead of `auto-regressive` model, we chose to use a `multi-horizon` forecast model.**<br/><br/>
 In auto-regressive model, we feed the prediction of day D as input to the network to generate prediction for day D+1 and so on. Thus to predict the demand forecast for day D+29, it would use last 29 days of predicted values and only 1 actual value.<br/><br/>
