@@ -60,18 +60,18 @@ If each prediction has some error, then the errors will accumulate over all the 
 One of the tricky parts during the map-reduce operations is that the task results from each executor node could be well over few 100 GBs. Sending all the data over the network could consume significant network bandwidth and could be very slow.<br/><br/>
 Moreover, the driver node that is collecting all the data from multiple executors will be holding M*100 GB of data where M is the number of executor nodes. This could easily go out-of-memory.<br/><br/>
 One possible way to reduce of the size of the data transferred is to use compression. Some strategies that we felt are useful for compressing the data:<br/><br/>
-    a. If the result is a sparse NumPy matrix, then use scipy.sparse.csr_matrix format instead of numpy.array().<br/><br/>
-    b. If the result are time series values, then encode each time series separately using delta encoding or XOR encoding techniques. [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta is a nice reference on how to do XOR encoding of time series data.<br/><br/>
-    c. If the data is a dense matrix, then one can use histogram based encoding for each floating point columns. Note that these are lossy encoding and are useful only if you are going to use the histogram encoding as features to your model.<br/><br/>
-    d. Another lossy encoding is to do dimensionality reduction using Truncated SVD or PCA. Again this is useful only when the encoded columns are being used as features to the model.
+    a. If the result is a `sparse` NumPy matrix, then use `scipy.sparse.csr_matrix` format instead of numpy.array().<br/><br/>
+    b. If the result are time series values, then encode each time series separately using `delta` encoding or `XOR` encoding techniques. [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta is a nice reference on how to do XOR encoding of time series data.<br/><br/>
+    c. If the data is a dense matrix, then one can use `histogram` based encoding for each floating point columns. Note that these are `lossy encoding` and are useful only if you are going to use the histogram encoding as features to your model.<br/><br/>
+    d. Another lossy encoding is to do dimensionality reduction using `Truncated SVD` or `PCA`. Again this is useful only when the encoded columns are being used as features to the model.
 <br/><br/>
 If all else fails, and you are still getting out-of-memory errors, one possible solution is to persist the resultant objects in a blob storage container and read them back from storage sequentially.
 <br/><br/>
 
 7. **Using `Conv1D` architectures instead of `LSTM` or `RNN` based deep learning models gives almost equivalent or better performances but much higher speed of training and inference.**<br/><br/>
-Convolution operations such as Conv1D are nothing but multiple matrix dot product operations. Such operations can be easily parallelized across different regions of the matrix and each matrix dot product can leverage SIMD or GPU instructions for faster computations. <br/><br/>
+Convolution operations such as Conv1D are nothing but multiple `matrix dot product` operations. Such operations can be easily parallelized across different regions of the matrix and each matrix dot product can leverage `SIMD` or `GPU` instructions for faster computations. <br/><br/>
 On the other hand LSTM and RNN are sequential architectures. They cannot be parallelized.<br/><br/>
-For our problem, Conv1D was at-least 8 times faster than LSTM architecture while giving similar results.<br/><br/>
+For our problem, Conv1D was at-least `8 times faster` than LSTM architecture while giving similar results.<br/><br/>
 
 8. **There are lots of missing data in the time series'. Handling missing data using `exponential averaging` improves the overall model performance.**<br/><br/>
 Simple averaging of past N days values gives equal weightage to all the past N days but in a time series, usually the recent values are better predictor than the older values.<br/><br/>
@@ -90,9 +90,9 @@ Thus, we chose to use an exponentially weighted average, where the value for day
 <br/><br/>
 
 9. **Encoding of `categorical` and `numerical` features efficiently so as not to explode the size of the matrices in memory as well as not sacrifice on performance.**<br/><br/>
-Neural networks requires all input data to be numerical. Thus any categorical features such as region, OS etc. needs to be converted into numerical features. One such strategy is using one-hot encoding. But with 700+ products, the size of a one-hot encoded vector would be 700+ with lots of zeros.<br/><br/>
-We did Truncated SVD on the sparse matrix to reduce dimensionality.<br/><br/>
-For numerical features (floats etc.) we had used binning strategy to encode the features. The number of bins to use can be chosen by hyperparameter tuning.<br/><br/>
+Neural networks requires all input data to be numerical. Thus any categorical features such as region, OS etc. needs to be converted into numerical features. One strategy is using `one-hot encoding`. But with 700+ products, the size of a one-hot encoded vector would be 700+ with lots of zeros.<br/><br/>
+We did `Truncated SVD` on the sparse matrix to reduce dimensionality.<br/><br/>
+For numerical features (floats etc.) we had used `binning` strategy to encode the features. The number of bins to use can be chosen by hyperparameter tuning.<br/><br/>
 We had used the starting boundary value of each bin as encoded feature values.<br/><br/>
 
 10. **Explicit `garbage collections` of large in-memory objects while working with notebooks, helps iterate faster with less resources.**<br/><br/>
@@ -101,9 +101,9 @@ One strategy is to do explicit garbage collection of large objects in memory.<br
 Another startegy is to persist large objects in the blob storage and read then back in another session or another job.<br/><br/>
 
 11. **Demand and supply data do not follow a normal distribution but the data is highly skewed with a long tail resembling a `Gamma` or a `Negative Binomial Distribution`. Thus, care must be taken while defining the loss function.**<br/><br/>
-Usual loss functions used in regression and time series forecasting are mean squared errors or mean absolute errors. But with skewed data, MSE or MAE may not be the best choice. Remember that the loss function is derived from the maximum likelihood principle of the distribution of the target variable. Usually we take the negative log likelihood.<br/><br/>
+Usual loss functions used in regression and time series forecasting are mean squared errors or mean absolute errors. But with skewed data, MSE or MAE may not be the best choice. Remember that the loss function is derived from the `maximum likelihood principle` of the distribution of the target variable. Usually we take the `negative log likelihood`.<br/><br/>
 MSE or MAE works best when we assume that the target variable follows a normal distribution.<br/><br/>
-In our case, our distribution for demand and supply follows a distrubtion similar to a Gamma or a Negative Binomial distribution.<br/><br/>
+In our case, our distribution for demand and supply follows a distrubtion similar to a `Gamma` or a `Negative Binomial` distribution.<br/><br/>
 In Tensorflow, we can define custom loss for a gamma distribution as follows:<br/><br/>
     ```python
     def gamma_loss():
@@ -145,19 +145,19 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
 <br/><br/>
 
 12. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
-Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles fo the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
-For VM forecasting, we want to make sure that there is always sufficient buffer capacity available in case demand peaks, P90 or P99 forecast values can be useful.<br/><br/>
+Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles for the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
+For VM forecasting, we want to make sure that there is always sufficient buffer capacity available in case demand peaks, `P90 or P99` forecast values can be useful here.<br/><br/>
 
-13. **`Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
-Using MinMaxScaler() to scale the values for demand and supply led to very small values because the actual range was 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
-During backpropagation, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
+13. **`Feature scaling` led to very small floating point numbers for demand and supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
+Using `MinMaxScaler()` to scale the values for demand and supply led to very small values because the actual range was 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
+During `backpropagation`, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
 Better strategy was not to scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
 14. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
 Demand and supply values are usually in terms of number of `virtual cores` of a VM and number of vcores are usually integers. Using int32 (32-bit) data type instead of float64 (64-bit) reduced memory consumption.<br/><br/>
 
-15. **Choosing the offline metrics wisely. Just don't (only) use MAPE.**<br/><br/>
-MSE or MAE for offline evaluation were not meaningful for us, as for large demand and supply values, the error can also be large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
+15. **Choosing the offline metrics wisely. Just don't (only) use `MAPE`.**<br/><br/>
+`MSE` or `MAE` for offline evaluation were not meaningful for us, as for large demand and supply values, the error can also be large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
 This calls for using MAPE (Mean Absolute Percentage Error). Thus instead of absolute difference, we take the percentage change which in the above example is 10% for the former and 50% for the latter.<br/><br/>
 But a MAPE can also be deceiving. For e.g. for an actual value of 1000, a prediction of 2000 and a prediction of 0 will both have the same MAPE but a prediction of 2000 is much more acceptable than 0 which could have happened due to underfitting or overfitting of the model.<br/><br/>
 Another metric could be the `quantile (pinball) loss` if we are using quantile forecasting.<br/><br/>
@@ -182,6 +182,7 @@ def gamma_layer(x):
     k = tf.expand_dims(k, -1)
     m = tf.expand_dims(m, -1)
 
+    # adding small epsilon so that log or lgamma functions do not produce nans in loss function
     k = tf.keras.activations.softplus(m)+1e-3
     m = tf.keras.activations.softplus(m)+1e-3
  
