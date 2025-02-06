@@ -301,7 +301,7 @@ class ProbabilisticModel():
                     'loss':gamma_loss()
                 })
 ```
-
+<br/><br/>
 ## Suggested Readings
 
 1. [DeepAR](https://arxiv.org/pdf/1704.04110)
