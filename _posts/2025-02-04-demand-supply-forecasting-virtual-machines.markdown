@@ -89,18 +89,18 @@ Thus, we chose to use an exponentially weighted average, where the value for day
     ```
 <br/><br/>
 
-15. **Encoding of `categorical` and `numerical` features efficiently so as not to explode the size of the matrices in memory as well as not sacrifice on performance.**<br/><br/>
+14. **Encoding of `categorical` and `numerical` features efficiently so as not to explode the size of the matrices in memory as well as not sacrifice on performance.**<br/><br/>
 Neural networks requires all input data to be numerical. Thus any categorical features such as region, OS etc. needs to be converted into numerical features. One such strategy is using one-hot encoding. But with 700+ products, the size of a one-hot encoded vector would be 700+ with lots of zeros.<br/><br/>
 We did Truncated SVD on the sparse matrix to reduce dimensionality.<br/><br/>
 For numerical features (floats etc.) we had used binning strategy to encode the features. The number of bins to use can be chosen by hyperparameter tuning.<br/><br/>
 We had used the starting boundary value of each bin as encoded feature values.<br/><br/>
 
-17. **Explicit `garbage collections` of large in-memory objects while working with notebooks, helps iterate faster with less resources.**<br/><br/>
+15. **Explicit `garbage collections` of large in-memory objects while working with notebooks, helps iterate faster with less resources.**<br/><br/>
 While working with notebooks, if we do not take care, very quickly the size of the objects held in the memory would cause the notebook to crash with out-of-memory errors.<br/><br/>
 One strategy is to do explicit garbage collection of large objects in memory.<br/><br/>
 Another startegy is to persist large objects in the blob storage and read then back in another session or another job.<br/><br/>
 
-19. **Demand and supply data do not follow a normal distribution but the data is highly skewed with a long tail resembling a `Gamma` or a `Negative Binomial Distribution`. Thus, care must be taken while defining the loss function.**<br/><br/>
+16. **Demand and supply data do not follow a normal distribution but the data is highly skewed with a long tail resembling a `Gamma` or a `Negative Binomial Distribution`. Thus, care must be taken while defining the loss function.**<br/><br/>
 Usual loss functions used in regression and time series forecasting are mean squared errors or mean absolute errors. But with skewed data, MSE or MAE may not be the best choice. Remember that the loss function is derived from the maximum likelihood principle of the distribution of the target variable. Usually we take the negative log likelihood.<br/><br/>
 MSE or MAE works best when we assume that the target variable follows a normal distribution.<br/><br/>
 In our case, our distribution for demand and supply follows a distrubtion similar to a Gamma or a Negative Binomial distribution.<br/><br/>
@@ -145,20 +145,26 @@ In gamma loss, k is the shape parameter > 0 and m is the mean of the gamma distr
 In negative binomial loss, r is the parameter for number of successes and m is the mean of the distribution.
 <br/><br/>
 
-21. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
+17. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
 Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles fo the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
 For VM forecasting, we want to make sure that there is always sufficient buffer capacity available in case demand peaks, P90 or P99 forecast values can be useful.<br/><br/>
 
-22. **`Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
-Using MinMaxScaler() to scale the values for demand and supply led to very small values because the actual range was in 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
+18. **`Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
+Using MinMaxScaler() to scale the values for demand and supply led to very small values because the actual range was 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
 During backpropagation, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
-Better strategy was not to re-scale the demand and supply values as both these time series were of similar scales.<br/><br/>
+Better strategy was not to scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
-23. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
+19. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
+Demand and supply values are usually in terms of number of virtual cores of a VM and number of vcores are usually integers. Using int32 data type instead of float64 reduced memory consumption.<br/><br/>
 
-24. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
-
-25. Handling cold start problem by not including VM specific features.
-
-26. Choosing the offline metrics wisely. Just don't (only) use MAPE.
-    
+20. **Choosing the offline metrics wisely. Just don't (only) use MAPE.**<br/><br/>
+MSE for offline evaluation was not meaningful for us as for very large demand and supply values, the error can also be very large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
+This calls for using MAPE (Mean Absolute Percentage Error). Thus instead of absolute difference, we take the percentage change which in the above example is 10% for the former and 50% for the latter.<br/><br/>
+But a MAPE can also be deceiving. For e.g. for an actual value of 1000, a prediction of 2000 and a prediction of 0 will both have the same MAPE but a prediction of 2000 is much more acceptable than 0 which could have happened due to underfitting or overfitting of the model.<br/><br/>
+Another metric could be the quantile loss if we are using quantile forecasting. 
+    ```python
+    def pinball_metric(quantile, y_true, y_pred):
+       e = y_true - y_pred
+       return np.mean(quantile*np.maximum(e, 0) + (1-quantile)*np.maximum(-e, 0))
+    ```
+A single metric may not be an ideal solution for this problem.
