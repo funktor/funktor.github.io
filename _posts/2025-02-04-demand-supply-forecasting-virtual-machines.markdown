@@ -118,20 +118,47 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
            return tf.reduce_mean(l)
    
        return loss
+
+    def negative_binomial_loss():
+       def loss(y_true, y_pred):
+           r, m = tf.unstack(y_pred, num=2, axis=-1)
+   
+           r = tf.expand_dims(r, -1)
+           m = tf.expand_dims(m, -1)
+   
+           nll = (
+               tf.math.lgamma(r) 
+               + tf.math.lgamma(y_true + 1)
+               - tf.math.lgamma(r + y_true)
+               - r * tf.math.log(r) 
+               + r * tf.math.log(r+m)
+               - y_true * tf.math.log(m) 
+               + y_true * tf.math.log(r+m)
+           )
+   
+           return tf.reduce_mean(nll)       
+       
+       return loss
     ```
+
+In gamma loss, k is the shape parameter > 0 and m is the mean of the gamma distribution.
+In negative binomial loss, r is the parameter for number of successes and m is the mean of the distribution.
 <br/><br/>
 
-21. Different loss functions were tried such as `MAE`, `MAPE`, `Pinball Loss`, `Tweedie Loss` etc.
+21. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
+Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles fo the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
+For VM forecasting, we want to make sure that there is always sufficient buffer capacity available in case demand peaks, P90 or P99 forecast values can be useful.<br/><br/>
 
-22. `Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model. A `negative binomial distribution` was assumed.
+22. **`Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
+Using MinMaxScaler() to scale the values for demand and supply led to very small values because the actual range was in 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
+During backpropagation, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
+Better strategy was not to re-scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
-23. `Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.
+23. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
 
-24. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
+24. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
 
-25. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
+25. Handling cold start problem by not including VM specific features.
 
-26. Handling cold start problem by not including VM specific features.
-
-27. Choosing the offline metrics wisely. Just don't (only) use MAPE.
+26. Choosing the offline metrics wisely. Just don't (only) use MAPE.
     
