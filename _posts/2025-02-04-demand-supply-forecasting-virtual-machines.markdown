@@ -43,7 +43,8 @@ Map-reduce with `Pyspark`:<br/><br/>
          rdd = spark.sparkContext.parallelize(objects, len(objects))
          out = rdd.map(evaluate)
          res = out.collect()
-       ```<br/><br/>
+       ```
+<br/><br/>
 
 6. **Use `static features` corresponding to virtual machines as well other time dependent features apart from demand and supply.**<br/><br/>
 Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using categorical variables to identify these.<br/><br/>
