@@ -33,7 +33,7 @@ The advantages of a single model over multiple models are as follows:<br/><br/>
 Running map-reduce over distributed nodes has an additional network overhead due to multiple I/Os over the network. The problem can be significant if the executor nodes are located very far away from the driver node or some executor nodes is crashing occassionally and the scheduler has to retry the task. This is advantageous when:<br/><br/>
     a. Driver node has limited memory and cannot run with all data at once.<br/><br/>
     b. Driver node has enough memory but CPU time taken is more as compared to solving it in parallel + network overhead.<br/><br/>
-Map-reduce with `Pyspark`:<br/><br/>
+Map-reduce template with `Pyspark`:<br/><br/>
     ```python
     def mapr(objects):
       def evaluate(object):
@@ -46,15 +46,15 @@ Map-reduce with `Pyspark`:<br/><br/>
     ```
 <br/><br/>
 
-4. **Use `static features` corresponding to virtual machines as well other time dependent features apart from demand and supply.**<br/><br/>
+4. **Use `static features` corresponding to virtual machines in addition to other time dependent features.**<br/><br/>
 Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using categorical variables to identify these.<br/><br/>
-The advantage is that if some new (VM, region, OS) tuple is added after the model is built, we can still get predictions for the next 30 days using the last 30 days values for this tuple.<br/><br/>
-If we had used some categorical feature to identify the tuple, we cannot get predictions from the trained model because the model has not seen those features.<br/><br/>
+The advantage is that if some new (VM, region, OS) tuple is added after the model is built, we can still get predictions using the last 30 days data.<br/><br/>
+If we had used categorical feature to identify the tuple, we cannot get predictions from the trained model because the model has not seen those features.<br/><br/>
 Some examples of static features are number of CPU cores in a VM, RAM and SSD size, set of hardwares where the VM can run and so on.<br/><br/>
 
 5. **Instead of `auto-regressive` model, we chose to use a `multi-horizon` forecast model.**<br/><br/>
 In auto-regressive model, we feed the prediction of day D as input to the network to generate prediction for day D+1 and so on. Thus to predict the demand forecast for day D+29, it would use last 29 days of predicted values and only 1 actual value.<br/><br/>
-If each prediction has some error, then the errors will accumulate over all the 29 days. Instead we prefer to use a multi-horizon model where the model predicts the forecasts for days D to D+29 using only the actual values D-30 to D-1.<br/><br/>
+If each prediction has some error, then the errors will accumulate over all the 29 days. Instead we prefer to use a multi-horizon model where the model predicts the forecasts for days D to D+29 in one-shot using only the actual values D-30 to D-1.<br/><br/>
 
 6. **Using efficient data compression and time series `compression algorithms` as well as `sparse data structures` for distributed map-reduce jobs reduces processing times as well as memory usage.**<br/><br/>
 One of the tricky parts during the map-reduce operations is that the task results from each executor node could be well over few 100 GBs. Sending all the data over the network could consume significant network bandwidth and could be very slow.<br/><br/>
@@ -65,7 +65,7 @@ One possible way to reduce of the size of the data transferred is to use compres
     c. If the data is a dense matrix, then one can use `histogram` based encoding for each floating point columns. Note that these are `lossy encoding` and are useful only if you are going to use the histogram encoding as features to your model.<br/><br/>
     d. Another lossy encoding is to do dimensionality reduction using `Truncated SVD` or `PCA`. Again this is useful only when the encoded columns are being used as features to the model.
 <br/><br/>
-If all else fails, and you are still getting out-of-memory errors, one possible solution is to persist the resultant objects in a blob storage container and read them back from storage sequentially.
+If all else fails, and you are still getting out-of-memory errors, one possible solution is to persist the resultant objects in a `blob storage` container and read them back from storage sequentially.
 <br/><br/>
 
 7. **Using `Conv1D` architectures instead of `LSTM` or `RNN` based deep learning models gives almost equivalent or better performances but much higher speed of training and inference.**<br/><br/>
@@ -301,3 +301,11 @@ class ProbabilisticModel():
                     'loss':gamma_loss()
                 })
 ```
+
+## Suggested Readings
+
+1. [DeepAR](https://arxiv.org/pdf/1704.04110)
+2. [Quantile deep learning models for multi-step ahead time series prediction](https://arxiv.org/pdf/2411.15674)
+3. [A Multi-Horizon Quantile Recurrent Forecaster](https://arxiv.org/pdf/1711.11053)
+4. [Improving forecasting by learning quantile functions](https://www.amazon.science/blog/improving-forecasting-by-learning-quantile-functions)
+5. [Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting](https://arxiv.org/abs/1912.09363)
