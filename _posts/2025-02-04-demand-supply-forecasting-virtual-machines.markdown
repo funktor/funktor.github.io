@@ -108,6 +108,7 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
     ```python
     def gamma_loss():
        def loss(y_true, y_pred):
+           # k is the shape parameter > 0 and m is the mean of the gamma distribution
            k, m = tf.unstack(y_pred, num=2, axis=-1)
    
            k = tf.expand_dims(k, -1)
@@ -121,6 +122,7 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
 
     def negative_binomial_loss():
        def loss(y_true, y_pred):
+           # r is the parameter for number of successes and m is the mean of the distribution
            r, m = tf.unstack(y_pred, num=2, axis=-1)
    
            r = tf.expand_dims(r, -1)
@@ -140,9 +142,6 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
        
        return loss
     ```
-
-In gamma loss, k is the shape parameter > 0 and m is the mean of the gamma distribution.
-In negative binomial loss, r is the parameter for number of successes and m is the mean of the distribution.
 <br/><br/>
 
 12. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
@@ -155,23 +154,25 @@ During backpropagation, the feature values are multiplied with the gradient to o
 Better strategy was not to scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
 14. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
-Demand and supply values are usually in terms of number of virtual cores of a VM and number of vcores are usually integers. Using int32 data type instead of float64 reduced memory consumption.<br/><br/>
+Demand and supply values are usually in terms of number of `virtual cores` of a VM and number of vcores are usually integers. Using int32 (32-bit) data type instead of float64 (64-bit) reduced memory consumption.<br/><br/>
 
 15. **Choosing the offline metrics wisely. Just don't (only) use MAPE.**<br/><br/>
-MSE for offline evaluation was not meaningful for us as for very large demand and supply values, the error can also be very large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
+MSE or MAE for offline evaluation were not meaningful for us, as for large demand and supply values, the error can also be large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
 This calls for using MAPE (Mean Absolute Percentage Error). Thus instead of absolute difference, we take the percentage change which in the above example is 10% for the former and 50% for the latter.<br/><br/>
 But a MAPE can also be deceiving. For e.g. for an actual value of 1000, a prediction of 2000 and a prediction of 0 will both have the same MAPE but a prediction of 2000 is much more acceptable than 0 which could have happened due to underfitting or overfitting of the model.<br/><br/>
-Another metric could be the quantile loss if we are using quantile forecasting.<br/><br/>
+Another metric could be the `quantile (pinball) loss` if we are using quantile forecasting.<br/><br/>
 A single metric may not be an ideal solution for this problem.<br/><br/>
 Pinball Metric:<br/><br/>
     ```python
-    def pinball_metric(quantile, y_true, y_pred):
+    def pinball_loss(quantile, y_true, y_pred):
        e = y_true - y_pred
        return np.mean(quantile*np.maximum(e, 0) + (1-quantile)*np.maximum(-e, 0))
     ```
 <br/><br/>
 
 ## Sample Architecture for demand and supply forecasting:
+The input demand-supply time series is a 3D Tensor with a shape of (N, 30, 1) where N is the batch size and 30 is the number of time-steps. Thus, we are inputting 2 time series' and outputting 2 time series'.
+
 ```python
 def gamma_layer(x):
     num_dims = len(x.get_shape())
@@ -213,18 +214,23 @@ class ProbabilisticModel():
         self.batch_size = batch_size
         self.model_path = model_path
 
-    def initialize(self, inp_shape_t_demand, inp_shape_t_supply, inp_shape_s, out_shape):
-        inp_t_dem = Input(shape=inp_shape_t_demand)
-        inp_t_sup = Input(shape=inp_shape_t_supply)
+    def initialize(self, inp_shape_t, inp_shape_s, out_shape):
+
+        # inp_shape_t - shape of the input demand-supply time series
+        # inp_shape_s - shape of the input static features
+        # out_shape   - shape of the output demand-supply time series
+
+        inp_t_dem = Input(shape=inp_shape_t)
+        inp_t_sup = Input(shape=inp_shape_t)
 
         inp_s = Input(shape=inp_shape_s)
 
         x_t = \
             Conv1D(
                 filters=16, 
-                kernel_size=inp_shape_t_demand[0], 
+                kernel_size=inp_shape_t[0], 
                 activation='relu', 
-                input_shape=inp_shape_t_demand
+                input_shape=inp_shape_t
             )
                 
         x_h = Dense(16, activation='relu')
@@ -253,7 +259,14 @@ class ProbabilisticModel():
         )
     
     def fit(self, X_t_dem:np.array, X_t_sup:np.array, X_s:np.array, y_dem:np.array, y_sup:np.array):
-        model_checkpoint_callback = \
+
+         # X_t_dem - input demand time series
+         # X_t_sup - input supply time series
+         # X_s     - input static features
+         # y_dem   - output demand time series
+         # y_sup   - output supply time series
+
+         model_checkpoint_callback = \
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=self.model_path,
                 monitor='loss',
