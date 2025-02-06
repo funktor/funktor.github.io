@@ -59,35 +59,40 @@ If each prediction has some error, then the errors will accumulate over all the 
 10. **Using efficient data compression and time series `compression algorithms` as well as `sparse data structures` for distributed map-reduce jobs reduces processing times as well as memory usage.**<br/><br/>
 One of the tricky parts during the map-reduce operations is that the task results from each executor node could be well over few 100 GBs. Sending all the data over the network could consume significant network bandwidth and could be very slow.<br/><br/>
 Moreover, the driver node that is collecting all the data from multiple executors will be holding M*100 GB of data where M is the number of executor nodes. This could easily go out-of-memory.<br/><br/>
-One possible way to reduce of the size of the data transferred is to use compression. Some strategies that we felt are useful for compressing the data:
-    1. If the result is a sparse NumPy matrix, then use scipy.sparse.csr_matrix format instead of numpy.array().
-    2. If the result are time series values, then encode each time series separately using delta encoding or XOR encoding techniques. [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta is a nice reference on how to do XOR encoding of time series data.
-    3. If the data is a dense matrix, then one can use histogram based encoding for each floating point columns. Note that these are lossy encoding and are useful only if you are going to use the histogram encoding as features to your model.
-    4. Another lossy encoding is to do dimensionality reduction using Truncated SVD or PCA. Again this is useful only when the encoded columns are being used as features to the model. 
+One possible way to reduce of the size of the data transferred is to use compression. Some strategies that we felt are useful for compressing the data:<br/><br/>
+    1. If the result is a sparse NumPy matrix, then use scipy.sparse.csr_matrix format instead of numpy.array().<br/><br/>
+    2. If the result are time series values, then encode each time series separately using delta encoding or XOR encoding techniques. [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta is a nice reference on how to do XOR encoding of time series data.<br/><br/>
+    3. If the data is a dense matrix, then one can use histogram based encoding for each floating point columns. Note that these are lossy encoding and are useful only if you are going to use the histogram encoding as features to your model.<br/><br/>
+    4. Another lossy encoding is to do dimensionality reduction using Truncated SVD or PCA. Again this is useful only when the encoded columns are being used as features to the model.
+<br/><br/>
 
-For e.g. if the data to send is a NumPy matrix, and its a sparse matrix, then use sparse formats such as CSR to reduce the size of the matrix. If its a dense matrix then we can use different floating point compression algorithms.
+12. **Using `Conv1D` architectures instead of `LSTM` or `RNN` based deep learning models gives almost equivalent or better performances but much higher speed of training and inference.**<br/><br/>
+Convolution operations such as Conv1D are nothing but multiple matrix dot product computations. Such operations can be easily parallelized across different regions of the matrix and each matrix dot product can be done leveraging SIMD or GPU instructions for faster computations. <br/><br/>
+On the other hand LSTM and RNN are sequential architectures. They cannot be parallelized.<br/><br/>
+For our problem, Conv1D was at-least 8 times faster than LSTM architecture and giving similar results.<br/><br/>
+For a time series Conv1D is akin to a sliding window technique.<br/><br/>
 
-12. Using `Conv1D` architectures instead of `LSTM` or `RNN` based deep learning models gives almost equivalent or better performances but much higher speed of training and inference.
+13. **There are lots of missing data in the time series'. Handling missing data using `exponential averaging` improves the overall model performance.**<br/><br/>
+Simple averaging of past N days values gives equal weightage to all the past N days but in a time series, usually the recent values are better predictor than the older values.<br/><br/>
+Thus, we chose to use an exponentially weighted average, where the value for day D-H is given a weightage of exp(-H/K). H is the number of days backwards from current day D and K is a constant e.g. 30.<br/><br/>
 
-13. There are lots of missing data in the time series'. Handling missing data using `exponential averaging` improves the overall model performance.
+15. Encoding of `categorical` and `numerical` features efficiently so as not to explode the size of the matrices in memory as well as not sacrifice on performance.
 
-14. Encoding of `categorical` and `numerical` features efficiently so as not to explode the size of the matrices in memory as well as not sacrifice on performance.
+16. Explicit `garbage collections` of large in-memory objects while working with notebooks, helps iterate faster with less resources.
 
-15. Explicit `garbage collections` of large in-memory objects while working with notebooks, helps iterate faster with less resources.
+17. Demand and supply data do not follow a normal distribution but the data is highly skewed with a long tail resembling a `Poisson` or a `Negative Binomial Distribution`. Thus, care must be taken while defining the loss function.
 
-16. Demand and supply data do not follow a normal distribution but the data is highly skewed with a long tail resembling a `Poisson` or a `Negative Binomial Distribution`. Thus, care must be taken while defining the loss function.
+18. Different loss functions were tried such as `MAE`, `MAPE`, `Pinball Loss`, `Tweedie Loss` etc.
 
-17. Different loss functions were tried such as `MAE`, `MAPE`, `Pinball Loss`, `Tweedie Loss` etc.
+19. `Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model. A `negative binomial distribution` was assumed.
 
-18. `Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model. A `negative binomial distribution` was assumed.
+20. `Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.
 
-19. `Feature scaling` led to very small floating point numbers for demand as well as supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.
+21. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
 
-20. Probabilistic forecasting model with a negative binomial distribution was tricky to handle due to `sigmoid` and `softplus` activations for the parameters. Used variable transformation from probability to mean of the distribution and adding epsilon to logarithmic functions so as to avoid nans during training.
+22. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
 
-21. Using `int32` instead of `float64` for demand and supply values reduces memory consumption by half.
+23. Handling cold start problem by not including VM specific features.
 
-22. Handling cold start problem by not including VM specific features.
-
-23. Choosing the offline metrics wisely. Just don't (only) use MAPE.
+24. Choosing the offline metrics wisely. Just don't (only) use MAPE.
     
