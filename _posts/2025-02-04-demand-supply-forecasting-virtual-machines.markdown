@@ -54,12 +54,18 @@ Some examples of static features are number of CPU cores in a VM, RAM and SSD si
 
 8. **Instead of `auto-regressive` model, we chose to use a `multi-horizon` forecast model.**<br/><br/>
 In auto-regressive model, we feed the prediction of day D as input to the network to generate prediction for day D+1 and so on. Thus to predict the demand forecast for day D+29, it would use last 29 days of predicted values and only 1 actual value.<br/><br/>
-If each prediction has some error, then the errors will accumulate over all the 29 days. Instead we prefer to use a multi-horizon model where the model predicts the forecasts for days D to D+29 using only the actual values D-30 to D-1.
+If each prediction has some error, then the errors will accumulate over all the 29 days. Instead we prefer to use a multi-horizon model where the model predicts the forecasts for days D to D+29 using only the actual values D-30 to D-1.<br/><br/>
 
 10. **Using efficient data compression and time series `compression algorithms` as well as `sparse data structures` for distributed map-reduce jobs reduces processing times as well as memory usage.**<br/><br/>
 One of the tricky parts during the map-reduce operations is that the task results from each executor node could be well over few 100 GBs. Sending all the data over the network could consume significant network bandwidth and could be very slow.<br/><br/>
 Moreover, the driver node that is collecting all the data from multiple executors will be holding M*100 GB of data where M is the number of executor nodes. This could easily go out-of-memory.<br/><br/>
-One possible way to reduce of the size of the data transferred is to use compression. For e.g. if the data to send is a NumPy matrix, and its a sparse matrix, then use sparse formats such as CSR to reduce the size of the matrix. If its a dense matrix then we can use different floating point compression algorithms.
+One possible way to reduce of the size of the data transferred is to use compression. Some strategies that we felt are useful for compressing the data:
+    1. If the result is a sparse NumPy matrix, then use scipy.sparse.csr_matrix format instead of numpy.array().
+    2. If the result are time series values, then encode each time series separately using delta encoding or XOR encoding techniques. [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta is a nice reference on how to do XOR encoding of time series data.
+    3. If the data is a dense matrix, then one can use histogram based encoding for each floating point columns. Note that these are lossy encoding and are useful only if you are going to use the histogram encoding as features to your model.
+    4. Another lossy encoding is to do dimensionality reduction using Truncated SVD or PCA. Again this is useful only when the encoded columns are being used as features to the model. 
+
+For e.g. if the data to send is a NumPy matrix, and its a sparse matrix, then use sparse formats such as CSR to reduce the size of the matrix. If its a dense matrix then we can use different floating point compression algorithms.
 
 12. Using `Conv1D` architectures instead of `LSTM` or `RNN` based deep learning models gives almost equivalent or better performances but much higher speed of training and inference.
 
