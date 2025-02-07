@@ -17,11 +17,11 @@ The demand-supply forecasting deals with `700+ different virtual machines` e.g. 
 
 Each time series uses last 365 days worth of data i.e. approximately 102M values.
 
-Some lessons learnt and choices made while taking this project to completion are:
+Some lessons learnt and choices made while taking this project to completion:
 
 1. **Using deep learning models from the word go instead of spending time on classical ML techniques such as `ARIMA`, `Gradient Boosting` for forecasting etc.**<br/><br/>
 This is not to say that classical forecasting algorithms and gradient boosting are not good algorithms. But from our experience working with forecasting problems in similar domains, we have found that deep learning models often outperform ARIMA or XGBOOST and also we save time on manually creating features such as finding the periodicity using `Fast Fourier Transforms` etc.<br/><br/>
-Another reason that we had in mind is that the predictions from our forecasting models are not consumed in real time, thus there is no SLA regarding inference times and thus we took the liberty to improve the accuracy of the forecasts.
+Another reason is that the predictions from our forecasting models are not consumed in real time, and thus we took the liberty to improve the accuracy of the forecasts. Regression models are faster with inference times but performs poorly as compared to deep learning models.
 
 2. **Modelling all the 280K time series together instead of individually modelling them or creating sub-groups based on VM or region or OS etc.**<br/><br/>
 The advantages of a single model over multiple models are as follows:<br/><br/>
@@ -50,11 +50,12 @@ Map-reduce template with `Pyspark`:<br/><br/>
 Static features and other time dependent features apart from the time series values helps to distinguish different time series i.e. different (VM, region, OS) tuples without actually using categorical variables to identify these.<br/><br/>
 The advantage is that if some new (VM, region, OS) tuple is added after the model is built, we can still get predictions using the last 30 days data.<br/><br/>
 If we had used categorical feature to identify the tuple, we cannot get predictions from the trained model because the model has not seen those features.<br/><br/>
-Some examples of static features are number of CPU cores in a VM, RAM and SSD size, set of hardwares where the VM can run and so on.<br/><br/>
+Some examples of generic static features are number of CPU cores in a VM, RAM and SSD sizes, set of hardwares where the VM can run and so on.<br/><br/>
 
 5. **Instead of `auto-regressive` model, we chose to use a `multi-horizon` forecast model.**<br/><br/>
 In auto-regressive model, we feed the prediction of day D as input to the network to generate prediction for day D+1 and so on. Thus to predict the demand forecast for day D+29, it would use last 29 days of predicted values and only 1 actual value.<br/><br/>
 If each prediction has some error, then the errors will accumulate over all the 29 days. Instead we prefer to use a multi-horizon model where the model predicts the forecasts for days D to D+29 in one-shot using only the actual values D-30 to D-1.<br/><br/>
+Multi-horizon models gave better metrics on MAPE and MSE values as compared to auto-regressive models.<br/><br/>
 
 6. **Using efficient data compression and time series `compression algorithms` as well as `sparse data structures` for distributed map-reduce jobs reduces processing times as well as memory usage.**<br/><br/>
 One of the tricky parts during the map-reduce operations is that the task results from each executor node could be well over few 100 GBs. Sending all the data over the network could consume significant network bandwidth and could be very slow.<br/><br/>
