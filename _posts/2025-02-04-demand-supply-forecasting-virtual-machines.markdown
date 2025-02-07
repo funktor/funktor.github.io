@@ -144,6 +144,7 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
        return loss
     ```
 <br/><br/>
+![Supply Data Distribution](/docs/assets/download1.jpg)
 
 12. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
 Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles for the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
