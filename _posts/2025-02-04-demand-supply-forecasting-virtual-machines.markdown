@@ -149,16 +149,19 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
 12. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
 Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles for the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
 For VM forecasting, we want to make sure that there is always sufficient buffer capacity available in case demand peaks, `P90 or P99` forecast values can be useful here.<br/><br/>
+P99 Demand Forecast results for one (VM, Region, OS) pair:<br/><br/>
+![P99 Forecast results](/docs/assets/plot.png)
 
-13. **`Feature scaling` led to very small floating point numbers for demand and supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
+
+14. **`Feature scaling` led to very small floating point numbers for demand and supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
 Using `MinMaxScaler()` to scale the values for demand and supply led to very small values because the actual range was 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
 During `backpropagation`, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
 Better strategy was not to scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
-14. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
+15. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
 Demand and supply values are usually in terms of number of `virtual cores` of a VM and number of vcores are usually integers. Using int32 (32-bit) data type instead of float64 (64-bit) reduced memory consumption.<br/><br/>
 
-15. **Choosing the offline metrics wisely. Just don't (only) use `MAPE`.**<br/><br/>
+16. **Choosing the offline metrics wisely. Just don't (only) use `MAPE`.**<br/><br/>
 `MSE` or `MAE` for offline evaluation were not meaningful for us, as for large demand and supply values, the error can also be large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
 This calls for using MAPE (Mean Absolute Percentage Error). Thus instead of absolute difference, we take the percentage change which in the above example is 10% for the former and 50% for the latter.<br/><br/>
 But a MAPE can also be deceiving. For e.g. for an actual value of 1000, a prediction of 2000 and a prediction of 0 will both have the same MAPE but a prediction of 2000 is much more acceptable than 0 which could have happened due to underfitting or overfitting of the model.<br/><br/>
@@ -304,6 +307,7 @@ class ProbabilisticModel():
                 })
 ```
 <br/><br/>
+
 ## Suggested Readings
 
 1. [DeepAR](https://arxiv.org/pdf/1704.04110)
