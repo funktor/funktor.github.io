@@ -21,7 +21,7 @@ Some lessons learnt and choices made while taking this project to completion:
 
 1. **Using deep learning models from the word go instead of spending time on classical ML techniques such as `ARIMA`, `Gradient Boosting` for forecasting etc.**<br/><br/>
 This is not to say that classical forecasting algorithms and gradient boosting are not good algorithms. But from our experience working with forecasting problems in similar domains, we have found that deep learning models often outperform ARIMA or XGBOOST and also we save time on manually creating features such as finding the periodicity using `Fast Fourier Transforms` etc.<br/><br/>
-Another reason is that the predictions from our forecasting models are not consumed in real time, and thus we took the liberty to improve the accuracy of the forecasts. Regression models are faster with inference times but performs poorly as compared to deep learning models.
+Another reason is that the predictions from our forecasting models are not consumed in real time, and thus we took the liberty to improve the accuracy of the forecasts. Regression models are faster with inference times but performs poorly as compared to deep learning models.<br/><br/>
 
 2. **Modelling all the 280K time series together instead of individually modelling them or creating sub-groups based on VM or region or OS etc.**<br/><br/>
 The advantages of a single model over multiple models are as follows:<br/><br/>
