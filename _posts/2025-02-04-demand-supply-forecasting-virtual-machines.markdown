@@ -17,10 +17,10 @@ The demand-supply forecasting deals with `700+ different virtual machines` e.g. 
 
 Each time series uses last 365 days worth of data i.e. approximately 102M values.
 
-Some lessons learnt and choices made while taking this project to completion:
+Some lessons learnt and choices made while taking this project to completion:<br/><br/>
 
 1. **Using deep learning models from the word go instead of spending time on classical ML techniques such as `ARIMA`, `Gradient Boosting` for forecasting etc.**<br/><br/>
-This is not to say that classical forecasting algorithms and gradient boosting are not good algorithms. But from our experience working with forecasting problems in similar domains, we have found that deep learning models often outperform ARIMA or XGBOOST and also we save time on manually creating features such as finding the periodicity using `Fast Fourier Transforms` etc.<br/><br/>
+That is not to say that classical forecasting algorithms and gradient boosting are not good algorithms. From our experience working with forecasting problems in similar domains, we have found that deep learning models often outperform ARIMA or XGBOOST and also we save time on manually creating features such as finding the periodicity using `Fast Fourier Transforms` etc.<br/><br/>
 Another reason is that the predictions from our forecasting models are not consumed in real time, and thus we took the liberty to improve the accuracy of the forecasts. Regression models are faster with inference times but performs poorly as compared to deep learning models.<br/><br/>
 
 2. **Modelling all the 280K time series together instead of individually modelling them or creating sub-groups based on VM or region or OS etc.**<br/><br/>
@@ -144,6 +144,7 @@ In Tensorflow, we can define custom loss for a gamma distribution as follows:<br
        return loss
     ```
 <br/><br/>
+![Supply Data Distribution](/docs/assets/download1.jpg)
 
 12. **`Probabilistic forecasting` model to handle different quantiles at once instead of a single quantile regression model.**<br/><br/>
 Instead of only predicting the mean of the distribution of the demand and supply as forecasted values, our network also predicts the parameters of the distribution. This has the advantage that we can use the distribution to predict different quantiles for the demand and supply forecast values. For e.g. 90% quantile implies that the predicted values are greater than the true values 90% of the time.<br/><br/>
