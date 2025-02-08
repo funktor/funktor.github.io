@@ -152,16 +152,51 @@ For VM forecasting, we want to make sure that there is always sufficient buffer 
 P99 Demand Forecast results for one (VM, Region, OS) pair:<br/><br/>
 ![P99 Forecast results](/docs/assets/plot.png)
 
+13. **Using `memory mapped files` or `hdf5` to store and read large NumPy arrays.**<br/><br/>
+The size of the entire training matrix was approx. 800GB in size. Working with such large arrays would definitely cause out-of-memory errors on nodes with 64GB RAM. To train a Tensorflow model without loading the entire data in memory, we first shuffle the data and write to disk using memory mapped files.<br/><br/>
+Then using a custom generator function, load the memory mapped file and read and generate the batches for training the model.<br/><br/>
+    ```python
+    import numpy as np
+    shuffled = np.random.shuffle(np.arange(n))
+    
+    fpx = np.memmap("xdata.npy", dtype='float64', mode='w+', shape=(n,t,m))
+    fpx[:,:,:] = X[shuffled,:,:]
+    fpx.flush()
 
-14. **`Feature scaling` led to very small floating point numbers for demand and supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
+    fpy = np.memmap("ydata.npy", dtype='float64', mode='w+', shape=(n,t,m))
+    fpy[:,:,:] = Y[shuffled,:,:]
+    fpy.flush()
+
+    def datagen(n, batch_size):
+       fpx = np.memmap("xdata.npy", dtype='float64', mode='r', shape=(n,t,m))
+       fpy = np.memmap("ydata.npy", dtype='float64', mode='r', shape=(n,t,m))
+    
+       start = 0
+    
+       while True:
+          end = min(n, start+batch_size)
+   
+          x = fpx[start:end,:,:]
+          y = fpy[start:end,:,:]
+
+          start += batch_size
+   
+          if start >= n:
+             start = 0
+   
+          yield x, y
+    ```
+<br/><br/>
+
+15. **`Feature scaling` led to very small floating point numbers for demand and supply leading to `vanishing gradient` problem famously associated with deep neural networks. Care must be taken so as not to scale down features which are already very small.**<br/><br/>
 Using `MinMaxScaler()` to scale the values for demand and supply led to very small values because the actual range was 1 to 1e7, and after scaling, the range shifted to 1e-7 to 1.<br/><br/>
 During `backpropagation`, the feature values are multiplied with the gradient to obtain the updated weights. If both gradient and feature values are very small, then the weight updates are negligible and the network does not train properly.<br/><br/>
 Better strategy was not to scale the demand and supply values as both these time series were of similar scales.<br/><br/>
 
-15. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
+16. **Using `int32` instead of `float64` for demand and supply values reduced memory consumption.**<br/><br/>
 Demand and supply values are usually in terms of number of `virtual cores` of a VM and number of vcores are usually integers. Using int32 (32-bit) data type instead of float64 (64-bit) reduced memory consumption.<br/><br/>
 
-16. **Choosing the offline metrics wisely. Just don't (only) use `MAPE`.**<br/><br/>
+17. **Choosing the offline metrics wisely. Just don't (only) use `MAPE`.**<br/><br/>
 `MSE` or `MAE` for offline evaluation were not meaningful for us, as for large demand and supply values, the error can also be large. For e.g. an error of 1000 on 10000 is better than an error of 10 on 20.<br/><br/>
 This calls for using MAPE (Mean Absolute Percentage Error). Thus instead of absolute difference, we take the percentage change which in the above example is 10% for the former and 50% for the latter.<br/><br/>
 But a MAPE can also be deceiving. For e.g. for an actual value of 1000, a prediction of 2000 and a prediction of 0 will both have the same MAPE but a prediction of 2000 is much more acceptable than 0 which could have happened due to underfitting or overfitting of the model.<br/><br/>
