@@ -153,37 +153,40 @@ P99 Demand Forecast results for one (VM, Region, OS) pair:<br/><br/>
 ![P99 Forecast results](/docs/assets/plot.png)
 
 13. **Using `memory mapped files` or `hdf5` to store and read large NumPy arrays.**<br/><br/>
-The size of the entire training matrix was approx. `800GB` in size. Working with such large arrays would definitely cause out-of-memory errors on nodes with 64GB RAM. To train a Tensorflow model without loading the entire data in memory, we first shuffle the data and write to disk using memory mapped files.<br/><br/>
+The size of the entire training matrix was approx. `800GB` in size. Working with such large arrays would definitely cause out-of-memory errors on nodes with 64GB RAM. To train a Tensorflow model without loading the entire data in memory, we first write the array to disk using memory mapped files. Then read them back with shuffled indices from disk in batches.<br/><br/>
 Shuffling is done so that during training of the model, each batch contains a `good-mix` of different (VM, Region, OS) tuples.
-Then using a custom `generator function`, load the memory mapped file and read and generate the batches for training the model.<br/><br/>
+Reading is done using a custom `generator function`. Load the memory mapped file and read and generate the batches for training the model.<br/><br/>
 But note that memory mapped file works only with local filesystems. In Azure, we mount the blob 
 storage to Spark clusters and thus we can work with blob storage as if it were a local 
 filesystem.<br/><br/>
     ```python
     import numpy as np
-    # shuffle data
-    shuffled = np.random.shuffle(np.arange(n))
-
+    
     # write to file on disk
     fpx = np.memmap("xdata.npy", dtype='float64', mode='w+', shape=(n,t,m))
-    fpx[:,:,:] = X[shuffled,:,:]
+    fpx[:,:,:] = X[:,:,:]
     fpx.flush()
 
     fpy = np.memmap("ydata.npy", dtype='float64', mode='w+', shape=(n,t,m))
-    fpy[:,:,:] = Y[shuffled,:,:]
+    fpy[:,:,:] = Y[:,:,:]
     fpy.flush()
 
     def datagen(batch_size):
        fpx = np.memmap("xdata.npy", dtype='float64', mode='r', shape=(n,t,m))
        fpy = np.memmap("ydata.npy", dtype='float64', mode='r', shape=(n,t,m))
+
+       # shuffle data
+       shuffled = np.random.shuffle(np.arange(n))
+       indices = list(np.arange(n))
     
        start = 0
     
        while True:
           end = min(n, start+batch_size)
+          batch = indices[start:end]
    
-          x = fpx[start:end,:,:]
-          y = fpy[start:end,:,:]
+          x = fpx[batch,:,:]
+          y = fpy[batch,:,:]
 
           start += batch_size
    
