@@ -1,31 +1,35 @@
 ---
 layout: post
-title:  "Experimenting with Time Series Floating Point Compression"
+title:  "Experimenting with time series floating point compression"
 date:   2025-02-12 18:50:11 +0530
 categories: software-engineering
 ---
 
-While working on time series forecasting for [demand and supply of spot virtual machines in Azure](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), intermediate data processing was done in a distributed fashion using Spark. Often the data size in each executor node exceeded 50-100 GB. This caused some issues while doing map-reduce operations.
+While working on time series forecasting for [demand and supply of spot virtual machines in Azure](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), intermediate data processing was done in a distributed fashion using Spark. Often the data size in each executor node exceeded `50-100 GB`. This caused some issues while doing `map-reduce` operations.
 
-1. When the results from each executor node was collected at the driver node, the data size exceeded available RAM and caused the driver nodes to crash.
+1. When the results from each executor node was collected at the driver node, the data size `exceeded available RAM` and caused the driver nodes to crash.
 
-2. Transferring GBs of data over network has throughput implications. Network trasfers of large data often took long time.
+2. Transferring GBs of data over network has `throughput implications`. Network trasfers of large data often took long time.
 
-One hack we did early on to mitigate issue number 1 above was to write the outputs of the executor nodes into blob storage in Azure. Then read back the files from the driver node sequentially and process the data without hogging a lot of memory. Once we mounted the blob storage using NFS, reading and writing became a lot faster.
+One hack we did early on to mitigate issue number 1 above was to write the outputs of the executor nodes into `blob storage` in Azure. Then read back the files from the driver node sequentially and process the data without hogging a lot of memory. Once we mounted the blob storage using `NFS`, reading and writing became a lot faster.
 
-For issue number 2, there was no fast hack but to compress the outputs of each executor node before sending them over the network. Sometimes the data structure was a dataframe with mixed data types, sometimes it was just a NumPy matrix. But most often they were time series data.
+For issue number 2, there was no fast hack but to compress the outputs of each executor node before sending them over the network. Sometimes the data structure was a dataframe with mixed data types, sometimes it was just a `NumPy matrix`. But most often they were time series data.
 
 One very interesting property of time series data is that consecutive values in a time series are often closer to one another. But it does not imply that values that are far-apart are not close to one another. Most contemporary time series compression algorithms take advantage of this fact while coming up with a compression algorithm.
 
-In this post, I will only discuss how to compress time series with floating point numbers instead of generalizing them to integers or timestamp values. While it is easier to compress integer values in a time series using either delta encoding or dictionary encoding, these strategies do not work with floating points because, difference of 2 64-bit floats is still a 64-bit float while a differences between 2 64-bit ints can also be a 8-bit int if the values are close to one another. Or, if there are very few unique integer values one can also use dictionary encoding. On the other hand, floats are "infinite".
+In this post, I will only show how to compress time series with `floating point` numbers instead of generalizing to integers and timestamps. While it is easier to compress integer values in a time series using either [`delta encoding`](https://en.wikipedia.org/wiki/Delta_encoding) or [`dictionary encoding`](https://parquet.apache.org/docs/file-format/data-pages/encodings/), these strategies do not work with floating points because, difference of 2 64-bit floats is still a 64-bit float while a difference between 2 64-bit ints can even be a 8-bit int if the values are close to one another.
 
-Most common floating point compression algorithm assumes the fact that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations. While this might hold true in certain cases but in general this is not true. But anyways, our focus for this post will be on XOR compression.
+Or, if there are very few unique integer values one can also use dictionary encoding. On the other hand, floats are "infinite".
 
-But first lets understand how floating point numbers are represented in binary. We will take the example of 64-bit floats as these was the most commonly used format in our work.
+Common floating point compression algorithm assumes that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations. While this might hold true in certain cases but in general this is not true. 
 
-The 1st bit is the sign bit 0 for +ve and 1 for -ve.
-The next 11 bits represent the exponent.
-The remaining 52 bits are used to represent the number called the significand or mantissa.
+But anyways, our focus for this post will be on `XOR compression`, which works on this assumption.
+
+But first lets understand how floating point numbers are represented in binary. We will take the example of `64-bit floats` as these was the most commonly used format in our work.
+
+The 1st bit is the `sign bit` 0 for +ve and 1 for -ve.
+The next `11 bits` represent the `exponent`.
+The remaining `52 bits` are used to represent the number called the `significand or mantissa`.
 
 For e.g. if **N=316.9845**
 
@@ -58,7 +62,7 @@ Since we have taken 52 relevant bits out of 61 bits, the final representation is
 In Python, we can get the 64 bit representation from a float as follows:<br/>
 ```python
 import bitstring
-def float_2_bin(x):
+def float_to_bin(x):
   f = bitstring.BitArray(float=x, length=64)
   return str(f.bin)
 ```
@@ -100,3 +104,17 @@ def bin_to_float(binary):
     return struct.unpack('d', struct.pack('Q', int(f'0b{binary}', 0)))[0]
 ```
 <br/>
+
+Now let's turn our attention to XOR Compression.
+
+Assuming that in a time series consecutive values are closer to one another and their binary representations are also close (not true in general), then there will be many bits common between consecutive 64 bit representations. Thus, if we take the XOR of consecutive values, then there will be lots of zeros.
+
+```
+T   - 10110111000...110
+T+1 - 10010111110...010
+
+XOR - 00100000110...100
+```
+
+We implemented a simple version of the algorithm outlined in the [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta. But in order to handle the scenario where the binary representations for consecutive values are not similar, we implemented a modified version (specifically [TSXor](https://jermp.github.io/assets/pdf/papers/SPIRE2021.pdf)) that compares the current value with all values within a sliding window of size N.
+
