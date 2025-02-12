@@ -9,7 +9,7 @@ While working on time series forecasting for [demand and supply of spot virtual 
 
 1. When the results from each executor node was collected at the driver node, the data size `exceeded available RAM` and caused the driver nodes to crash.
 
-2. Transferring GBs of data over network has `throughput implications`. Network trasfers of large data often took long time.
+2. Transferring GBs of data over network has `throughput implications`. Network transfers of large data often took long time.
 
 One hack we did early on to mitigate issue number 1 above was to write the outputs of the executor nodes into `blob storage` in Azure. Then read back the files from the driver node sequentially and process the data without hogging a lot of memory. Once we mounted the blob storage using `NFS`, reading and writing became a lot faster.
 
@@ -25,11 +25,11 @@ Common floating point compression algorithm assumes that floats that are closer 
 
 But anyways, our focus for this post will be on `XOR compression`, which works on this assumption.
 
-But first lets understand how floating point numbers are represented in binary. We will take the example of `64-bit floats` as these was the most commonly used format in our work.
+But first lets understand how floating point numbers are represented in binary. We will take the example of `64-bit floats` as this was the most commonly used format in our work.
 
-The 1st bit is the `sign bit` 0 for +ve and 1 for -ve.
+The 1st bit is the `sign bit` - 0 for +ve and 1 for -ve.
 The next `11 bits` represent the `exponent`.
-The remaining `52 bits` are used to represent the number called the `significand or mantissa`.
+The remaining `52 bits` are called the `significand or mantissa`.
 
 For e.g. if **N=316.9845**
 
@@ -105,9 +105,9 @@ def bin_to_float(binary):
 ```
 <br/>
 
-Now let's turn our attention to XOR Compression.
+**Now let's turn our attention to `XOR Compression`.**
 
-Assuming that in a time series consecutive values are closer to one another and their binary representations are also close (not true in general), then there will be many bits common between consecutive 64 bit representations. Thus, if we take the XOR of consecutive values, then there will be lots of zeros.
+Assuming that in a time series consecutive values are closer to one another and their binary representations are also close (not true in general), then there will be many bits common between consecutive 64 bit representations. Thus, if we take the XOR of consecutive values, then there will be `lots of zeros`.
 
 ```
 T   - 10110111000...110
@@ -116,5 +116,124 @@ T+1 - 10010111110...010
 XOR - 00100000110...100
 ```
 
-We implemented a simple version of the algorithm outlined in the [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta. But in order to handle the scenario where the binary representations for consecutive values are not similar, we implemented a modified version (specifically [TSXor](https://jermp.github.io/assets/pdf/papers/SPIRE2021.pdf)) that compares the current value with all values within a sliding window of size N.
+We implemented a simple version of the algorithm outlined in the [Gorilla](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf) paper from Meta. But in order to handle the scenario where the binary representations for consecutive values are not similar, we implemented a modified version (specifically [TSXor](https://jermp.github.io/assets/pdf/papers/SPIRE2021.pdf)) that compares the current value with all values within a `sliding window` of size N.
+
+```python
+import bitstring, struct
+from collections import deque
+import numpy as np
+
+def compress(ser, log_window=4):
+    prev_bins = deque([])
+    results = []
+    
+    for i in range(len(ser)):
+        x = ser[i]
+        b = float_to_bin(x)
+        
+        p, q = -1, -1
+        r, y = '', ''
+        
+        if i == 0:
+            y = b
+            r = b
+            
+            for j in range(len(b)):
+                if b[j] == '1':
+                    p = j
+                    break
+                
+            for j in range(len(b)-1, -1, -1):
+                if b[j] == '1':
+                    q = j
+                    break
+                
+        else:
+            v = 0
+            min_dist = float("Inf")
+            best_p, best_q = -1, -1
+            best_xor = ''
+            best_res = ''
+            
+            for h, pp, pq, px in prev_bins:
+                p, q = -1, -1
+                y = ''
+                for j in range(len(b)):
+                    y += '1' if b[j] != h[j] else '0'
+                
+                for j in range(len(y)):
+                    if y[j] == '1':
+                        p = j
+                        break
+                    
+                for j in range(len(y)-1, -1, -1):
+                    if y[j] == '1':
+                        q = j
+                        break
+                    
+                if p == -1:
+                    r = '0'
+                    d = 1
+                else: 
+                    f = 1
+                    if p >= pp and q <= pq:
+                        is_sub = True
+                        for j in range(p, q+1):
+                            if y[j] != px[j]:
+                                is_sub = False
+                                break
+                        
+                        if is_sub:
+                            f = 0
+                    
+                    k = bin(p)[2:]
+                    k = '0'*(6-len(k)) + k
+                    
+                    g = bin(q)[2:]
+                    g = '0'*(6-len(g)) + g
+                    
+                    z = bin(len(prev_bins)-v-1)[2:]
+                    z = '0'*(log_window-len(z)) + z
+                    
+                    if f == 0:
+                        r = '10' + z + k + g
+                    else:
+                        r = '11' + z + k + g + y[p:q+1]
+                    
+                    d = len(r)
+                    
+                if d < min_dist:
+                    min_dist = d
+                    best_p = p
+                    best_q = q
+                    best_xor = y
+                    best_res = r
+                    
+                v += 1
+                
+            r = best_res
+            p = best_p
+            q = best_q
+            y = best_xor
+                                
+        results += [r]
+        prev_bins.append((b, p, q, y))
+        if len(prev_bins) > (1<<log_window):
+            prev_bins.popleft()
+
+    s = ''.join(results)
+    n = len(s)
+    m = n%8
+    m = 8 if m == 0 else m
+    s += '0'*(8-m)
+    
+    res = []
+    for i in range(0, len(s), 8):
+        g = int(s[i:i+8], 2)
+        res += [g]
+    
+    return np.array(res).astype('uint8'), n
+
+```
+<br/>
 
