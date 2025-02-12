@@ -124,13 +124,18 @@ from collections import deque
 import numpy as np
 
 def compress(ser, log_window=4):
+    # store the sliding window of historical 64-bit representations
     prev_bins = deque([])
     results = []
     
     for i in range(len(ser)):
         x = ser[i]
         b = float_to_bin(x)
-        
+
+        # p - index of 1st '1' from the left
+        # q - index of 1st '1' from the right
+        # q-p+1 - length of the relevant block
+
         p, q = -1, -1
         r, y = '', ''
         
@@ -157,6 +162,8 @@ def compress(ser, log_window=4):
             
             for h, pp, pq, px in prev_bins:
                 p, q = -1, -1
+
+                # y - XOR of b (current) and h (historical)
                 y = ''
                 for j in range(len(b)):
                     y += '1' if b[j] != h[j] else '0'
@@ -172,10 +179,12 @@ def compress(ser, log_window=4):
                         break
                     
                 if p == -1:
+                    # No '1' found in XOR implies b is same as some h
                     r = '0'
                     d = 1
                 else: 
                     f = 1
+                    # Relevant block is a sub-block of some historical value
                     if p >= pp and q <= pq:
                         is_sub = True
                         for j in range(p, q+1):
@@ -185,13 +194,16 @@ def compress(ser, log_window=4):
                         
                         if is_sub:
                             f = 0
-                    
+
+                    # 6 bits to store starting index p (0-63)
                     k = bin(p)[2:]
                     k = '0'*(6-len(k)) + k
-                    
+
+                    # 6 bits to store ending index q (0-63)
                     g = bin(q)[2:]
                     g = '0'*(6-len(g)) + g
-                    
+
+                    # log_window bits to store index of most similar representation
                     z = bin(len(prev_bins)-v-1)[2:]
                     z = '0'*(log_window-len(z)) + z
                     
@@ -221,12 +233,14 @@ def compress(ser, log_window=4):
         if len(prev_bins) > (1<<log_window):
             prev_bins.popleft()
 
+    # pad with 0s to make multiple of 8
     s = ''.join(results)
     n = len(s)
     m = n%8
     m = 8 if m == 0 else m
     s += '0'*(8-m)
-    
+
+    # Convert the bits into bytes
     res = []
     for i in range(0, len(s), 8):
         g = int(s[i:i+8], 2)
@@ -236,4 +250,8 @@ def compress(ser, log_window=4):
 
 ```
 <br/>
+
+The algorithm is as follows:<br/>
+1. For the 1st value, store the 64-bit representation as is.
+2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. The XOR with most number of leading and trailing zeros is kept and the resultant  
 
