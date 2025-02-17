@@ -372,4 +372,6 @@ assert sum(a != b) == 0, "Compression and decompression mismatch !!!"
 
 Depending on how big a sliding window we use, we trade off compression/decompression time and space complexity in favor of better compression ratios. But usually increasing the sliding window to very large values has diminishing returns.
 
+[Compression ratio vs time](/docs/assets/output.png)
+
 
