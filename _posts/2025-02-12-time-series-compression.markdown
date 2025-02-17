@@ -374,4 +374,245 @@ Depending on how big a sliding window we use, we trade off compression/decompres
 
 ![Compression ratio vs time](/docs/assets/output.png)
 
+I ran the above experiments using values sampled from a random normal distribution (100, 0.1) and the compression ratios varied somewhere from 90% to 86% with window sizes ranging from 1 to 10. Increasing window sizes definitely improved the compression ratio but at the cost of high compression times. The compression ratio also improves if the standard deviation for the normal distribution is small implying that when values are more closer to each other, they have more similar binary representations.
 
+Real world datasets can have arbitrary distributions. Some real world values can give very good compression ratios like 50% or 70% etc. But some datasets can give very bad compressions too. One problem with the above compression algorithm is that the average number of bits required to compress a 64-bit binary value can be greater than 64 if the XOR has lots of 1s in it. 
+
+I tried using ML in the hope to find better compression ratios. The idea goes like this:
+1. For compressing the i-th value, build a time series forecasting model using inputs from i-1 to i-N. Use the model to predict the i-th value.<br/><br/>
+The inputs and outputs are the 64-bit binary representations instead of actual values. Thus the inputs and output are 64 dimensional vectors of 1s and 0s.
+2. Instead of taking XOR with all values in a sliding window, take XOR between the actual i-th value and the predicted i-th value. Thus, if the model is really good, the predicted value would be close to the actual value and thus more number of 0s in the XOR.
+3. Similarly, during decompression, using the last N predicted values, predict the i-th value and take an XOR with the decompressed XOR value for the i-th entry.
+
+Python code to create the time-series forecasting data for a deep learning model.
+
+```python
+import numpy as np
+def create_ts(seq, lookback=30, future=1):
+    X, Y = [], []
+    bin_seq = []
+    for i in range(len(seq)):
+        x = seq[i]
+        f = bitstring.BitArray(float=x, length=64)
+        b = str(f.bin)
+        b = [int(z) for z in list(b)]
+        bin_seq += [b]
+    
+    for i in range(len(bin_seq)-lookback-future+1):
+        xi = bin_seq[i:i+lookback]
+        yi = bin_seq[i+lookback:i+lookback+future]
+        X += [xi]
+        Y += [yi]
+    
+    X = np.array(X)
+    Y = np.array(Y)
+    
+    return X, Y
+```
+
+The deep learning model architecture is kept simple using a Conv1D layer and an output layer with 64 units each emiiting a value between 0 and 1 using a sigmoid activation. Thus if the predicted value is <= 0.5, then we consider it as 0 else we consider it as 1.
+
+```python
+class TSModel():
+    def __init__(
+        self, 
+        epochs=200, 
+        batch_size=512, 
+        model_path=None
+    ):
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.model_path = model_path
+
+    def initialize(self, inp_shape, out_shape):
+        inp = Input(shape=inp_shape)
+
+        x_t = \
+            Conv1D(
+                filters=128, 
+                kernel_size=inp_shape[0], 
+                activation='relu', 
+                input_shape=inp_shape
+            )(inp)
+
+        out = Dense(out_shape[1], activation='sigmoid')(x_t)
+                
+        self.model = Model(inp, out)
+        
+        self.model.compile(
+            loss='binary_crossentropy', 
+            optimizer=tf.keras.optimizers.Adam(0.001)
+        )
+    
+    def fit(self, X:np.array, Y:np.array):
+        model_checkpoint_callback = \
+            tf.keras.callbacks.ModelCheckpoint(
+                filepath=self.model_path,
+                monitor='loss',
+                mode='min',
+                save_best_only=True
+            )
+        
+        self.model.fit\
+        (
+            X, Y, 
+            epochs=self.epochs, 
+            batch_size=self.batch_size, 
+            validation_split=None, 
+            verbose=1, 
+            shuffle=True,
+            callbacks=[model_checkpoint_callback]
+        )
+    
+    def predict(self, X:np.array):
+        return self.model.predict(X)
+    
+    def save(self):
+        self.model.save(self.model_path)
+    
+    def load(self):
+        self.model = \
+            load_model(self.model_path)
+```
+
+The corresponding compression and decompression algorithms are:
+
+```python
+import bitstring
+
+def compress_ml(ser, model, X, lookback=30):
+    results = []
+    
+    preds = model.predict(X)
+    predsl = []
+    
+    for pred in preds:
+        pr = pred[0]
+        pr = ['1' if zz > 0.5 else '0' for zz in pr]
+        h = ''.join(pr) 
+        predsl += [h]
+    
+    for i in range(len(ser)):
+        x = ser[i]
+        f = bitstring.BitArray(float=x, length=64)
+        b = str(f.bin)
+        
+        p, q = -1, -1
+        r, y = '', ''
+        
+        if i < lookback:
+            r = b
+        else:
+            p, q = -1, -1
+            h = predsl[i-lookback]
+            y = ''
+            for j in range(len(b)):
+                y += '1' if b[j] != h[j] else '0'
+            
+            for j in range(len(y)):
+                if y[j] == '1':
+                    p = j
+                    break
+                
+            for j in range(len(y)-1, -1, -1):
+                if y[j] == '1':
+                    q = j
+                    break
+            
+            if p == -1:
+                r = '0'
+            else:  
+                k = bin(p)[2:]
+                k = '0'*(6-len(k)) + k
+                
+                g = bin(q)[2:]
+                g = '0'*(6-len(g)) + g
+                
+                r = '1' + k + g + y[p:q+1]
+                                
+        results += [r]
+    
+    s = ''.join(results)
+    n = len(s)
+    m = n%8
+    m = 8 if m == 0 else m
+    s += '0'*(8-m)
+    
+    res = []
+    for i in range(0, len(s), 8):
+        g = int(s[i:i+8], 2)
+        res += [g]
+    
+    return np.array(res).astype('uint8'), n  
+
+
+def decompress_ml(arr, n, X, model, lookback=30):
+    preds = model.predict(X)
+    predsl = []
+    
+    for pred in preds:
+        pr = pred[0]
+        pr = ['1' if zz > 0.5 else '0' for zz in pr]
+        h = ''.join(pr) 
+        predsl += [h]
+        
+    bins = []
+    for i in range(len(arr)):
+        x = arr[i]
+        b = str(bin(x)[2:])
+        b = '0'*(8-len(b)) + b
+        bins += [b]
+    
+    s = ''.join(bins)
+    s = s[:n]
+
+    results = []
+    
+    i = 0
+    k = 0
+    while i < len(s):
+        if len(results) < lookback:
+            results += [s[i:i+64]]
+            i += 64
+            
+        else:
+            v = predsl[k]
+            k += 1
+            
+            if s[i] == '0':
+                results += [v]
+                i += 1
+                
+            else:
+                p = int(s[i+1:i+7], 2)
+                q = int(s[i+7:i+13], 2)
+                y = s[i+13:i+13+q-p+1]
+                u = ['0']*64
+                u[p:q+1] = y
+                
+                f = ''
+                for j in range(len(u)):
+                    f += '1' if u[j] != v[j] else '0'
+                
+                results += [f] 
+                i += 13+q-p+1
+    
+    results = [bin_to_float(x) for x in results]
+    return np.array(results).astype('float64')
+
+X, Y = create_ts(a)
+model = TSModel(epochs=50, batch_size=128, model_path="model.keras")
+model.initialize(X[0].shape, Y[0].shape)
+model.fit(X, Y)
+
+g, n = compress_ml(a, model, X)
+b = decompress_ml(g, n, X, primal, lookback=30)
+```
+
+Using the ML model instead of the TSXor sliding window approach gave improvements on certain datasets as well as some random distributions such as the normal distribution, but it also performed quite poorly in comparison on multiple other datasets. Although, we did not experiment much with the deep learning model based compression approach as we achieved reasonable compression ratio of 72% on our demand and supply forecasting datasets.
+
+An effective model in this case should have the following properties - small size and low bias i.e. overfit the model on the given dataset as much as possible instead of caring about generalizability.
+
+The deep learning model is in principle a good compression approach because during compression we only need to store the compressed values and the weights of the model which comes out to be much smaller than the size of the uncompressed time series.
+
+One more optimization we did to improve the compression ratio was to reduce the precision of the values of the time series. For e.g. using 3 decimal places instead of 12 significantly improves the compression ratio by >5%. In order to keep using more decimal places, we also did multiply the values by 1000 before taking only 3 decimal places so that we are able to incorporate more digits into the number.
