@@ -11,6 +11,8 @@ While working on `time series forecasting` for [demand and supply of spot virtua
 
 2. Transferring GBs of data over network has `throughput implications`. Network transfers of large data often took long time.
 
+![Compress balls](/docs/assets/balls.jpg)
+
 One hack we did early on to mitigate issue number 1 above was to write the outputs of the executor nodes into `blob storage` in Azure. Then read back the files from the driver node sequentially and process the data without hogging a lot of memory. Once we mounted the blob storage using `NFS`, reading and writing became a lot faster.
 
 For issue number 2, there was no fast hack but to compress the outputs of each executor node before sending them over the network. Sometimes the data structure was a dataframe with mixed data types, sometimes it was just a `NumPy matrix`. But most often they were time series data.
