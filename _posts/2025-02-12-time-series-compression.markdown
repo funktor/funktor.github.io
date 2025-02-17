@@ -297,7 +297,7 @@ import numpy as np
 a = np.random.normal(100.0,0.1,10000)
 g, n = compress(a)
 
-print("Compression ratio = ", sys.getsizeof(g)/sys.getsizeof(a))
+print("Compression ratio = ", 1.0 - sys.getsizeof(g)/sys.getsizeof(a))
 ```
 <br/>
 
