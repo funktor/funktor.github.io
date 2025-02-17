@@ -251,8 +251,125 @@ def compress(ser, log_window=4):
 ```
 <br/>
 
-The algorithm is as follows:<br/>
+The compression algorithm is as follows:<br/>
 1. For the 1st value, store the 64-bit representation as is.
-2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. The XOR with most number of leading and trailing zeros is kept and the resultant
-3. 
+2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. 
+3. The sliding window size defined above is 16 i.e. the current 64-bit representation is compared with the previous 16 representations.
+4. For each of the 16 representations in the sliding window, the XOR value between j and i is computed where i - current representation, j - one of the 16 representations in sliding window.
+5. The XOR that gives the best reduction in size is kept. The resultant representation after XOR is either of the following:<br/><br/>
+   a. '0' - if the XOR is 0 for all 64 bits.<br/><br/>
+   b. '10' + 4-bits for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation.<br/><br/>
+   c. '11' + 4-bits for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation + XOR representation between the first index of 1 bit and last index of 1 bit.<br/><br/>
+
+   For e.g. if the current representation at index 25 is:<br/>
+X = 0100000001011110110001111101111100111011001001000101100011010001<br/><br/>
+and the representation at index 19 is:<br/>
+Y = 0100000001011110110001111101111100111011011001000101101000011101<br/><br/>
+Then the XOR is:<br/>
+Z = 0000000000000000000000000000000000000000010000000000001011001100<br/><br/>
+
+   ```
+   Then the first index of 1 bit in Z is 41 and last index is 61.
+   4-bits for the index of Y is binary(25-19-1=5) = 0101
+   6-bits for first index of 1 i.e. 41 = 101001
+   6-bits for last index of  1 i.e. 61 = 111101
+   ```
+
+   The control bits '0', '10' and '11' are prefix-disjoint meaning that neither is a prefix of any other.<br/><br/>
+
+   Since the XOR Z does not have all '0', the representation will be either '10' or '11'. <br/><br/>
+'10' is chosen when the XOR at index 25 is a 'sub-XOR' of the XOR at index 19, i.e. the first and last index of 1 at index 25 lies in-between the first and last index of 1 of the XOR at index 19 and the XOR at index 25 between the first and last index of 1 is equal to the XOR between the first and last index of 1 at index 19.<br/><br/>
+If this is the case then we do not need to explicitly store the XOR value between the first and last index of 1 because once we know the XOR at index 19, we can infer the XOR at 25 given the first and last index of 1 at index 25.<br/><br/>
+Else, we use the option 'c' with control bits '11'.<br/><br/>
+
+7. Concatenate all the compressed binary representations from all values in the time series.
+8. Convert them to 8-bit integer values and return the compressed array.
+
+To compute the compression ratio, we can do with something like:
+```python
+import sys
+import numpy as np
+
+a = np.random.normal(100.0,1.0,10000)
+g, n = compress(a)
+
+print("Compression ratio = ", sys.getsizeof(g)/sys.getsizeof(a))
+```
+
+To decompress the compressed values, I used the following Python function:
+```python
+def decompress(arr, n, log_window=4):
+    # Convert 8-bit integers to binary and concatenate them
+    bins = []
+    for i in range(len(arr)):
+        x = arr[i]
+        b = str(bin(x)[2:])
+        b = '0'*(8-len(b)) + b
+        bins += [b]
+    
+    s = ''.join(bins)
+    s = s[:n]
+
+    results = []
+    prev_xors = []
+    
+    i = 0
+    while i < len(s):
+        if i == 0:
+            # First value is as is (not compressed)
+            results += [s[i:i+64]]
+            prev_xors += [s[i:i+64]]
+            i += 64
+            
+        else:
+            # Parse the binary string to decompress
+            if s[i] == '0':
+                results += [results[-1]]
+                prev_xors += ['0'*64]
+                i += 1
+                
+            else:
+                if s[i:i+2] == '10':
+                    z = int(s[i+2:i+2+log_window], 2)
+                    p = int(s[i+2+log_window:i+8+log_window], 2)
+                    q = int(s[i+8+log_window:i+14+log_window], 2)
+                    y = prev_xors[-(z+1)]
+                    u = ['0']*64
+                    u[p:q+1] = y[p:q+1]
+                    
+                    v = results[-(z+1)]
+                    f = ''
+                    for j in range(len(u)):
+                        f += '1' if u[j] != v[j] else '0'
+                    
+                    results += [f]
+                    prev_xors += [''.join(u)]
+                    i += 14+log_window
+                    
+                else:
+                    z = int(s[i+2:i+2+log_window], 2)
+                    p = int(s[i+2+log_window:i+8+log_window], 2)
+                    q = int(s[i+8+log_window:i+14+log_window], 2)
+                    y = s[i+14+log_window:i+14+log_window+q-p+1]
+                    u = ['0']*64
+                    u[p:q+1] = y
+                    v = results[-(z+1)]
+                    
+                    f = ''
+                    for j in range(len(u)):
+                        f += '1' if u[j] != v[j] else '0'
+                    
+                    results += [f] 
+                    prev_xors += [''.join(u)]
+                    i += 14+log_window+q-p+1
+    
+    results = [bin_to_float(x) for x in results]
+    return np.array(results).astype('float64')
+
+b = decompress(g, n)
+assert sum(a != b) == 0, "Compression and decompression mismatch !!!"
+```
+
+Depending on how big a sliding window we use, we trade off compression/decompression time and space complexity in favor of better compression ratios. But usually increasing the sliding window to very large values has diminishing returns.
+
 
