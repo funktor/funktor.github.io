@@ -5,7 +5,7 @@ date:   2025-02-12 18:50:11 +0530
 categories: software-engineering
 ---
 
-While working on time series forecasting for [demand and supply of spot virtual machines in Azure](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), intermediate data processing was done in a distributed fashion using Spark. Often the data size in each executor node exceeded `50-100 GB`. This caused some issues while doing `map-reduce` operations.
+While working on `time series forecasting` for [demand and supply of spot virtual machines in Azure](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), intermediate data processing was done in a distributed fashion using `Spark`. Often the data size in each executor node exceeded `50-100 GB`. This caused some issues while doing `map-reduce` operations.
 
 1. When the results from each executor node was collected at the driver node, the data size `exceeded available RAM` and caused the driver nodes to crash.
 
@@ -15,13 +15,13 @@ One hack we did early on to mitigate issue number 1 above was to write the outpu
 
 For issue number 2, there was no fast hack but to compress the outputs of each executor node before sending them over the network. Sometimes the data structure was a dataframe with mixed data types, sometimes it was just a `NumPy matrix`. But most often they were time series data.
 
-One very interesting property of time series data is that consecutive values in a time series are often closer to one another. But it does not imply that values that are far-apart are not close to one another. Most contemporary time series compression algorithms take advantage of this fact while coming up with a compression algorithm.
+One very interesting property of time series data is that **consecutive values in a time series are often closer to one another**. But it does not imply that values that are far-apart are not close to one another. Most contemporary time series compression algorithms take advantage of this fact while coming up with a compression algorithm.
 
 In this post, I will only show how to compress time series with `floating point` numbers instead of generalizing to integers and timestamps. While it is easier to compress integer values in a time series using either [`delta encoding`](https://en.wikipedia.org/wiki/Delta_encoding) or [`dictionary encoding`](https://parquet.apache.org/docs/file-format/data-pages/encodings/), these strategies do not work with floating points because, difference of 2 64-bit floats is still a 64-bit float while a difference between 2 64-bit ints can even be a 8-bit int if the values are close to one another.
 
 Or, if there are very few unique integer values one can also use dictionary encoding. On the other hand, floats are "infinite".
 
-Common floating point compression algorithm assumes that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations. While this might hold true in certain cases but in general this is not true. 
+**Common floating point compression algorithm assumes that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations. While this might hold true in certain cases but in general this is not true.**
 
 But anyways, our focus for this post will be on `XOR compression`, which works on this assumption.
 
@@ -253,13 +253,13 @@ def compress(ser, log_window=4):
 
 The compression algorithm is as follows:<br/>
 1. For the 1st value, store the 64-bit representation as is.
-2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. 
+2. For the i-th value (i > 1), calculate the 64-bit representation, then find the `XOR` value with each of the representations in the sliding window. 
 3. The sliding window size defined above is 16 i.e. the current 64-bit representation is compared with the previous 16 representations.
 4. For each of the 16 representations in the sliding window, the XOR value between j and i is computed where i - current representation, j - one of the 16 representations in sliding window.
 5. The XOR that gives the best reduction in size is kept. The resultant representation after XOR is either of the following:<br/><br/>
-   a. '0' - if the XOR is 0 for all 64 bits.<br/><br/>
-   b. '10' + 4-bits for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation.<br/><br/>
-   c. '11' + 4-bits for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation + XOR representation between the first index of 1 bit and last index of 1 bit.<br/><br/>
+   a. `'0'` - if the XOR is 0 for all 64 bits.<br/><br/>
+   b. `'10'` + `4-bits` for the index of the `most similar representation` w.r.t. current index in the sliding window + `6-bits` for the `first index of 1 bit` in the XOR representation + `6-bits` for the `last index of 1 bit` in the XOR representation.<br/><br/>
+   c. `'11'` + `4-bits` for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation + XOR representation between the first index of 1 bit and last index of 1 bit.<br/><br/>
 
    For e.g. if the current representation at index 25 is:<br/>
 X = 0100000001011110110001111101111100111011001001000101100011010001<br/><br/>
@@ -282,15 +282,15 @@ Z = 0000000000000000000000000000000000000000010000000000001011001100<br/><br/>
 If this is the case then we do not need to explicitly store the XOR value between the first and last index of 1 because once we know the XOR at index 19, we can infer the XOR at 25 given the first and last index of 1 at index 25.<br/><br/>
 Else, we use the option 'c' with control bits '11'.<br/><br/>
 
-7. Concatenate all the compressed binary representations from all values in the time series.
-8. Convert them to 8-bit integer values and return the compressed array.
+7. `Concatenate` all the compressed binary representations from all values in the time series.
+8. Convert them to `8-bit integer` values and return the compressed array.
 
 To compute the compression ratio, we can do with something like:
 ```python
 import sys
 import numpy as np
 
-a = np.random.normal(100.0,1.0,10000)
+a = np.random.normal(100.0,0.1,10000)
 g, n = compress(a)
 
 print("Compression ratio = ", sys.getsizeof(g)/sys.getsizeof(a))
@@ -370,21 +370,21 @@ b = decompress(g, n)
 assert sum(a != b) == 0, "Compression and decompression mismatch !!!"
 ```
 
-Depending on how big a sliding window we use, we trade off compression/decompression time and space complexity in favor of better compression ratios. But usually increasing the sliding window to very large values has diminishing returns.
+Depending on how big a sliding window we use, we **trade-off compression/decompression time and space complexity in favor of better compression ratios**. But usually increasing the sliding window to very large values has `diminishing returns`.
 
 ![Compression ratio vs time](/docs/assets/output.png)
 
-I ran the above experiments using values sampled from a random normal distribution (100, 0.1) and the compression ratios varied somewhere from 90% to 86% with window sizes ranging from 1 to 10. Increasing window sizes definitely improved the compression ratio but at the cost of high compression times. The compression ratio also improves if the standard deviation for the normal distribution is small implying that when values are more closer to each other, they have more similar binary representations.
+I ran the above experiments using values sampled from a random normal distribution (100, 0.1) and the compression ratios varied somewhere from `9% to 14%` with window sizes ranging from `1 to 10`. Increasing window sizes definitely improved the compression ratio but at the cost of high compression times. The compression ratio also improves if the `standard deviation` for the normal distribution is small implying that when values are more closer to each other, they have more similar binary representations.
 
-Real world datasets can have arbitrary distributions. Some real world values can give very good compression ratios like 50% or 70% etc. But some datasets can give very bad compressions too. One problem with the above compression algorithm is that the average number of bits required to compress a 64-bit binary value can be greater than 64 if the XOR has lots of 1s in it. 
+Real world datasets can have arbitrary distributions. Some real world distributions can give very good compression ratios like 50% or 70% etc. But some datasets can give very bad compressions too. One problem with the above compression algorithm is that the average number of bits required to compress a 64-bit binary value `can be greater than 64` if the XOR has lots of 1s in it. 
 
 I tried using ML in the hope to find better compression ratios. The idea goes like this:
-1. For compressing the i-th value, build a time series forecasting model using inputs from i-1 to i-N. Use the model to predict the i-th value.<br/><br/>
-The inputs and outputs are the 64-bit binary representations instead of actual values. Thus the inputs and output are 64 dimensional vectors of 1s and 0s.
-2. Instead of taking XOR with all values in a sliding window, take XOR between the actual i-th value and the predicted i-th value. Thus, if the model is really good, the predicted value would be close to the actual value and thus more number of 0s in the XOR.
+1. For compressing the i-th value, build a `time series forecasting model` using inputs from i-1 to i-N. Use this model to predict the i-th value.<br/><br/>
+The inputs and outputs are the 64-bit binary representations instead of actual values. Thus the inputs and output are `64 dimensional vectors` of 1s and 0s.
+2. Instead of taking XOR with all values in a sliding window, take XOR between the actual i-th value and the predicted i-th value. Thus, if the model is good, the predicted value would be close to the actual value and thus more number of 0s in the XOR.
 3. Similarly, during decompression, using the last N predicted values, predict the i-th value and take an XOR with the decompressed XOR value for the i-th entry.
 
-Python code to create the time-series forecasting data for a deep learning model.
+Python codes to create the time-series forecasting data for a deep learning model.
 
 ```python
 import numpy as np
@@ -393,8 +393,7 @@ def create_ts(seq, lookback=30, future=1):
     bin_seq = []
     for i in range(len(seq)):
         x = seq[i]
-        f = bitstring.BitArray(float=x, length=64)
-        b = str(f.bin)
+        b = float_to_bin(x)
         b = [int(z) for z in list(b)]
         bin_seq += [b]
     
@@ -410,7 +409,7 @@ def create_ts(seq, lookback=30, future=1):
     return X, Y
 ```
 
-The deep learning model architecture is kept simple using a Conv1D layer and an output layer with 64 units each emiiting a value between 0 and 1 using a sigmoid activation. Thus if the predicted value is <= 0.5, then we consider it as 0 else we consider it as 1.
+The deep learning model architecture is kept simple using a `Conv1D` layer, a dense `ReLU` layer and an output layer with `64 units` each emitting a value between 0 and 1 using a `sigmoid` activation. Thus if the predicted value is <= 0.5, then we consider it as 0 else we consider it as 1.
 
 ```python
 class TSModel():
@@ -429,12 +428,13 @@ class TSModel():
 
         x_t = \
             Conv1D(
-                filters=128, 
+                filters=256, 
                 kernel_size=inp_shape[0], 
                 activation='relu', 
                 input_shape=inp_shape
             )(inp)
 
+        x_t = Dense(128, activation='relu')(x_t)
         out = Dense(out_shape[1], activation='sigmoid')(x_t)
                 
         self.model = Model(inp, out)
@@ -478,11 +478,12 @@ class TSModel():
 The corresponding compression and decompression algorithms are:
 
 ```python
-import bitstring
-
-def compress_ml(ser, model, X, lookback=30):
+# compression
+def compress_ml(ser, model, lookback=30):
     results = []
-    
+
+    # generate the predictions on the same dataset
+    X, _ = create_ts(ser)
     preds = model.predict(X)
     predsl = []
     
@@ -491,15 +492,14 @@ def compress_ml(ser, model, X, lookback=30):
         pr = ['1' if zz > 0.5 else '0' for zz in pr]
         h = ''.join(pr) 
         predsl += [h]
-    
+
     for i in range(len(ser)):
         x = ser[i]
-        f = bitstring.BitArray(float=x, length=64)
-        b = str(f.bin)
+        b = float_to_bin(x)
         
         p, q = -1, -1
         r, y = '', ''
-        
+
         if i < lookback:
             r = b
         else:
@@ -545,17 +545,8 @@ def compress_ml(ser, model, X, lookback=30):
     
     return np.array(res).astype('uint8'), n  
 
-
-def decompress_ml(arr, n, X, model, lookback=30):
-    preds = model.predict(X)
-    predsl = []
-    
-    for pred in preds:
-        pr = pred[0]
-        pr = ['1' if zz > 0.5 else '0' for zz in pr]
-        h = ''.join(pr) 
-        predsl += [h]
-        
+# decompression
+def decompress_ml(arr, n, model, lookback=30):
     bins = []
     for i in range(len(arr)):
         x = arr[i]
@@ -567,7 +558,8 @@ def decompress_ml(arr, n, X, model, lookback=30):
     s = s[:n]
 
     results = []
-    
+    model_inp = deque([])
+
     i = 0
     k = 0
     while i < len(s):
@@ -576,7 +568,8 @@ def decompress_ml(arr, n, X, model, lookback=30):
             i += 64
             
         else:
-            v = predsl[k]
+            v = model.predict([model_inp])[0]
+            v = ['1' if zz > 0.5 else '0' for zz in v]
             k += 1
             
             if s[i] == '0':
@@ -596,23 +589,37 @@ def decompress_ml(arr, n, X, model, lookback=30):
                 
                 results += [f] 
                 i += 13+q-p+1
+
+        model_inp.append(list(results[-1]))
+        if len(model_inp) > lookback:
+           model_inp.popleft()
     
     results = [bin_to_float(x) for x in results]
     return np.array(results).astype('float64')
 
+# create the time series data
 X, Y = create_ts(a)
+
+# train the prediction model
 model = TSModel(epochs=50, batch_size=128, model_path="model.keras")
 model.initialize(X[0].shape, Y[0].shape)
 model.fit(X, Y)
 
-g, n = compress_ml(a, model, X)
-b = decompress_ml(g, n, X, primal, lookback=30)
+# compress the entries using the model
+g, n = compress_ml(a, model)
+
+# decompress the entries using the model and the compressed values
+b = decompress_ml(g, n, model)
 ```
 
-Using the ML model instead of the TSXor sliding window approach gave improvements on certain datasets as well as some random distributions such as the normal distribution, but it also performed quite poorly in comparison on multiple other datasets. Although, we did not experiment much with the deep learning model based compression approach as we achieved reasonable compression ratio of 72% on our demand and supply forecasting datasets.
+Using the ML model instead of the `TSXor` sliding window approach gave improvements on certain datasets as well as some random distributions such as the `normal distribution`, but it also performed quite poorly in comparison on multiple other datasets. Although, we did not experiment much with the deep learning model based compression approach as we achieved reasonable compression ratio of `28%` on our demand and supply forecasting datasets using the TSXor approach.
 
-An effective model in this case should have the following properties - small size and low bias i.e. overfit the model on the given dataset as much as possible instead of caring about generalizability.
+For e.g. with normally distributed floats, **TSXor achieved a compression ratio of about 12% while the deep learning model achieved a compression ratio of 20%.**
 
-The deep learning model is in principle a good compression approach because during compression we only need to store the compressed values and the weights of the model which comes out to be much smaller than the size of the uncompressed time series.
+An effective model in this case should have the following properties - **`small size`** and **`low bias`** i.e. overfit the model on the given dataset as much as possible instead of caring about generalizability.
 
-One more optimization we did to improve the compression ratio was to reduce the precision of the values of the time series. For e.g. using 3 decimal places instead of 12 significantly improves the compression ratio by >5%. In order to keep using more decimal places, we also did multiply the values by 1000 before taking only 3 decimal places so that we are able to incorporate more digits into the number.
+**The tradeoff here is that a more "complex" model with more weights achieves better compression ratio.**
+
+One major `downside` to the deep learning model based approach is that the `decompression is slow` as the model `predicts sequentially` with one output for every entry. 
+
+One more optimization we did to improve the compression ratio of the `TSXor` approach was to `reduce the precision` of the floats of the time series. For e.g. using `3 decimal places` instead of 12 significantly improves the compression ratio by `>5%`. In order to keep using more decimal places, we also did multiply the values by `1000` before taking only 3 decimal places so that we are able to incorporate more digits into the number.
