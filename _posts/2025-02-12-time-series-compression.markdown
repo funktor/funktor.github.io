@@ -21,9 +21,11 @@ In this post, I will only show how to compress time series with `floating point`
 
 Or, if there are very few unique integer values one can also use dictionary encoding. On the other hand, floats are "infinite".
 
-**Common floating point compression algorithm assumes that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations. While this might hold true in certain cases but in general this is not true.**
+**Common floating point compression algorithm assumes that floats that are closer to one another in terms of absolute values, are also closer to one another in terms of their binary representations**. 
 
-But anyways, our focus for this post will be on `XOR compression`, which works on this assumption.
+While this might hold true in certain cases but in general this is not true.
+
+But anyways, our focus for this post will be on **XOR compression**, which works on this assumption.
 
 But first lets understand how floating point numbers are represented in binary. We will take the example of `64-bit floats` as this was the most commonly used format in our work.
 
@@ -66,7 +68,7 @@ def float_to_bin(x):
   f = bitstring.BitArray(float=x, length=64)
   return str(f.bin)
 ```
-<br/><br/>
+<br/>
 Similarly, we can obtain the `floating point value from a 64-bit representation` as follows:
 For e.g. given the following pattern:<br/>
 
@@ -252,14 +254,14 @@ def compress(ser, log_window=4):
 <br/>
 
 The compression algorithm is as follows:<br/>
-1. For the 1st value, store the 64-bit representation as is.
-2. For the i-th value (i > 1), calculate the 64-bit representation, then find the `XOR` value with each of the representations in the sliding window. 
-3. The sliding window size defined above is 16 i.e. the current 64-bit representation is compared with the previous 16 representations.
-4. For each of the 16 representations in the sliding window, the XOR value between j and i is computed where i - current representation, j - one of the 16 representations in sliding window.
+1. For the 1st value, store the 64-bit representation as is.<br/><br/>
+2. For the i-th value (i > 1), calculate the 64-bit representation, then find the `XOR` value with each of the representations in the sliding window.<br/><br/>
+3. The sliding window size defined above is 16 i.e. the current 64-bit representation is compared with the previous 16 representations.<br/><br/>
+4. For each of the 16 representations in the sliding window, the XOR value between j and i is computed where i - current representation, j - one of the 16 representations in sliding window.<br/><br/>
 5. The XOR that gives the best reduction in size is kept. The resultant representation after XOR is either of the following:<br/><br/>
    a. `'0'` - if the XOR is 0 for all 64 bits.<br/><br/>
    b. `'10'` + `4-bits` for the index of the `most similar representation` w.r.t. current index in the sliding window + `6-bits` for the `first index of 1 bit` in the XOR representation + `6-bits` for the `last index of 1 bit` in the XOR representation.<br/><br/>
-   c. `'11'` + `4-bits` for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation + XOR representation between the first index of 1 bit and last index of 1 bit.<br/><br/>
+   c. `'11'` + 4-bits for the index of the most similar representation w.r.t. current index in the sliding window + 6-bits for the first index of 1 bit in the XOR representation + 6-bits for the last index of 1 bit in the XOR representation + XOR representation between the first index of 1 bit and last index of 1 bit.<br/><br/>
 
    For e.g. if the current representation at index 25 is:<br/>
 X = 0100000001011110110001111101111100111011001001000101100011010001<br/><br/>
@@ -282,8 +284,8 @@ Z = 0000000000000000000000000000000000000000010000000000001011001100<br/><br/>
 If this is the case then we do not need to explicitly store the XOR value between the first and last index of 1 because once we know the XOR at index 19, we can infer the XOR at 25 given the first and last index of 1 at index 25.<br/><br/>
 Else, we use the option 'c' with control bits '11'.<br/><br/>
 
-7. `Concatenate` all the compressed binary representations from all values in the time series.
-8. Convert them to `8-bit integer` values and return the compressed array.
+7. `Concatenate` all the compressed binary representations from all values in the time series.<br/><br/>
+8. Convert them to `8-bit integer` values and return the compressed array.<br/><br/>
 
 To compute the compression ratio, we can do with something like:
 ```python
@@ -295,8 +297,10 @@ g, n = compress(a)
 
 print("Compression ratio = ", sys.getsizeof(g)/sys.getsizeof(a))
 ```
+<br/>
 
 To decompress the compressed values, I used the following Python function:
+<br/>
 ```python
 def decompress(arr, n, log_window=4):
     # Convert 8-bit integers to binary and concatenate them
@@ -369,6 +373,7 @@ def decompress(arr, n, log_window=4):
 b = decompress(g, n)
 assert sum(a != b) == 0, "Compression and decompression mismatch !!!"
 ```
+<br/>
 
 Depending on how big a sliding window we use, we **trade-off compression/decompression time and space complexity in favor of better compression ratios**. But usually increasing the sliding window to very large values has `diminishing returns`.
 
@@ -380,12 +385,12 @@ Real world datasets can have arbitrary distributions. Some real world distributi
 
 I tried using ML in the hope to find better compression ratios. The idea goes like this:
 1. For compressing the i-th value, build a `time series forecasting model` using inputs from i-1 to i-N. Use this model to predict the i-th value.<br/><br/>
-The inputs and outputs are the 64-bit binary representations instead of actual values. Thus the inputs and output are `64 dimensional vectors` of 1s and 0s.
-2. Instead of taking XOR with all values in a sliding window, take XOR between the actual i-th value and the predicted i-th value. Thus, if the model is good, the predicted value would be close to the actual value and thus more number of 0s in the XOR.
-3. Similarly, during decompression, using the last N predicted values, predict the i-th value and take an XOR with the decompressed XOR value for the i-th entry.
+The inputs and outputs are the 64-bit binary representations instead of actual values. Thus the inputs and output are `64 dimensional vectors` of 1s and 0s.<br/><br/>
+2. Instead of taking XOR with all values in a sliding window, take XOR between the actual i-th value and the predicted i-th value. Thus, if the model is good, the predicted value would be close to the actual value and thus more number of 0s in the XOR.<br/><br/>
+3. Similarly, during decompression, using the last N predicted values, predict the i-th value and take an XOR with the decompressed XOR value for the i-th entry.<br/><br/>
 
 Python codes to create the time-series forecasting data for a deep learning model.
-
+<br/>
 ```python
 import numpy as np
 def create_ts(seq, lookback=30, future=1):
@@ -408,8 +413,10 @@ def create_ts(seq, lookback=30, future=1):
     
     return X, Y
 ```
+<br/>
 
 The deep learning model architecture is kept simple using a `Conv1D` layer, a dense `ReLU` layer and an output layer with `64 units` each emitting a value between 0 and 1 using a `sigmoid` activation. Thus if the predicted value is <= 0.5, then we consider it as 0 else we consider it as 1.
+<br/>
 
 ```python
 class TSModel():
@@ -474,8 +481,10 @@ class TSModel():
         self.model = \
             load_model(self.model_path)
 ```
+<br/>
 
 The corresponding compression and decompression algorithms are:
+<br/>
 
 ```python
 # compression
@@ -611,6 +620,7 @@ g, n = compress_ml(a, model)
 # decompress the entries using the model and the compressed values
 b = decompress_ml(g, n, model)
 ```
+<br/>
 
 Using the ML model instead of the `TSXor` sliding window approach gave improvements on certain datasets as well as some random distributions such as the `normal distribution`, but it also performed quite poorly in comparison on multiple other datasets. Although, we did not experiment much with the deep learning model based compression approach as we achieved reasonable compression ratio of `28%` on our demand and supply forecasting datasets using the TSXor approach.
 
