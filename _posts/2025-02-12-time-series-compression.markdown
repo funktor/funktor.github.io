@@ -253,5 +253,6 @@ def compress(ser, log_window=4):
 
 The algorithm is as follows:<br/>
 1. For the 1st value, store the 64-bit representation as is.
-2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. The XOR with most number of leading and trailing zeros is kept and the resultant  
+2. For the i-th value (i > 1), calculate the 64-bit representation, then find the XOR value with each of the representations in the sliding window. The XOR with most number of leading and trailing zeros is kept and the resultant
+3. 
 
