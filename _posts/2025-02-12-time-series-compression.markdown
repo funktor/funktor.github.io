@@ -296,6 +296,7 @@ import numpy as np
 
 a = np.random.normal(100.0,0.1,10000)
 g, n = compress(a)
+# n - size of compressed binary
 
 print("Compression ratio = ", 1.0 - sys.getsizeof(g)/sys.getsizeof(a))
 ```
@@ -317,59 +318,78 @@ def decompress(arr, n, log_window=4):
     s = s[:n]
 
     results = []
-    prev_xors = []
+    prev_xors = deque([])
     
     i = 0
     while i < len(s):
         if i == 0:
             # First value is as is (not compressed)
             results += [s[i:i+64]]
-            prev_xors += [s[i:i+64]]
+            prev_xors.append([s[i:i+64]])
             i += 64
             
         else:
             # Parse the binary string to decompress
             if s[i] == '0':
                 results += [results[-1]]
-                prev_xors += ['0'*64]
+                prev_xors.append(['0'*64])
                 i += 1
                 
             else:
+                # Get the relative index of the most similar binary representation
+                z = int(s[i+2:i+2+log_window], 2)
+
+                # Get the first index of 1 in its XOR
+                p = int(s[i+2+log_window:i+8+log_window], 2)
+
+                # Get the last index of 1 in its XOR
+                q = int(s[i+8+log_window:i+14+log_window], 2)
+
                 if s[i:i+2] == '10':
-                    z = int(s[i+2:i+2+log_window], 2)
-                    p = int(s[i+2+log_window:i+8+log_window], 2)
-                    q = int(s[i+8+log_window:i+14+log_window], 2)
+                    # Get the XOR for most similar entry
+                    assert z+1 <= len(prev_xors), "Incorrect compression !!!"
                     y = prev_xors[-(z+1)]
+
                     u = ['0']*64
+
+                    # Substitute the XOR of most similar entry in [p, q]
                     u[p:q+1] = y[p:q+1]
-                    
+
+                    # Do XOR to get back the original entry. XOR'ing twice gives back the original value.
                     v = results[-(z+1)]
                     f = ''
                     for j in range(len(u)):
                         f += '1' if u[j] != v[j] else '0'
                     
                     results += [f]
-                    prev_xors += [''.join(u)]
+                    prev_xors.append([''.join(u)])
                     i += 14+log_window
                     
                 else:
-                    z = int(s[i+2:i+2+log_window], 2)
-                    p = int(s[i+2+log_window:i+8+log_window], 2)
-                    q = int(s[i+8+log_window:i+14+log_window], 2)
+                    # Get the relevant bits in the XOR
                     y = s[i+14+log_window:i+14+log_window+q-p+1]
+
                     u = ['0']*64
+
+                    # Substitute the XOR in [p, q]
                     u[p:q+1] = y
+
+                    # Do XOR to get back the original entry. XOR'ing twice gives back the original value.
                     v = results[-(z+1)]
-                    
                     f = ''
                     for j in range(len(u)):
                         f += '1' if u[j] != v[j] else '0'
                     
                     results += [f] 
-                    prev_xors += [''.join(u)]
+                    prev_xors.append([''.join(u)])
                     i += 14+log_window+q-p+1
-    
+
+        if len(prev_xors) > (1 << log_window):
+            prev_xors.popleft()
+
+    # Convert the binary representations to floats
     results = [bin_to_float(x) for x in results]
+
     return np.array(results).astype('float64')
 
 b = decompress(g, n)
@@ -402,6 +422,8 @@ def create_ts(seq, lookback=30, future=1):
         x = seq[i]
         b = float_to_bin(x)
         b = [int(z) for z in list(b)]
+
+        # Convert 64-bit binary string into 64 size int vector
         bin_seq += [b]
     
     for i in range(len(bin_seq)-lookback-future+1):
@@ -435,6 +457,7 @@ class TSModel():
     def initialize(self, inp_shape, out_shape):
         inp = Input(shape=inp_shape)
 
+        # 1-D Convolution wth kernel size equals to 30.
         x_t = \
             Conv1D(
                 filters=256, 
@@ -443,7 +466,10 @@ class TSModel():
                 input_shape=inp_shape
             )(inp)
 
+        # Dense layer with ReLU activation
         x_t = Dense(128, activation='relu')(x_t)
+
+        # OUtput layer with 64 units and sigmoid activation. Each unit will produce a value between 0 and 1
         out = Dense(out_shape[1], activation='sigmoid')(x_t)
                 
         self.model = Model(inp, out)
@@ -454,6 +480,7 @@ class TSModel():
         )
     
     def fit(self, X:np.array, Y:np.array):
+        # Save model using checkpointing
         model_checkpoint_callback = \
             tf.keras.callbacks.ModelCheckpoint(
                 filepath=self.model_path,
@@ -500,6 +527,8 @@ def compress_ml(ser, model, lookback=30):
     
     for pred in preds:
         pr = pred[0]
+
+        # Label is 1 if model prediction is > 0.5 else 0
         pr = ['1' if zz > 0.5 else '0' for zz in pr]
         h = ''.join(pr) 
         predsl += [h]
@@ -512,19 +541,24 @@ def compress_ml(ser, model, lookback=30):
         r, y = '', ''
 
         if i < lookback:
+            # No compression for the 1st 30 values
             r = b
         else:
             p, q = -1, -1
             h = predsl[i-lookback]
+
+            # Get the XOR between actual binary rep and predicted binary rep
             y = ''
             for j in range(len(b)):
                 y += '1' if b[j] != h[j] else '0'
-            
+
+            # Get the first index of 1 in the XOR 
             for j in range(len(y)):
                 if y[j] == '1':
                     p = j
                     break
-                
+
+            # Get the last index of 1 in the XOR 
             for j in range(len(y)-1, -1, -1):
                 if y[j] == '1':
                     q = j
@@ -538,11 +572,13 @@ def compress_ml(ser, model, lookback=30):
                 
                 g = bin(q)[2:]
                 g = '0'*(6-len(g)) + g
-                
+
+                # Instead of 2 separate control bits '10' and '11', we are using only a single control bit '1'
                 r = '1' + k + g + y[p:q+1]
                                 
         results += [r]
-    
+
+    # Convert binary string into sequence of 8 bit integers
     s = ''.join(results)
     n = len(s)
     m = n%8
@@ -558,6 +594,7 @@ def compress_ml(ser, model, lookback=30):
 
 # decompression
 def decompress_ml(arr, n, model, lookback=30):
+    # Convert 8-bit integers to binary and concatenate them
     bins = []
     for i in range(len(arr)):
         x = arr[i]
@@ -575,25 +612,37 @@ def decompress_ml(arr, n, model, lookback=30):
     k = 0
     while i < len(s):
         if len(results) < lookback:
+            # No compression for 1st 30 entries
             results += [s[i:i+64]]
             i += 64
             
         else:
+            # Predict the next entry using last 30 entries
             v = model.predict([model_inp])[0]
+
+            # Label is 1 if prediction for j-th bit is > 0.5 else 0
             v = ['1' if zz > 0.5 else '0' for zz in v]
             k += 1
             
             if s[i] == '0':
+                # Prediction is same as actual binary rep
                 results += [v]
                 i += 1
                 
             else:
+                # Get the 1st index of 1
                 p = int(s[i+1:i+7], 2)
+
+                # Get the last index of 1
                 q = int(s[i+7:i+13], 2)
+
+                # Get the resultant XOR between [p, q]
                 y = s[i+13:i+13+q-p+1]
+
                 u = ['0']*64
                 u[p:q+1] = y
-                
+
+                # Do reverse XOR with predicted binary rep to get back original binary rep
                 f = ''
                 for j in range(len(u)):
                     f += '1' if u[j] != v[j] else '0'
@@ -604,8 +653,10 @@ def decompress_ml(arr, n, model, lookback=30):
         model_inp.append(list(results[-1]))
         if len(model_inp) > lookback:
            model_inp.popleft()
-    
+
+    # Convert binary reps to floats
     results = [bin_to_float(x) for x in results]
+
     return np.array(results).astype('float64')
 
 # create the time series data
@@ -619,6 +670,7 @@ model.fit(X, Y)
 # compress the entries using the model
 g, n = compress_ml(a, model)
 
+# n - size of compressed binary rep
 # decompress the entries using the model and the compressed values
 b = decompress_ml(g, n, model)
 ```
