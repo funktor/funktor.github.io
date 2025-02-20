@@ -36,24 +36,10 @@ For e.g. given the normal distribution:<br/><br/>
 
 One can then find different quantile values. 
 
-One strategy would be to `randomly sample N values`, `sort` the values and take the `q*N` th value where q is the quantile. <br/>
-
-```python
-import numpy as np
-def g():
-  pass
-```
-<br/>
+One strategy would be to `randomly sample N values`, `sort` the values and take the `q*N` th value where q is the quantile. 
 
 But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is a and max value is b and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
 
-To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.<br/>
-
-```python
-import numpy as np
-def g():
-  pass
-```
-<br/>
+To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.
 
 Note that the histogram approach is not always efficient because the sizes of the bins can be skewed i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case the 1st approach is better.
