@@ -59,7 +59,7 @@ print(get_quantile(0.0, 1.0, 1000000, 0.99))
 
 But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is a and max value is b and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
 
-To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.<br/><br/>
+To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.<br/>
 
 ```python
 def get_quantile_hist(u, s, n, q, nbins):
