@@ -55,6 +55,7 @@ def get_quantile(u, s, n, q):
 # comes around 2.325
 print(get_quantile(0.0, 1.0, 1000000, 0.99))
 ```
+<br/>
 
 But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is a and max value is b and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
 
@@ -92,5 +93,6 @@ def get_quantile_hist(u, s, n, q, nbins):
 
 print(get_quantile_hist(0.0, 1.0, 1000000, 0.99, 100))
 ```
+<br/>
 
 Note that the histogram approach is not always efficient because the sizes of the bins can be skewed i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case the 1st approach is better.
