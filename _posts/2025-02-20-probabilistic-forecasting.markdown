@@ -32,14 +32,67 @@ This calls for retraining the model with each quantile. A better strategy in thi
 For e.g. given the normal distribution:<br/><br/>
 <p align="center">
     <img src="https://github.com/user-attachments/assets/85439ae3-ac2d-45e8-9a6e-78d6f640b5af">
-<p/>
+</p>
 
 One can then find different quantile values. 
 
-One strategy would be to `randomly sample N values`, `sort` the values and take the `q*N` th value where q is the quantile. 
+One strategy would be to `randomly sample N values`, `sort` the values and take the `q*N` th value where q is the quantile. <br/>
+
+```python
+def get_quantile(u, s, n, q):
+    # u - mean of distribution
+    # s - sd of distribution
+
+    a = np.random.normal(u, s, n)
+    a = sorted(a.tolist())
+    j = int(q*n)
+
+    if j < n:
+        return a[j]
+    return None
+
+# get the 99th percentile value of a normal distribution with mean of 0.0 and sd of 1.0
+# comes around 2.325
+print(get_quantile(0.0, 1.0, 1000000, 0.99))
+```
+<br/>
 
 But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is a and max value is b and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
 
-To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.
+To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.<br/>
+
+```python
+def get_quantile_hist(u, s, n, q, nbins):
+    r = np.random.normal(u, s, n).tolist()
+
+    a = np.min(r)
+    b = np.max(r)
+    c = (b-a)/nbins
+
+    bins = [[] for _ in range(nbins)]
+
+    for x in r:
+        j = int((x-a)/c)
+        j = min(j, nbins-1)
+        bins[j] += [x]
+
+    # index we want
+    j = int(q*n)
+
+    p = 0
+    for b in bins:
+        # continue to sum size of bins until the desired index lies inside a bin
+        if p + len(b) > j:
+            # sort the bin values only
+            sb = sorted(b)
+            return sb[j-p]
+        
+        p += len(b)
+    
+    return None
+
+print(get_quantile_hist(0.0, 1.0, 1000000, 0.99, 100))
+```
+<br/>
 
 Note that the histogram approach is not always efficient because the sizes of the bins can be skewed i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case the 1st approach is better.
