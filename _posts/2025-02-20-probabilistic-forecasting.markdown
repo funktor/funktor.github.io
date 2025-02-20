@@ -39,21 +39,9 @@ One can then find different quantile values.
 One strategy would be to `randomly sample N values`, `sort` the values and take the `q*N` th value where q is the quantile. <br/>
 
 ```python
-def get_quantile(u, s, n, q):
-    # u - mean of distribution
-    # s - sd of distribution
-
-    a = np.random.normal(u, s, n)
-    a = sorted(a.tolist())
-    j = int(q*n)
-
-    if j < n:
-        return a[j]
-    return None
-
-# get the 99th percentile value of a normal distribution with mean of 0.0 and sd of 1.0
-# comes around 2.325
-print(get_quantile(0.0, 1.0, 1000000, 0.99))
+import numpy as np
+def g():
+  pass
 ```
 <br/>
 
@@ -62,36 +50,9 @@ But since sorting is expensive if N is very large or we are doing sampling quite
 To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile.<br/>
 
 ```python
-def get_quantile_hist(u, s, n, q, nbins):
-    r = np.random.normal(u, s, n).tolist()
-
-    a = np.min(r)
-    b = np.max(r)
-    c = (b-a)/nbins
-
-    bins = [[] for _ in range(nbins)]
-
-    for x in r:
-        j = int((x-a)/c)
-        j = min(j, nbins-1)
-        bins[j] += [x]
-
-    # index we want
-    j = int(q*n)
-
-    p = 0
-    for b in bins:
-        # continue to sum size of bins until the desired index lies inside a bin
-        if p + len(b) > j:
-            # sort the bin values only
-            sb = sorted(b)
-            return sb[j-p]
-        
-        p += len(b)
-    
-    return None
-
-print(get_quantile_hist(0.0, 1.0, 1000000, 0.99, 100))
+import numpy as np
+def g():
+  pass
 ```
 <br/>
 
