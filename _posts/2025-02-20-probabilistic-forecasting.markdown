@@ -93,4 +93,40 @@ def get_quantile_hist(u, s, n, q, nbins):
 print(get_quantile_hist(0.0, 1.0, 1000000, 0.99, 100))
 ```
 
-Note that the histogram approach is not always efficient because the sizes of the bins can be skewed i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case the 1st approach is better.
+Note that the `histogram approach is not always efficient` because the sizes of the bins can be `skewed` i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case the 1st approach is better.
+
+The above strategy to learn the distribution parameters of the demand instead of just the mean or median demand is also useful when the distribution is `not gaussian` but is skewed such as the `Gamma` or the `Negative Binomial Distribution`. **Most real world datasets are skewed**. 
+
+But before showing how to incorporate gamma or negative binom. distributions in our demand forecasting problem, lets first understand loss functions with arbitrary distibutions of the target variable and why mean squared error is not appropriate for every problem.
+
+Most standard loss functions are the **negative log likelihood of the target variable**.
+
+Assuming that each output j is sampled from a `normal distribution` N(u<sub>j</sub>, 1.0) where u<sub>j</sub> is the model predicted value i.e. y<sup>j</sup><sub>pred</sub> (`standard deviation` is just a scaling factor hence it is assumed to be 1.0). The PDF of the output j is:
+
+![image](https://github.com/user-attachments/assets/7b0af647-2410-45be-a9c4-20f5686d27c4)
+
+The joint PDF of all outputs from j=0 to N-1 is just the `product of the individual PDFs`.
+
+![image](https://github.com/user-attachments/assets/b91babd3-ec9e-43b9-a7c1-775d07a2f6db)
+
+The `log likelihood` is the probability that given the parameter y<sub>pred</sub>, how likely the above joint distribution fits the data. It has the `same expression as the joint PDF`. To get the loss function, we take the log of the above joint distribution and `add a negative sign` before it (since its a loss or cost function).
+
+![image](https://github.com/user-attachments/assets/46e74277-cdd1-4e78-a279-1b231582c39c)
+
+Ignoring the constant terms, the above expression resembles the **mean squared error** term which is the loss function most commonly used for `linear regression` problems.
+
+Similarly, for binary classification problems, the target variable is either 0 or 1 and assuming that the probability of 1 is p<sub>j</sub> (which is equal to the model prediction y<sup>j</sup><sub>pred</sub>), the probability distribution of the target is a `binomial distribution` as follows:
+
+![image](https://github.com/user-attachments/assets/04693924-c0c7-4ae3-b3e1-3f03c7dca9af)
+
+Finding the joint distribution by taking the product for all j=0 to N-1 and taking their negative log likelihood, we get the familiar form of the `logistic loss` used extensively for `binary classification problems`.
+
+![image](https://github.com/user-attachments/assets/cf46a01d-f831-4dff-babe-7dfb29fc1c7c)
+
+But it is **not a prerequisite to use the negative log likelihood as the loss function** everywhere. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
+
+There are many loss functions such as the `contrastive loss` or `huber loss` or `triplet loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
+
+One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to sample values and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
+
+
