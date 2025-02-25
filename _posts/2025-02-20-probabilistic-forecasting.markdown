@@ -125,8 +125,40 @@ Finding the joint distribution by taking the product for all j=0 to N-1 and taki
 
 But it is **not a prerequisite to use the negative log likelihood as the loss function** everywhere. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
 
-There are many loss functions such as the `contrastive loss` or `huber loss` or `triplet loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
+There are many loss functions such as the `contrastive loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
 
 One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to sample values and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
+
+Before proceeding with probabilistic forecasting, one important point to discuss is that most often the distribution is a known distribution and libraries such as numpy or scipy will have some implementation to do random sampling from the distribution. But sometimes, a distribution may not have an inbuilt library for sampling.
+
+In such cases, a common technique applied is finding the inverse of the CDF function. CDF is the Cumulative Density Function i.e. sum of the PDF from -inf to x (or 0 to x if x is non-negative).
+
+```
+CDF(x) = [PDF(y) for y in -inf to x]
+```
+
+The q-th quantile value is the value 'x' at which CDF(x) = q.
+
+For e.g. the PDF of the exponential distribution with mean of 0.5 is:
+
+![image](https://github.com/user-attachments/assets/1fb5ea11-7c00-42bd-aadf-1867dc9b51ca)
+
+The CDF is found by taking an integral of F(x) from 0 to x i.e.
+
+![image](https://github.com/user-attachments/assets/b9f8461e-b53d-4c90-bd66-1b445cadbe4e)
+
+The inverse function can be found out be:
+
+![image](https://github.com/user-attachments/assets/1eead258-a7cf-4e03-9ee8-ee9249cca53b)
+
+For e.g. to find the value at quantile q=0.99, we substitute q=0.99 in the above equation. The P99 value for exponential distribution is thus 2.30.
+
+In the event, the CDF is not possible to express in a closed functional form, we can sample multiple values from the  distribution F(x), compute the corresponding CDF(x) values. Then using binary search, find the greatest value z (sampled) s.t. the CDF(z) is smaller than U.
+
+
+
+
+
+
 
 
