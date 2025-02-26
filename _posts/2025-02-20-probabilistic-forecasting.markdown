@@ -112,15 +112,21 @@ CDF(x) = [PDF(y) for y in -inf to x]
 
 For e.g. the PDF of the exponential distribution with mean of 0.5 is:
 
-![image](https://github.com/user-attachments/assets/1fb5ea11-7c00-42bd-aadf-1867dc9b51ca)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/1fb5ea11-7c00-42bd-aadf-1867dc9b51ca">
+</p>
 
 The CDF is found by taking an integral of F(x) from 0 to x i.e.
 
-![image](https://github.com/user-attachments/assets/b9f8461e-b53d-4c90-bd66-1b445cadbe4e)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/b9f8461e-b53d-4c90-bd66-1b445cadbe4e">
+</p>
 
 The inverse function can be found out be:
 
-![image](https://github.com/user-attachments/assets/1eead258-a7cf-4e03-9ee8-ee9249cca53b)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/1eead258-a7cf-4e03-9ee8-ee9249cca53b">
+</p>
 
 In order to find the value at quantile q=0.99, we substitute q=0.99 in the above equation. The P99 value for exponential distribution is thus 2.30. If we know the closed form function for the CDF, then this is the most efficient approach to find the q-th quantile.
 
@@ -132,25 +138,35 @@ Most standard loss functions are the **negative log likelihood of the target var
 
 Assuming that each output j is sampled from a `normal distribution` N(u<sub>j</sub>, 1.0) where u<sub>j</sub> is the model predicted value i.e. y<sup>j</sup><sub>pred</sub> (`standard deviation` is just a scaling factor hence it is assumed to be 1.0). The PDF of the output j is:
 
-![image](https://github.com/user-attachments/assets/7b0af647-2410-45be-a9c4-20f5686d27c4)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/490c3cb5-9a75-438d-948d-40d9e285c9b1">
+</p>
 
 The joint PDF of all outputs from j=0 to N-1 is just the `product of the individual PDFs`.
 
-![image](https://github.com/user-attachments/assets/b91babd3-ec9e-43b9-a7c1-775d07a2f6db)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/543b7874-8450-4742-9f7a-ba81d96b92b3">
+</p>
 
 The `log likelihood` is the probability that given the parameter y<sub>pred</sub>, how likely the above joint distribution fits the data. It has the `same expression as the joint PDF`. To get the loss function, we take the log of the above joint distribution and `add a negative sign` before it (since its a loss or cost function).
 
-![image](https://github.com/user-attachments/assets/46e74277-cdd1-4e78-a279-1b231582c39c)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/d77653dc-0c0a-443c-a354-2878db14a84f">
+</p>
 
 Ignoring the constant terms, the above expression resembles the **mean squared error** term which is the loss function most commonly used for `linear regression` problems.
 
 Similarly, for binary classification problems, the target variable is either 0 or 1 and assuming that the probability of 1 is p<sub>j</sub> (which is equal to the model prediction y<sup>j</sup><sub>pred</sub>), the probability distribution of the target is a `binomial distribution` as follows:
 
-![image](https://github.com/user-attachments/assets/04693924-c0c7-4ae3-b3e1-3f03c7dca9af)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/708e0b8f-d5c0-49a5-a196-474798e04ba9">
+</p>
 
 Finding the joint distribution by taking the product for all j=0 to N-1 and taking their negative log likelihood, we get the familiar form of the `logistic loss` used extensively for `binary classification problems`.
 
-![image](https://github.com/user-attachments/assets/cf46a01d-f831-4dff-babe-7dfb29fc1c7c)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/d81be952-7088-4102-86e7-56e4b9301ca6">
+</p>
 
 But it is **not a prerequisite to use the negative log likelihood as the loss function** everywhere. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
 
