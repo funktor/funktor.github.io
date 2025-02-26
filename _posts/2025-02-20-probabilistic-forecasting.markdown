@@ -61,7 +61,7 @@ print(get_quantile_normal(0.0, 1.0, 1000000, 0.99))
 
 But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is `a` and max value is `b` and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
 
-To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile. Or we can recursively continue to create bins until we maximum size of a bin is less than some constant threshold.<br/>
+To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile. Or we can recursively continue to create bins until the maximum size of a bin is less than some constant threshold e.g. 10 s.t. sorting overhead is minimal.<br/>
 
 ```python
 def get_quantile_hist_normal(u, s, n, q=0.5, nbins=10):
@@ -76,7 +76,7 @@ def get_quantile_hist_normal(u, s, n, q=0.5, nbins=10):
     for x in r:
         j = int((x-a)/c)
 
-        # 'b' goes into the last bin
+        # maximum value 'b' goes into the last bin
         j = min(j, nbins-1)
         bins[j] += [x]
 
@@ -100,7 +100,29 @@ def get_quantile_hist_normal(u, s, n, q=0.5, nbins=10):
 print(get_quantile_hist_normal(0.0, 1.0, 1000000, 0.99, 100))
 ```
 
-Note that the `histogram approach is not always efficient` because the sizes of the bins can be `skewed` i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case either use sorting approach or recursively create bins.
+Note that the `histogram approach is not always efficient` because the sizes of the bins can be `skewed` i.e. it is entirely possible that only the 1st bin has 99% of all the values. In that case either use sorting approach or recursively create bins. Another strategy to find the quantiles from the distribution is by using the **inverse CDF**.
+
+CDF is the `Cumulative Density Function` i.e. sum of the PDF from -inf to x (or 0 to x if x is non-negative).
+
+```
+CDF(x) = [PDF(y) for y in -inf to x]
+```
+
+**The q-th quantile value is the value 'x' at which CDF(x) = q**
+
+For e.g. the PDF of the exponential distribution with mean of 0.5 is:
+
+![image](https://github.com/user-attachments/assets/1fb5ea11-7c00-42bd-aadf-1867dc9b51ca)
+
+The CDF is found by taking an integral of F(x) from 0 to x i.e.
+
+![image](https://github.com/user-attachments/assets/b9f8461e-b53d-4c90-bd66-1b445cadbe4e)
+
+The inverse function can be found out be:
+
+![image](https://github.com/user-attachments/assets/1eead258-a7cf-4e03-9ee8-ee9249cca53b)
+
+In order to find the value at quantile q=0.99, we substitute q=0.99 in the above equation. The P99 value for exponential distribution is thus 2.30. If we know the closed form function for the CDF, then this is the most efficient approach to find the q-th quantile.
 
 The above strategy to learn the distribution parameters of the demand instead of just the mean or median demand is also useful when the distribution is `not gaussian` but is skewed such as the `Gamma` or the `Negative Binomial Distribution`. **Most real world datasets are skewed**. 
 
@@ -134,33 +156,9 @@ But it is **not a prerequisite to use the negative log likelihood as the loss fu
 
 There are many loss functions such as the `contrastive loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
 
-One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to sample values and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
+One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to either sample values or find the inverse CDF and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
 
-Before proceeding with probabilistic forecasting, one important point to discuss is that most often the distribution is a known distribution and libraries such as numpy or scipy will have some implementation to do random sampling from the distribution. But sometimes, a distribution may not have an inbuilt library for sampling.
-
-In such cases, a common technique applied is finding the inverse of the CDF function. CDF is the Cumulative Density Function i.e. sum of the PDF from -inf to x (or 0 to x if x is non-negative).
-
-```
-CDF(x) = [PDF(y) for y in -inf to x]
-```
-
-The q-th quantile value is the value 'x' at which CDF(x) = q.
-
-For e.g. the PDF of the exponential distribution with mean of 0.5 is:
-
-![image](https://github.com/user-attachments/assets/1fb5ea11-7c00-42bd-aadf-1867dc9b51ca)
-
-The CDF is found by taking an integral of F(x) from 0 to x i.e.
-
-![image](https://github.com/user-attachments/assets/b9f8461e-b53d-4c90-bd66-1b445cadbe4e)
-
-The inverse function can be found out be:
-
-![image](https://github.com/user-attachments/assets/1eead258-a7cf-4e03-9ee8-ee9249cca53b)
-
-For e.g. to find the value at quantile q=0.99, we substitute q=0.99 in the above equation. The P99 value for exponential distribution is thus 2.30.
-
-Some common distributions that are commonly encountered during demand forecasting are:
+Some common distributions that are commonly encountered during our demand forecasting are:
 1. Negative Binomial Distribution
 2. Tweedie Distribution
 
