@@ -153,7 +153,11 @@ The inverse function can be found out be:
 
 For e.g. to find the value at quantile q=0.99, we substitute q=0.99 in the above equation. The P99 value for exponential distribution is thus 2.30.
 
-In the event, the CDF is not possible to express in a closed functional form, we can sample multiple values from the  distribution F(x), compute the corresponding CDF(x) values. Then using binary search, find the greatest value z (sampled) s.t. the CDF(z) is smaller than U.
+Some common distributions that are commonly encountered during demand forecasting are:
+1. Negative Binomial Distribution
+2. Tweedie Distribution
+
+There are other distributions often encountered, but for this post we will focus on the above two distributions and show how we can train a deep learning forecasting model to learn these distributions. 
 
 
 
