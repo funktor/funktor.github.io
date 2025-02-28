@@ -185,11 +185,138 @@ Given a binary sequence of 1s and 0s where the probability of 1 is p and probabi
 
 Here N and p are parameters of the distribution. If N was fixed, it would just be a binomial distribution. If N is a parameter, it is a negative binomial distribution. In our case N is a parameter because we do not know at what time the observations were taken. Our goal is to find N and probability p.
 
+The log likelihood formula for the above distribution would be something like:
+
+![image](https://github.com/user-attachments/assets/017f27cb-704e-4466-af27-7962b8459849)
+
 The mean of the above distribution is given as:
 
 ![image](https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36)
 
+In one of the [previous posts](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), we introduced a deep learning architecture for time series forecasting of demand and supply. Referring back to the same architecture, we can define our own custom negative binomial layer and the negative binomial log loss as follows:
 
+```python
+def negative_binomial_layer(x):
+    num_dims = len(x.get_shape())
+
+    # assuming that the input to this layer is a concatenation of n and p variables
+    n, p = tf.unstack(x, num=2, axis=-1)
+
+    n = tf.expand_dims(k, -1)
+    p = tf.expand_dims(m, -1)
+
+    # adding small epsilon so that log or lgamma functions do not produce nans in loss function
+    n = tf.keras.activations.softplus(m)+1e-7
+    p = tf.keras.activations.sigmoid(m)+1e-7
+ 
+    out_tensor = tf.concat((n, p), axis=num_dims-1)
+ 
+    return out_tensor
+
+def negative_binomial_log_loss():
+   def loss(y_true, y_pred):
+       # Log loss of the negative binomial distribution
+       n, p = tf.unstack(y_pred, num=2, axis=-1)
+   
+       n = tf.expand_dims(n, -1)
+       p = tf.expand_dims(p, -1)
+   
+       nll = (
+           tf.math.lgamma(y_true)
+           + tf.math.lgamma(n-y_true+1)
+           - tf.math.lgamma(n)
+           - y_true * tf.math.log(p)
+           - (n-y_true) * tf.math.log(1-p) 
+       )
+   
+       return tf.reduce_mean(nll)       
+       
+   return loss
+
+class ProbabilisticModel():
+    def __init__(
+        self, 
+        epochs=200, 
+        batch_size=512, 
+        model_path=None,
+        use_generator=True
+    ):
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.model_path = model_path
+
+    def initialize(self, inp_shape_t, inp_shape_s, out_shape):
+
+        # inp_shape_t - shape of the input time series
+        # inp_shape_s - shape of the input static features
+        # out_shape   - shape of the output time series
+
+        inp_t = Input(shape=inp_shape_t)
+        inp_s = Input(shape=inp_shape_s)
+
+        x_t = \
+            Conv1D(
+                filters=16, 
+                kernel_size=inp_shape_t[0], 
+                activation='relu', 
+                input_shape=inp_shape_t
+            )(inp_t)
+                
+        x_t = Dense(16, activation='relu')(x_t)
+        x_s = Dense(8, activation='relu')(inp_s)
+
+        x = Concatenate()([x_t, x_s])
+
+        out = Dense(out_shape[0]*2)(x)
+        out = Reshape((out_shape[0], 2))(out)
+        out = tf.keras.layers.Lambda(negative_binomial_layer)(out)
+                
+        self.model = Model([inp_t, inp_s], out)
+        
+        self.model.compile(
+            loss=negative_binomial_log_loss(), optimizer=tf.keras.optimizers.Adam(0.001)
+        )
+    
+    def fit(self, X_t:np.array, X_s:np.array, y:np.array):
+
+         # X_t - input time series
+         # X_s - input static features
+         # y   - output time series
+
+         model_checkpoint_callback = \
+            tf.keras.callbacks.ModelCheckpoint(
+                filepath=self.model_path,
+                monitor='loss',
+                mode='min',
+                save_best_only=True
+            )
+        
+         self.model.fit\
+            (
+                [X_t, X_s], y, 
+                epochs=self.epochs, 
+                batch_size=self.batch_size, 
+                validation_split=None, 
+                verbose=1, 
+                shuffle=True,
+                callbacks=[model_checkpoint_callback]
+            )
+    
+    def predict(self, X_t:np.array, X_s:np.array):
+        return self.model.predict([X_t, X_s])
+    
+    def save(self):
+        self.model.save(self.model_path)
+    
+    def load(self):
+        self.model = \
+            load_model(
+                self.model_path, 
+                custom_objects={
+                    'negative_binomial_layer':negative_binomial_layer,
+                    'loss':negative_binomial_log_loss()
+                })
+```
 
 
 
