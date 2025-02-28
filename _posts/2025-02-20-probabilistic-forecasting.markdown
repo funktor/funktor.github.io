@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Deep learning probabilistic forecasting with different distributions"
+title:  "Deep learning probabilistic forecasting with non-gaussian distributions"
 date:   2025-02-20 18:50:11 +0530
 categories: ml
 ---
@@ -178,7 +178,7 @@ Two interesting distributions that are frequently encountered during demand fore
 1. Negative Binomial Distribution
 2. Tweedie Distribution
 
-**Negative Binomial Distribution**
+**Negative Binomial Distribution**<br/>
 Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it was not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the `probability of having r 1's and ending with a 1` is given as (if we exclude the last entry which is fixed to 1, then we can `choose r-1 places from N-1 places for the 1s`):
 
 <p align="center">
@@ -327,8 +327,8 @@ class ProbabilisticModel():
 
 Few things to note in the above tensorflow implementation:
 
-1. For N we are using softplus activation because N is a non-negative parameter for the distribution.
-2. For p we are using sigmoid activation because it is probability and lies between 0 and 1.
+1. For N we are using `softplus` activation because N is a non-negative parameter for the distribution.
+2. For p we are using `sigmoid` activation because it is probability and lies between 0 and 1.
 3. For p we are taking adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
 4. For n we are adding a small epsilon 1e-5 so that it is always greater than 0 because the log gamma function will generate nans if N is 0.
 
