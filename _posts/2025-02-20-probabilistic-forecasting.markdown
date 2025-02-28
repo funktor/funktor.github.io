@@ -174,24 +174,36 @@ There are many loss functions such as the `contrastive loss` or `pinball loss` e
 
 One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to either sample values or find the inverse CDF and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
 
-Two common distributions that are commonly encountered during demand forecasting problems are:
+Two interesting distributions that are frequently encountered during demand forecasting problems are:
 1. Negative Binomial Distribution
 2. Tweedie Distribution
 
-Negative Binomial Distribution
-Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it is not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the probability of having r 1's and ending with a 1 is given as (if we exclude the last entry which is fixed to 1, then we can choose r-1 places from N-1 places for the 1s):
+**Negative Binomial Distribution**
+Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it was not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the `probability of having r 1's and ending with a 1` is given as (if we exclude the last entry which is fixed to 1, then we can `choose r-1 places from N-1 places for the 1s`):
 
-![image](https://github.com/user-attachments/assets/90e4ede5-a688-4aad-9794-3efcdc176bbf)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/90e4ede5-a688-4aad-9794-3efcdc176bbf">
+</p>
 
-Here N and p are parameters of the distribution. If N was fixed, it would just be a binomial distribution. If N is a parameter, it is a negative binomial distribution. In our case N is a parameter because we do not know at what time the observations were taken. Our goal is to find N and probability p.
+Here `N and p are parameters of the distribution`. If N was fixed, it would just be a `binomial distribution`. If N is a parameter, it is a negative binomial distribution. In our case N is a parameter because we do not know at what time the observations were taken. Our goal is to find N and probability p.
 
-The log likelihood formula for the above distribution would be something like:
+The `log likelihood` formula for the above distribution would be something like:
 
-![image](https://github.com/user-attachments/assets/017f27cb-704e-4466-af27-7962b8459849)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/017f27cb-704e-4466-af27-7962b8459849">
+</p>
+
+The gamma function for integers are defined to be:
+
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/4b446509-8dfa-4513-bb06-0f6968d67f7e">
+</p>
 
 The mean of the above distribution is given as:
 
-![image](https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36">
+</p>
 
 In one of the [previous posts](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), we introduced a deep learning architecture for time series forecasting of demand and supply. Referring back to the same architecture, we can define our own custom negative binomial layer and the negative binomial log loss as follows:
 
@@ -199,15 +211,15 @@ In one of the [previous posts](https://funktor.github.io/ml/2025/02/04/demand-su
 def negative_binomial_layer(x):
     num_dims = len(x.get_shape())
 
-    # assuming that the input to this layer is a concatenation of n and p variables
+    # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
     n, p = tf.unstack(x, num=2, axis=-1)
 
     n = tf.expand_dims(k, -1)
     p = tf.expand_dims(m, -1)
 
     # adding small epsilon so that log or lgamma functions do not produce nans in loss function
-    n = tf.keras.activations.softplus(m)+1e-7
-    p = tf.keras.activations.sigmoid(m)+1e-7
+    n = tf.keras.activations.softplus(m)+1e-5
+    p = 1e-5 + (1-2e-5)*tf.keras.activations.sigmoid(m)
  
     out_tensor = tf.concat((n, p), axis=num_dims-1)
  
@@ -216,6 +228,7 @@ def negative_binomial_layer(x):
 def negative_binomial_log_loss():
    def loss(y_true, y_pred):
        # Log loss of the negative binomial distribution
+       # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
        n, p = tf.unstack(y_pred, num=2, axis=-1)
    
        n = tf.expand_dims(n, -1)
@@ -245,43 +258,37 @@ class ProbabilisticModel():
         self.batch_size = batch_size
         self.model_path = model_path
 
-    def initialize(self, inp_shape_t, inp_shape_s, out_shape):
+    def initialize(self, inp_shape, out_shape):
 
-        # inp_shape_t - shape of the input time series
-        # inp_shape_s - shape of the input static features
-        # out_shape   - shape of the output time series
+        # inp_shape - shape of the input time series
+        # out_shape - shape of the output time series
 
-        inp_t = Input(shape=inp_shape_t)
-        inp_s = Input(shape=inp_shape_s)
+        inp = Input(shape=inp_shape)
 
-        x_t = \
+        x = \
             Conv1D(
                 filters=16, 
-                kernel_size=inp_shape_t[0], 
+                kernel_size=inp_shape[0], 
                 activation='relu', 
-                input_shape=inp_shape_t
-            )(inp_t)
+                input_shape=inp_shape
+            )(inp)
                 
-        x_t = Dense(16, activation='relu')(x_t)
-        x_s = Dense(8, activation='relu')(inp_s)
-
-        x = Concatenate()([x_t, x_s])
+        x = Dense(16, activation='relu')(x)
 
         out = Dense(out_shape[0]*2)(x)
         out = Reshape((out_shape[0], 2))(out)
         out = tf.keras.layers.Lambda(negative_binomial_layer)(out)
                 
-        self.model = Model([inp_t, inp_s], out)
+        self.model = Model(inp, out)
         
         self.model.compile(
             loss=negative_binomial_log_loss(), optimizer=tf.keras.optimizers.Adam(0.001)
         )
     
-    def fit(self, X_t:np.array, X_s:np.array, y:np.array):
+    def fit(self, X:np.array, Y:np.array):
 
-         # X_t - input time series
-         # X_s - input static features
-         # y   - output time series
+         # X - input time series
+         # Y - output time series
 
          model_checkpoint_callback = \
             tf.keras.callbacks.ModelCheckpoint(
@@ -293,7 +300,7 @@ class ProbabilisticModel():
         
          self.model.fit\
             (
-                [X_t, X_s], y, 
+                X, Y, 
                 epochs=self.epochs, 
                 batch_size=self.batch_size, 
                 validation_split=None, 
@@ -302,8 +309,8 @@ class ProbabilisticModel():
                 callbacks=[model_checkpoint_callback]
             )
     
-    def predict(self, X_t:np.array, X_s:np.array):
-        return self.model.predict([X_t, X_s])
+    def predict(self, X:np.array):
+        return self.model.predict(X)
     
     def save(self):
         self.model.save(self.model_path)
@@ -318,6 +325,12 @@ class ProbabilisticModel():
                 })
 ```
 
+Few things to note in the above tensorflow implementation:
+
+1. For N we are using softplus activation because N is a non-negative parameter for the distribution.
+2. For p we are using sigmoid activation because it is probability and lies between 0 and 1.
+3. For p we are taking adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
+4. For n we are adding a small epsilon 1e-5 so that it is always greater than 0 because the log gamma function will generate nans if N is 0.
 
 
 
