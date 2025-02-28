@@ -174,13 +174,20 @@ There are many loss functions such as the `contrastive loss` or `pinball loss` e
 
 One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to either sample values or find the inverse CDF and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
 
-Some common distributions that are commonly encountered during our demand forecasting are:
+Two common distributions that are commonly encountered during demand forecasting problems are:
 1. Negative Binomial Distribution
 2. Tweedie Distribution
 
-There are other distributions often encountered, but for this post we will focus on the above two distributions and show how we can train a deep learning forecasting model to learn these distributions. 
+Negative Binomial Distribution
+Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it is not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the probability of having r 1's and ending with a 1 is given as (if we exclude the last entry which is fixed to 1, then we can choose r-1 places from N-1 places for the 1s):
 
+![image](https://github.com/user-attachments/assets/90e4ede5-a688-4aad-9794-3efcdc176bbf)
 
+Here N and p are parameters of the distribution. If N was fixed, it would just be a binomial distribution. If N is a parameter, it is a negative binomial distribution. In our case N is a parameter because we do not know at what time the observations were taken. Our goal is to find N and probability p.
+
+The mean of the above distribution is given as:
+
+![image](https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36)
 
 
 
