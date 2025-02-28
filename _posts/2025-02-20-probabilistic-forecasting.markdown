@@ -190,7 +190,7 @@ Here `N and p are parameters of the distribution`. If N was fixed, it would just
 The `log likelihood` formula for the above distribution would be something like:
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/017f27cb-704e-4466-af27-7962b8459849">
+    <img src="https://github.com/user-attachments/assets/3f560cf7-d595-417d-be7e-ea365c16e161">
 </p>
 
 The gamma function for integers are defined to be:
@@ -199,13 +199,7 @@ The gamma function for integers are defined to be:
     <img src="https://github.com/user-attachments/assets/4b446509-8dfa-4513-bb06-0f6968d67f7e">
 </p>
 
-The mean of the above distribution is given as:
-
-<p align="center">
-    <img src="https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36">
-</p>
-
-In one of the [previous posts](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), we introduced a deep learning architecture for time series forecasting of demand and supply. Referring back to the same architecture, we can define our own custom negative binomial layer and the negative binomial log loss as follows:
+In one of the [earlier posts](https://funktor.github.io/ml/2025/02/04/demand-supply-forecasting-virtual-machines.html), we introduced a deep learning architecture for time series forecasting of demand and supply. Referring back to the same architecture, we can define our own custom negative binomial layer and the negative binomial log loss as follows:
 
 ```python
 def negative_binomial_layer(x):
@@ -214,12 +208,12 @@ def negative_binomial_layer(x):
     # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
     n, p = tf.unstack(x, num=2, axis=-1)
 
-    n = tf.expand_dims(k, -1)
-    p = tf.expand_dims(m, -1)
+    n = tf.expand_dims(n, -1)
+    p = tf.expand_dims(p, -1)
 
     # adding small epsilon so that log or lgamma functions do not produce nans in loss function
-    n = tf.keras.activations.softplus(m)+1e-5
-    p = 1e-5 + (1-2e-5)*tf.keras.activations.sigmoid(m)
+    n = tf.keras.activations.softplus(n)+1e-5
+    p = 1e-5 + (1-2e-5)*tf.keras.activations.sigmoid(p)
  
     out_tensor = tf.concat((n, p), axis=num_dims-1)
  
@@ -235,11 +229,11 @@ def negative_binomial_log_loss():
        p = tf.expand_dims(p, -1)
    
        nll = (
-           tf.math.lgamma(y_true)
-           + tf.math.lgamma(n-y_true+1)
+           tf.math.lgamma(n-y_true+1)
+           + tf.math.lgamma(y_true)
            - tf.math.lgamma(n)
-           - y_true * tf.math.log(p)
-           - (n-y_true) * tf.math.log(1-p) 
+           - n * tf.math.log(p)
+           - y_true * tf.math.log(1-p) 
        )
    
        return tf.reduce_mean(nll)       
@@ -252,7 +246,6 @@ class ProbabilisticModel():
         epochs=200, 
         batch_size=512, 
         model_path=None,
-        use_generator=True
     ):
         self.epochs = epochs
         self.batch_size = batch_size
@@ -273,8 +266,6 @@ class ProbabilisticModel():
                 input_shape=inp_shape
             )(inp)
                 
-        x = Dense(16, activation='relu')(x)
-
         out = Dense(out_shape[0]*2)(x)
         out = Reshape((out_shape[0], 2))(out)
         out = tf.keras.layers.Lambda(negative_binomial_layer)(out)
@@ -282,7 +273,8 @@ class ProbabilisticModel():
         self.model = Model(inp, out)
         
         self.model.compile(
-            loss=negative_binomial_log_loss(), optimizer=tf.keras.optimizers.Adam(0.001)
+            loss=negative_binomial_log_loss(), 
+            optimizer=tf.keras.optimizers.Adam(0.001)
         )
     
     def fit(self, X:np.array, Y:np.array):
@@ -311,26 +303,125 @@ class ProbabilisticModel():
     
     def predict(self, X:np.array):
         return self.model.predict(X)
-    
-    def save(self):
-        self.model.save(self.model_path)
-    
-    def load(self):
-        self.model = \
-            load_model(
-                self.model_path, 
-                custom_objects={
-                    'negative_binomial_layer':negative_binomial_layer,
-                    'loss':negative_binomial_log_loss()
-                })
 ```
 
 Few things to note in the above tensorflow implementation:
 
-1. For N we are using `softplus` activation because N is a non-negative parameter for the distribution.
-2. For p we are using `sigmoid` activation because it is probability and lies between 0 and 1.
-3. For p we are taking adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
-4. For n we are adding a small epsilon 1e-5 so that it is always greater than 0 because the log gamma function will generate nans if N is 0.
+1. The forecasting model is a multi-horizon model and each input is a 3D Tensor (batch size, num timesteps, embedding size).
+2. For N we are using `softplus` activation because N is a non-negative parameter for the distribution.
+3. For p we are using `sigmoid` activation because it is probability and lies between 0 and 1.
+4. For p we are taking adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
+5. For n we are adding a small epsilon 1e-5 so that it is always greater than 0 because the log gamma function will generate nans if N is 0.
+6. In the formula for the log likelihood, the variable 'r' is the y_true value.
+
+If you run the above code, you will most likely get `nan` as loss. This is because of this term in the loss function:
+```
+tf.math.lgamma(n-y_true+1)
+```
+If n < y_true-1, then the term inside log gamma function will be negative and the function is undefined at that point.
+
+One solution to this problem is instead of using n (length of sequence) we will use a different variable k s.t. n = k+r. With this change, we will mitigate the nan issue. The updated code is as follows:
+
+```python
+def negative_binomial_layer(x):
+    num_dims = len(x.get_shape())
+
+    # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+    k, p = tf.unstack(x, num=2, axis=-1)
+
+    k = tf.expand_dims(k, -1)
+    p = tf.expand_dims(p, -1)
+
+    # adding small epsilon so that log or lgamma functions do not produce nans in loss function
+    k = tf.keras.activations.softplus(k)+1e-5
+    p = 1e-5 + (1-2e-5)*tf.keras.activations.sigmoid(p)
+ 
+    out_tensor = tf.concat((k, p), axis=num_dims-1)
+ 
+    return out_tensor
+
+def negative_binomial_log_loss():
+   def loss(y_true, y_pred):
+       # Log loss of the negative binomial distribution
+       # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+       k, p = tf.unstack(y_pred, num=2, axis=-1)
+   
+       k = tf.expand_dims(k, -1)
+       p = tf.expand_dims(p, -1)
+   
+       nll = (
+           tf.math.lgamma(y_true+1)
+           + tf.math.lgamma(k)
+           - tf.math.lgamma(k+y_true)
+           - k * tf.math.log(p)
+           - y_true * tf.math.log(1-p) 
+       )
+   
+       return tf.reduce_mean(nll)       
+       
+   return loss
+```
+
+One more issue even with the above change is that, when the demand values are large, the input to the (k, p)-layer are also large and since the 'p' output passes through a sigmoid acivation, the sigmoid saturates and learning stops. The issue does not occur when the demand values are small of the order of O(100).
+
+This issue can also be mitigated by using another variable change. Use mean instead of probability 'p'. 
+
+The mean of the distribution is given as:
+
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36">
+</p>
+
+In such case, the probability p and 1-p can be expressed as:
+
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/e931c54c-fe91-4309-9d69-ca22e5b55446">
+</p>
+
+The updated code is as follows:
+
+```python
+def negative_binomial_layer(x):
+    num_dims = len(x.get_shape())
+
+    # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+    k, m = tf.unstack(x, num=2, axis=-1)
+
+    k = tf.expand_dims(k, -1)
+    m = tf.expand_dims(p, -1)
+
+    # adding small epsilon so that log or lgamma functions do not produce nans in loss function
+    k = tf.keras.activations.softplus(k)+1e-5
+    m = tf.keras.activations.relu(k)+1e-5
+ 
+    out_tensor = tf.concat((k, m), axis=num_dims-1)
+ 
+    return out_tensor
+
+def negative_binomial_log_loss():
+   def loss(y_true, y_pred):
+       # Log loss of the negative binomial distribution
+       # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+       k, m = tf.unstack(y_pred, num=2, axis=-1)
+   
+       k = tf.expand_dims(k, -1)
+       m = tf.expand_dims(m, -1)
+   
+       nll = (
+           tf.math.lgamma(y_true+1)
+           + tf.math.lgamma(k)
+           - tf.math.lgamma(k+y_true)
+           - k * tf.math.log(y_true)
+           + k * tf.math.log(y_true+m)
+           - y_true * tf.math.log(m) 
+           + y_true * tf.math.log(y_true+m) 
+       )
+   
+       return tf.reduce_mean(nll)       
+       
+   return loss
+```
+
 
 
 
