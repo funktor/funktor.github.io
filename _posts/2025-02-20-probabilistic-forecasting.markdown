@@ -44,9 +44,10 @@ def get_quantile_normal(u, s, n, q=0.5):
     # u - mean of distribution
     # s - sd of distribution
 
+    assert 0 <= q <= 1, "quantile should be between 0 and 1"
+
     a = np.random.normal(u, s, n)
     a = sorted(a.tolist())
-    assert 0 <= q <= 1, "quantile should be between 0 and 1"
 
     j = int(q*n)
 
@@ -59,9 +60,13 @@ def get_quantile_normal(u, s, n, q=0.5):
 print(get_quantile_normal(0.0, 1.0, 1000000, 0.99))
 ```
 
-But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is `a` and max value is `b` and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin index int((D-a)/c) where c = (b-a)/100.0.
+But since sorting is expensive if N is very large or we are doing sampling quite often, a better strategy would be to use a `histogram` based approach. If the minimum value is `a` and max value is `b` and say we are using 100 bins, then we divide the interval [a, b) into 100 bins s.t. a value D would go into bin indexed: 
 
-To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside a bin. Sort the values within the bin only and take the corresponding value as the quantile. Or we can recursively continue to create bins until the maximum size of a bin is less than some constant threshold e.g. 10 s.t. sorting overhead is minimal.<br/>
+```
+int((D-a)/c) where c = (b-a)/100.0
+```
+
+To get the 99th percentile, continue to sum the size of the bins until the index int(q*N) lies inside the current bin. Sort the values within the bin only and take the corresponding value as the quantile. Or we can recursively continue to create bins until the maximum size of a bin is less than some constant threshold e.g. 10 s.t. sorting overhead is minimal.<br/>
 
 ```python
 def get_quantile_hist_normal(u, s, n, q=0.5, nbins=10):
@@ -136,7 +141,7 @@ But before showing how to incorporate gamma or negative binom. distributions in 
 
 Most standard loss functions are the **negative log likelihood of the target variable**.
 
-Assuming that each output j is sampled from a `normal distribution` N(u<sub>j</sub>, 1.0) where u<sub>j</sub> is the model predicted value i.e. y<sup>j</sup><sub>pred</sub> (`standard deviation` is just a scaling factor hence it is assumed to be 1.0). The PDF of the output j is:
+Assuming that each output label j is sampled from a `normal distribution` N(u<sub>j</sub>, 1.0) where u<sub>j</sub> is the model predicted value i.e. y<sup>j</sup><sub>pred</sub> (`standard deviation` is just a scaling factor hence it is assumed to be 1.0). The PDF of the output j is:
 
 <p align="center">
     <img src="https://github.com/user-attachments/assets/490c3cb5-9a75-438d-948d-40d9e285c9b1">
@@ -168,7 +173,7 @@ Finding the joint distribution by taking the product for all j=0 to N-1 and taki
     <img src="https://github.com/user-attachments/assets/d81be952-7088-4102-86e7-56e4b9301ca6">
 </p>
 
-But it is **not a prerequisite to use the negative log likelihood as the loss function** everywhere. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
+But it is **not a prerequisite to use the negative log likelihood as the loss function**. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
 
 There are many loss functions such as the `contrastive loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
 
@@ -308,7 +313,7 @@ Few things to note in the above tensorflow implementation:
 1. The forecasting model is a multi-horizon model and each input is a 3D Tensor (batch size, num timesteps, embedding size).
 2. For N we are using `softplus` activation because N is a non-negative parameter for the distribution.
 3. For p we are using `sigmoid` activation because it is probability and lies between 0 and 1.
-4. For p we are taking adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
+4. For p we are adjusting the range in [0.00001, 0.99999] because we are taking log(p) and log(1-p) in the loss function. If p is 0 or p is 1, this will lead to invalid values such as nans.
 5. For n we are adding a small epsilon 1e-5 so that it is always greater than 0 because the log gamma function will generate nans if N is 0.
 6. In the formula for the log likelihood, the variable 'r' is the y_true value.
 
@@ -324,7 +329,7 @@ One solution to this problem is instead of using n (length of sequence) we will 
 def negative_binomial_layer(x):
     num_dims = len(x.get_shape())
 
-    # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+    # assuming that the input to this layer is a concatenation of k and p, extract the 2 variables from input x
     k, p = tf.unstack(x, num=2, axis=-1)
 
     k = tf.expand_dims(k, -1)
