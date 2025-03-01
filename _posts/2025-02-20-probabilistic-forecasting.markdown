@@ -14,10 +14,6 @@ Note that **mean and median may not be equal**.
 
 3. The `distribution` of the demand is `skewed`. Instead of a symmetric normal distribution, the distribution is skewed resembling a `gamma` or a `negative binomial distribution` with a `long tail`.
 
-<p align="center">
-    <img src="https://github.com/user-attachments/assets/2142fad9-fa93-4a30-9759-ce4563f6fedd">
-</p>
-
 For point no. 1, if one desires specific quantile such as P90 or P99 value, then there is a specific cost function associated, termed as the **Pinball Loss**.
 
 ```
