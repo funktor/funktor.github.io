@@ -465,7 +465,7 @@ Note that for the 50th percentile predictions, the predicted demand values almos
 
 One might say that the median is a more accurate representation but in practical scenarios `99th percentile is more useful` because the supply or buffer we need to procure to cater all the demand is captured by the 99th percentile and thus ensure that demand will not exceed supply.
 
-Another interesting distribution commonly used in forecasting is the Tweedie Distribution. We will not go into the details of it but you can find some good readings about it in the suggested readings section.
+Another interesting distribution commonly used in forecasting is the **Tweedie Distribution**. We will not go into the details of it but you can find some good readings about it in the suggested readings section.
 
 ## Suggested Readings
 1. [A guide to generating probability distributions with neural networks](https://medium.com/hal24k-techblog/a-guide-to-generating-probability-distributions-with-neural-networks-ffc4efacd6a4)
