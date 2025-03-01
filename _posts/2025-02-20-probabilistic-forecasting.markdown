@@ -174,9 +174,7 @@ There are many loss functions such as the `contrastive loss` or `pinball loss` e
 
 One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to either sample values or find the inverse CDF and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
 
-Two interesting distributions that are frequently encountered during demand forecasting problems are:
-1. Negative Binomial Distribution
-2. Tweedie Distribution
+In this post we will explore the `Negative Binomial Distribution` which is quite commonly encountered in demand forecasting problems.
 
 **Negative Binomial Distribution**<br/>
 Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it was not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the `probability of having r 1's and ending with a 1` is given as (if we exclude the last entry which is fixed to 1, then we can `choose r-1 places from N-1 places for the 1s`):
@@ -442,6 +440,18 @@ def do_prediction(X, model, q=0.99, sample_size=10000):
     res = res.reshape((res.shape[0], res.shape[1], 1))
     return res
 ```
+<br/>
 
+**99th percentile** actual vs. predicted demand values
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/0212e8db-9900-45be-82a2-6b85db2522a0">
+</p>
 
+**50th percentile (median)** actual vs. predicted demand values
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/765d84a2-f76c-446b-97e8-428c65823952">
+</p>
 
+Note that for the 50th percentile predictions, the predicted demand values almost coincides with the actual demand values whereas for 99th percentile, the predicted values are almost always higher than the actual. 
+
+One might say that the median is a more accurate representation but in practical scenarios `99th percentile is more useful` because the supply or buffer we need to procure to cater all the demand is captured by the 99th percentile and thus ensure that demand will not exceed supply.
