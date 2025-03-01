@@ -175,11 +175,15 @@ Finding the joint distribution by taking the product for all j=0 to N-1 and taki
 
 But it is **not a prerequisite to use the negative log likelihood as the loss function**. For linear regression, even if the target variable or the residual (y<sub>true</sub>-y<sub>pred</sub>) do not follow the normal distribution we can still use the mean squared error loss function to learn y<sub>pred</sub>. Similarly, for classification once can also use the mean squared error loss instead of the logistic loss and still get good results.
 
-There are many loss functions such as the `contrastive loss` or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
+There are many loss functions such as the [`contrastive loss`](https://medium.com/@maksym.bekuzarov/losses-explained-contrastive-loss-f8f57fe32246) or `pinball loss` etc. which does not directly follow from negative log likelihood expressions.
 
 One can use any loss function if the objective is just to learn y<sub>pred</sub>, but in our case, we want to find different **quantiles for y<sub>pred</sub> instead of learning y<sub>pred</sub>** and for that we must know the correct distribution for y and then use that distribution to either sample values or find the inverse CDF and get the quantile. If the distribution is not correct, then we will **sample incorrect values and quantiles will also be incorrect**.
 
 In this post we will explore the `Negative Binomial Distribution` which is quite commonly encountered in demand forecasting problems.
+
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/03f915c7-6afc-47b4-ad65-a2a1b8886b1e">
+</p>
 
 **Negative Binomial Distribution**<br/>
 Given a binary sequence of 1s and 0s where the probability of 1 is p and probability of 0 is 1-p. In the context of virtual machines,let 1 indicate that a VM was used and 0 indicate it was not used. Assume that each entry corresponds to an event at time stamp T<sub>i</sub>. For some given sequence length N, the `probability of having r 1's and ending with a 1` is given as (if we exclude the last entry which is fixed to 1, then we can `choose r-1 places from N-1 places for the 1s`):
@@ -372,13 +376,13 @@ This issue can also be mitigated by using another variable change. Use mean inst
 The mean of the distribution is given as:
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/9fc2d75a-2b41-4756-839a-72b0b3f91d36">
+    <img src="https://github.com/user-attachments/assets/aff7f901-ee5e-42c1-9ad5-43bd522f3988">
 </p>
 
 In such case, the probability p and 1-p can be expressed as:
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/e931c54c-fe91-4309-9d69-ca22e5b55446">
+    <img src="https://github.com/user-attachments/assets/706152c4-2783-46a7-802e-1b40f325a0ce">
 </p>
 
 The updated code is as follows:
@@ -460,3 +464,13 @@ def do_prediction(X, model, q=0.99, sample_size=10000):
 Note that for the 50th percentile predictions, the predicted demand values almost coincides with the actual demand values whereas for 99th percentile, the predicted values are almost always higher than the actual. 
 
 One might say that the median is a more accurate representation but in practical scenarios `99th percentile is more useful` because the supply or buffer we need to procure to cater all the demand is captured by the 99th percentile and thus ensure that demand will not exceed supply.
+
+Another interesting distribution commonly used in forecasting is the Tweedie Distribution. We will not go into the details of it but you can find some good readings about it in the suggested readings section.
+
+## Suggested Readings
+1. [A guide to generating probability distributions with neural networks](https://medium.com/hal24k-techblog/a-guide-to-generating-probability-distributions-with-neural-networks-ffc4efacd6a4)
+2. [DeepAR](https://arxiv.org/pdf/1704.04110)
+3. [Maximum Likelihood Estimation of the Negative Binomial Distribution](https://medium.com/r?url=https%3A%2F%2Fvixra.org%2Fpdf%2F1211.0113v1.pdf)
+4. [Tweedie Loss Function](https://medium.com/towards-data-science/tweedie-loss-function-for-right-skewed-data-2c5ca470678f)
+5. [Spatial risk estimation in Tweedie compound Poisson double generalized linear models](https://arxiv.org/pdf/1912.12356)
+6. [Tweedie Loss Function](https://sathesant.medium.com/tweedie-loss-function-395d96883f0b)
