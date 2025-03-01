@@ -685,3 +685,9 @@ An effective model in this case should have the following properties - **`small 
 One major `downside` to the deep learning model based approach is that the `decompression is slow` as the model `predicts sequentially` with one output for every entry. 
 
 One more optimization we did to improve the compression ratio of the `TSXor` approach was to `reduce the precision` of the floats of the time series. For e.g. using `3 decimal places` instead of 12 significantly improves the compression ratio by `>5%`. In order to keep using more decimal places, we also did multiply the values by `1000` before taking only 3 decimal places so that we are able to incorporate more digits into the number.
+
+## Suggested Readings
+1. [Time series compression survey](https://arxiv.org/pdf/2101.08784)
+2. [Time-Series Compression Algorithms, Explained](https://www.timescale.com/blog/time-series-compression-algorithms-explained)
+3. [TSXor: A Simple Time Series Compression Algorithm](https://pages.di.unipi.it/pibiri/papers/SPIRE21.pdf)
+4. [Gorilla: A Fast, Scalable, In-Memory Time Series Database](https://www.vldb.org/pvldb/vol8/p1816-teller.pdf)
