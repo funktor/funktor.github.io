@@ -362,7 +362,7 @@ def negative_binomial_log_loss():
    return loss
 ```
 
-One more issue even with the above change is that, when the demand values are large, the input to the (k, p)-layer are also large and since the 'p' output passes through a sigmoid acivation, the sigmoid saturates and learning stops. The issue does not occur when the demand values are small of the order of O(100).
+One more issue even with the above change is that, when the demand values are large, the input to the (k, p)-layer are also large and since the 'p' output passes through a sigmoid acivation, the sigmoid saturates and learning stops. The issue does not occur when the demand values are small.
 
 This issue can also be mitigated by using another variable change. Use mean instead of probability 'p'. 
 
@@ -384,15 +384,15 @@ The updated code is as follows:
 def negative_binomial_layer(x):
     num_dims = len(x.get_shape())
 
-    # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+    # assuming that the input to this layer is a concatenation of k and m, extract the 2 variables from input x
     k, m = tf.unstack(x, num=2, axis=-1)
 
     k = tf.expand_dims(k, -1)
-    m = tf.expand_dims(p, -1)
+    m = tf.expand_dims(m, -1)
 
     # adding small epsilon so that log or lgamma functions do not produce nans in loss function
     k = tf.keras.activations.softplus(k)+1e-5
-    m = tf.keras.activations.relu(k)+1e-5
+    m = tf.keras.activations.softplus(m)+1e-5
  
     out_tensor = tf.concat((k, m), axis=num_dims-1)
  
@@ -401,7 +401,7 @@ def negative_binomial_layer(x):
 def negative_binomial_log_loss():
    def loss(y_true, y_pred):
        # Log loss of the negative binomial distribution
-       # assuming that the input to this layer is a concatenation of n and p, extract the 2 variables from input x
+       # assuming that the input to this layer is a concatenation of k and m, extract the 2 variables from input x
        k, m = tf.unstack(y_pred, num=2, axis=-1)
    
        k = tf.expand_dims(k, -1)
@@ -411,10 +411,10 @@ def negative_binomial_log_loss():
            tf.math.lgamma(y_true+1)
            + tf.math.lgamma(k)
            - tf.math.lgamma(k+y_true)
-           - k * tf.math.log(y_true)
-           + k * tf.math.log(y_true+m)
+           - k * tf.math.log(k)
+           + k * tf.math.log(k+m)
            - y_true * tf.math.log(m) 
-           + y_true * tf.math.log(y_true+m) 
+           + y_true * tf.math.log(k+m) 
        )
    
        return tf.reduce_mean(nll)       
@@ -422,6 +422,26 @@ def negative_binomial_log_loss():
    return loss
 ```
 
+Lastly, we would need to write a module to extract the desired quantile values from the distribution. It is not straightforward to calculate the [CDF of the negative binomial distribution](https://en.wikipedia.org/wiki/Beta_function#Incomplete_beta_function). Thus, we stick to the `sampling` approach as follows:
+
+```python
+def do_prediction(X, model, q=0.99, sample_size=10000):
+    z = model.predict(X)
+    res = []
+    for i in range(len(z)):
+        r1 = []
+        for j in range(len(z[i])):
+            k, m = z[i][j]
+            p = k/(k+m)
+            u = np.random.negative_binomial(k,p,sample_size).tolist()
+            u = sorted(u)
+            r1 += [u[int(q*len(u))]]
+        res += [r1]
+    
+    res = np.array(res)
+    res = res.reshape((res.shape[0], res.shape[1], 1))
+    return res
+```
 
 
 
