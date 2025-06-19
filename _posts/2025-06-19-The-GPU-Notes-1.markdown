@@ -18,3 +18,4 @@ Most commercially available CPUs have 4 to 24 cores and have larger L2 and L3 ca
 To achieve low latency, CPU needs more number of registers or flip-flops which requires more power and thus one cannot have too many cores inside a CPU. CPUs are good for low latency operations on sequential programs for e.g. computing the first 1 million fibonacci numbers.<br/>
 [Nice write up on CPU architecture](https://www.redhat.com/en/blog/cpu-components-functionality)<br/>
 GPUs on the other hand have smaller cores but more number of cores. For example e.g. H100 have 14592 CUDA cores in addition to 640 Tensor cores. They also have smaller caches and smaller control units and more number of channels to the DRAM. The goal is high throughput for parallel computations.<br/>
+![CPU vs GPU](/docs/assets/cpu_gpu.png)
