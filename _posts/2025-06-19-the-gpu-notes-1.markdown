@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "The GPU Notes - Part 1"
-date:   2025-06-19 18:50:11 +0530
+date:   2025-06-18 18:50:11 +0530
 categories: software-engineering
 ---
 
