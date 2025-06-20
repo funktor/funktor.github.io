@@ -130,15 +130,23 @@ Basic 2D Matrix multiplication using CUDA C++.<br/><br/>
 
 4. **Streaming Multiprocessors and Warps**<br/><br/>
 The GPU is arranged as an array of streaming multiprocessors (SM) where each SM contains several streaming processors or CUDA cores, has its own shared memory and control unit. H100 comes with 132 SMs where each SM contains 128 Cores thus totalling 16896 CUDA Cores.<br/><br/>
+![Streaming Multiprocessor](/docs/assets/sm.jpg)
+<br/><br/>
 When we launch a grid of threads arranged in a block, the 3d block is linearized in row-major order and distributed across SMs. All threads in a block are assigned to the same SM. Multiple blocks can be assigned to the same SM. All active threads in a SM are run concurrently. H100 supports a maximum of 2048 active threads (that can run concurrently) per SM.<br/><br/>
+![Block assignment SM](/docs/assets/block_assign.png)
+<br/><br/>
 Since all threads in a block run concurrently on the same SM, they would have similar running times. CUDA supports syncing threads using the _syncthreads() method but it is only applicable to threads in same block for the same reason that threads in same block have similar running times.<br/><br/>
 Thus if the total number of threads in an application is 2^22 and each block has 1024 i.e 2^10 threads, then there are a total of 2^12 blocks of threads. Since each block has 1024 threads and each SM can support 2048 threads, thus each SM can accomodate 2 blocks at a time. Thus, the 1st 2 blocks are assigned to SM0, the next 2 blocks to SM1 and so on. The 132 SMs can accomodate 264 blocks at a time. Thus, the 1st 264 blocks runs concurrently and the remaining blocks are queued. Whenever any one block is completed, one of the queued block is assigned to the SM having capacity.<br/><br/>
 Note that each SM has only 128 CUDA cores in H100 but can accomodate a maximum of 2048 threads.<br/><br/>
 The more number of threads assigned per SM is in order to hide latency. If only 128 threads are assigned to a SM, not all threads will be working at all times. Some threads might be busy fetching data from memory and during that time the thread will remain idle. This allows some other thread in the queue to start processing.<br/><br/>
 GPUs have smaller control units. Control units fetches instruction into the Instruction Register (IR). The instructions are then parsed. If multiple threads are working on different parts of a program, the amount of instructions to fetch during each instruction cycle will be quite large thus requiring larger control units with larger power requirements.<br/><br/>
 In order to trade-off smaller control units for more number of cores, blocks of threads are partitioned into warps of 32 threads and the 128 cores in SM is partitioned into processing blocks. If each processing block is 16 cores, then there would be 128/16=8 processing blocks in each SM. Threads in the same warp are assigned to the same processing block.<br/><br/>
+![Warp assignment SM](/docs/assets/warp.png)
+<br/><br/>
 The control unit fetches instruction per warp instead of per thread thus reducing the number of instructions to fetch.<br/><br/>
 The same instruction is applied to all threads in a SIMD or SIMT (Single Instruction Multiple Thread) fashion. The lane size for SIMD is 32 here.<br/><br/>
+![Warp architecture](/docs/assets/warp_arc.png)
+<br/><br/>
 Since all threads in a warp follow same instruction, a CUDA program having an if-else statement which is dependent on thread index i.e. some threads will execute if statement whereas other threads will execute else statment, will be run twice by all the threads in the warp. First time all the threads will run the if block and next time will run the else block. Threads that should not run the if block will be deactivated during 1st run and similarly threads that should not run the else block will be deactivated during 2nd run.<br/><br/>
 Control divergence happens here:<br/><br/>
     ```cpp
@@ -152,6 +160,7 @@ Control divergence happens here:<br/><br/>
     }
     ```
     <br/><br/>
+Control divergence happens in 2 places in the above code. First in the check (idx < n) because number of threads could be more than the number of elements. Second here "if (idx % 2 == 0)".<br/><br/>
 Unlike context switching in CPU threads, threads and warps in GPU have low overhead for context switching. As mentioned above, a SM is assigned more threads and warps than the number of available cores because most often warps will sit idle and during that time other warps can run.<br/><br/>
 
 6. **DRAM vs HBM**
