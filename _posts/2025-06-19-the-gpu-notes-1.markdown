@@ -177,5 +177,7 @@ Registers are kind of D-flip flops that are used to store the state of a variabl
 <br/><br/>
 [Registers in CPU](https://www.totalphase.com/blog/2023/05/what-is-register-in-cpu-how-does-it-work/?srsltid=AfmBOorNDS66hKB1pL0K5vTaAaZ8mfenNRrk12S1waQLi9bV1AoEPN-u)
 <br/><br/>
+![Register](/docs/assets/CPU-registers.png)
+<br/><br/>
 If some kernel has 200 variables declared, then the number of threads that can be run is only int(65536/200)=327. Thus, the occupancy in this case is 327/2048=16%.<br/><br/>
 
