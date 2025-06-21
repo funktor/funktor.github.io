@@ -161,6 +161,21 @@ Control divergence happens here:<br/><br/>
     ```
     <br/><br/>
 Control divergence happens in 2 places in the above code. First in the check (idx < n) because number of threads could be more than the number of elements. Second here "if (idx % 2 == 0)".<br/><br/>
+[Role of Warps](https://www.digitalocean.com/community/tutorials/the-role-of-warps-in-parallel-processing)
+<br/><br/>
+[CUDA Warp-Level Primitives](https://developer.nvidia.com/blog/using-cuda-warp-level-primitives/)
+<br/><br/>
 Unlike context switching in CPU threads, threads and warps in GPU have low overhead for context switching. As mentioned above, a SM is assigned more threads and warps than the number of available cores because most often warps will sit idle and during that time other warps can run.<br/><br/>
 
-6. **DRAM vs HBM**
+6. **The Occupancy Problem**<br/><br/>
+A SM can accomodate a maximum of 2048 concurrently running threads.<br/><br/>
+But in practice the number of threads running concurrently in each SM can be lower. For e.g. in H100, the maximum number of blocks that can be assigned concurrently to run on each SM is limited to 32. Thus, if a block has 32 threads, then the number of blocks required for 2048 threads is 64=2048/32. But since only 32 blocks can run concurrently, thus occupancy here is 32*32/2048=50%.<br/><br/>
+Similarly if a block has 300 threads, then the number of blocks that can be assigned to a SM is int(2048/300)=6. But the number of threads in 6 block is only 1800. Thus the occupancy is 1800/2048=88%.<br/><br/>
+In H100, a maximum of 65536 registers can be allocated per SM and a maximum of 255 registers per thread.
+Registers are kind of D-flip flops that are used to store the state of a variable. Thus, any automatic variable declared inside a kernel may be stored in a register. For e.g. `float a` or `int b`.<br/><br/>
+[What are registers](https://www.reddit.com/r/explainlikeimfive/comments/ystgau/eli5_what_exactly_are_the_registers_in_the/)
+<br/><br/>
+[Registers in CPU](https://www.totalphase.com/blog/2023/05/what-is-register-in-cpu-how-does-it-work/?srsltid=AfmBOorNDS66hKB1pL0K5vTaAaZ8mfenNRrk12S1waQLi9bV1AoEPN-u)
+<br/><br/>
+If some kernel has 200 variables declared, then the number of threads that can be run is only int(65536/200)=327. Thus, the occupancy in this case is 327/2048=16%.<br/><br/>
+
