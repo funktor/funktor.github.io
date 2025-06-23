@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "The GPU Notes - Part 1"
-date:   2025-06-25 18:50:11 +0530
+date:   2025-06-21 18:50:11 +0530
 categories: software-engineering
 ---
 
@@ -11,13 +11,22 @@ My notes on learning and using GPU and CUDA for Machine Learning, Deep Learning 
 FLOPS - Floating Point Operations Per Seconds. 1 TFLOPS = 10^12 FLOPS. FLOPS is the number of floating point operations that can be done per second.<br/><br/>
 Intel i9 processor with 24 CPU cores (latest as of writing this) can reach a peak of 1.3 TFLOPS for single precision i.e. 32-bit floats (or FP32).<br/><br/>
 Compare this to the H100 GPU which has 16896 CUDA Cores and 640 Tensor Cores (will come later to this) and has limit of 48 TFLOPS for FP32 and 24 TFLOPS for FP64 (double-precision floats also known as 'double' in C) for non-tensors and 989 TFLOPS (FP32) and 67 TFLOPS (FP64) for tensors.<br/><br/>
+[Tensor Cores](https://www.digitalocean.com/community/tutorials/understanding-tensor-cores)
+<br/><br/>
 Latest GPU models also support half precision floats i.e. FP16 with higher TFLOPS (1979 TFLOPS) and FP8 with 3958 TFLOPS. FP8 and FP16 are used in deep learning for mixed precision training (revisited later).<br/><br/>
+[Mixed Precision Training](https://arxiv.org/abs/1710.03740)
+<br/><br/>
 For understanding floating point representations, refer to one of my earlier posts on floating point compression:<br/><br/>
 [Floating Point Compression](https://funktor.github.io/software-engineering/2025/02/12/time-series-compression.html)
 <br/><br/>
 
-2. **Smaller but more number of cores**<br/><br/>
-Most commercially available CPUs have 4 to 24 cores and have larger L2 and L3 cache sizes. CPUs also have larger area for control units managing branch prediction etc. Each core also have its own L1 cache (both data and instruction). CPUs also have fewer number of channels to the DRAM i.e. the main memory. CPU cores are optimized for low latency whereas GPU cores are optimized for high throughput.<br/><br/>
+3. **Smaller but more number of cores**<br/><br/>
+Most commercially available CPUs have 4 to 24 cores and have larger L2 and L3 cache sizes. CPUs also have larger area for control units managing branch prediction etc. Each core also have its own L1 cache (both data and instruction).<br/><br/>
+[Control Unit](https://www.geeksforgeeks.org/introduction-of-control-unit-and-its-design/)
+<br/><br/>
+[CPU Caches](https://dev.to/larapulse/cpu-cache-basics-57ej)
+<br/><br/>
+CPUs also have fewer number of channels to the DRAM i.e. the main memory. CPU cores are optimized for low latency whereas GPU cores are optimized for high throughput.<br/><br/>
 To achieve low latency, CPU needs more number of registers or flip-flops which requires more power and thus one cannot have too many cores inside a CPU. CPUs are good for low latency operations on sequential programs for e.g. computing the first 1 million fibonacci numbers.<br/><br/>
 Large cache size also allows significant re-use.<br/><br/>
 [Nice write up on CPU architecture](https://www.redhat.com/en/blog/cpu-components-functionality)<br/><br/>
@@ -25,7 +34,7 @@ GPUs on the other hand have smaller cores but more number of cores. For example 
 ![CPU vs GPU](/docs/assets/cpu_gpu.png)
 Smaller cache sizes may force certain applications to be memory bound i.e. most time taken goes into fetching data from DRAM into cache or register. To overcome this drawback more number of smaller caches and more channels enables more number of threads to fetch data in parallel. Thus GPUs have high memory thorughput as compared to CPU.<br/><br/>
 
-3. **CUDA Matrix Multiplication**<br/><br/>
+5. **CUDA Matrix Multiplication**<br/><br/>
 Basic 2D Matrix multiplication using CUDA C++.<br/><br/>
     ```cpp
     #include <stdio.h>
@@ -128,7 +137,7 @@ Basic 2D Matrix multiplication using CUDA C++.<br/><br/>
     ```
     <br/><br/>
 
-4. **Streaming Multiprocessors and Warps**<br/><br/>
+6. **Streaming Multiprocessors and Warps**<br/><br/>
 The GPU is arranged as an array of streaming multiprocessors (SM) where each SM contains several streaming processors or CUDA cores, has its own shared memory and control unit. H100 comes with 132 SMs where each SM contains 128 Cores thus totalling 16896 CUDA Cores.<br/><br/>
 ![Streaming Multiprocessor](/docs/assets/sm.jpg)
 <br/><br/>
@@ -168,7 +177,7 @@ Control divergence happens in 2 places in the above code. First in the check (id
 Unlike context switching in CPU threads, threads and warps in GPU have low overhead for context switching. As mentioned above, a SM is assigned more threads and warps than the number of available cores because most often warps will sit idle and during that time other warps can run.<br/><br/>
 Each SM has register file. All threads assigned to a SM have an entry in the register file. When a thread goes out of context the state is saved in the register file which is then load when the thread comes into context again. Thus, threads in SM have zero-overhead scheduling.<br/><br/>
 
-5. **The Occupancy Problem**<br/><br/>
+7. **The Occupancy Problem**<br/><br/>
 A SM can accomodate a maximum of 2048 concurrently running threads.<br/><br/>
 But in practice the number of threads running concurrently in each SM can be lower. For e.g. in H100, the maximum number of blocks that can be assigned concurrently to run on each SM is limited to 32. Thus, if a block has 32 threads, then the number of blocks required for 2048 threads is 64=2048/32. But since only 32 blocks can run concurrently, thus occupancy here is 32*32/2048=50%.<br/><br/>
 Similarly if a block has 300 threads, then the number of blocks that can be assigned to a SM is int(2048/300)=6. But the number of threads in 6 block is only 1800. Thus the occupancy is 1800/2048=88%.<br/><br/>
@@ -182,9 +191,11 @@ Registers are kind of D-flip flops that are used to store the state of a variabl
 <br/><br/>
 If some kernel has 200 variables declared, then the number of threads that can be run is only int(65536/200)=327. Thus, the occupancy in this case is 327/2048=16%.<br/><br/>
 
-6. **Memory**<br/><br/>
+8. **Memory**<br/><br/>
 DRAM is bad for GPU because when you have 1000s of threads accessing the memory simulataneously, it can lead to congestion and unwanted delays. The performance of a GPU kernel is measured in TFLOPS i.e. number of (Tera) floating point operations per second.<br/><br/>
 [DRAM vs SRAM](https://www.google.com/url?sa=t&source=web&rct=j&opi=89978449&url=https://www.youtube.com/watch%3Fv%3DVToZeD5HhoM&ved=2ahUKEwjwlKGn14aOAxVfZWwGHQ0_EosQtwJ6BAg6EAI&usg=AOvVaw0_WNEKNMDQTPiEuF4dy1dr)
+<br/><br/>
+![DRAM vs SRAM](/docs/assets/dram-sram.png)
 <br/><br/>
 If you take the matrix multiplication kernel above, the innermost loop fetches two floating point numbers `a[row*m+i]` and `b[i*p+col]` each 4 bytes (32-bit floats) from the DRAM and does 1 multiplication and 1 addition. Thus the FLOP/B ratio is 2/8 =0.25 FLOP/B. The memory bandwidth of H100 is around 2TB/s. Thus, TFLOPS can be calculated by taking the product of bandwidth and FLOP/B i.e. 2*0.25=0.5 TFLOPS.<br/><br/>
 The peak TFLOPS achievable with H100 is around 48 TFLOPS for 32-bit floats. Thus, efficiency of the matrix multiplication kernel above is only 0.5/48=1.0%.<br/><br/>
@@ -192,17 +203,23 @@ To achieve 48 TFLOPS, the kernel needs to perform 24 FLOP/B or 192 floating poin
 This can only be achieved if we re-use the data read from DRAM.<br/><br/>
 Similar to CPU and RAM, where the different memory types in order of increasing access latencies and increasing memory sizes:<br/><br/>
 register < L1 cache < L2 cache < L3 cache < Main Memory (RAM)<br/><br/>
+![Memory Hierarchy](/docs/assets/memory.JPG)
+<br/><br/>
 GPUs also have hierarchy of memory access latencies. Similar to the RAM, the highest access latency and highest memory size is the GPU global memory (DRAM). In H100, the global memory size is 188GB HBM3 with a bandwidth of 2TB/s. The scope of the global memory is the kernel grid i.e. all threads in a grid see the same memory. This is off-chip memory.<br/><br/>
 Registers are implemented per SM and scoped per thread i.e. each thread has its own set of registers has the lowest latency and is implemented on-chip. For e.g. variables declared like `int a` or `float b` are usually stored in registers. H100 accomodates a maximum of 65536 registers per SM and 255 maximum per thread.<br/><br/>
 [Stack vs Heap Memory](https://courses.grainger.illinois.edu/cs225/fa2022/resources/stack-heap/)
 <br/><br/>
 For pointers and arrays such as `float *a` or `int[] a` are stored in something known as local memory which is same as global memory but is scoped per thread.<br/><br/>
 Shared Memory is an important type of memory that is also implemented on-chip and has very low access latency. It is scoped per block of thread i.e. all threads in a block see the same shared memory addresses. The size of shared memory is configurable and maximum is 228KB in H100. To re-use data from global memory such as pointers and arrays, they are often stored in the shared memory which improves TFLOPS.<br/><br/>
+![GPU SM Memory](/docs/assets/gpu-memory.png)
+<br/><br/>
 Similar to CPU, GPUs have L1 cache scoped per SM and L2 cache scoped across all SM. Each SM has its own L1 cache. The combined size of L1 cache + Shared memory is 256KB in H100.<br/><br/>
 L2 cache size is around 50MB and is common to all SMs.<br/><br/>
 
-8. **Tiled Matrix Multiplication**<br/><br/>
+9. **Tiled Matrix Multiplication**<br/><br/>
 Matrix multiplication kernel (see above) using tiling to use shared memory and cache values to improve throughput.<br/><br/>
+![Tiled Mat-Mul](/docs/assets/matmul-tiled.png)
+<br/><br/>
 In the matrix multiplication kernel above, each row of matrix a is multiplied with p columns of matrix b and similarly each column of b is multiplied with n rows of a. Thus, we can cache the matrices a and b in the shared memory and re-use the cached matrix values for the matrix product instead of fetching from DRAM.<br/><br/>
     ```cpp
     // TILE_WIDTH is same as block dimension in each x and y direction
@@ -269,5 +286,7 @@ In the matrix multiplication kernel above, each row of matrix a is multiplied wi
     }
     ```
     <br/><br/>
+
+In the next part of the post we will look at CUDA optimizations thorugh different examples of data structures and algorithms.
 
 
