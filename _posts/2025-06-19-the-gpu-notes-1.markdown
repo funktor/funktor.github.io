@@ -32,6 +32,8 @@ Large cache size also allows significant re-use.<br/><br/>
 [Nice write up on CPU architecture](https://www.redhat.com/en/blog/cpu-components-functionality)<br/><br/>
 GPUs on the other hand have smaller cores but more number of cores. For example e.g. H100 have 14592 CUDA cores in addition to 640 Tensor cores. They also have smaller caches and smaller control units and more number of channels to the DRAM. The goal is high throughput for parallel computations.<br/><br/>
 ![CPU vs GPU](/docs/assets/cpu_gpu.png)
+<br/><br/>
+Surface area for the each core in CPU chip is higher as compared to each core in GPU thus enabling more cores in GPU chip.<br/><br/>
 Smaller cache sizes may force certain applications to be memory bound i.e. most time taken goes into fetching data from DRAM into cache or register. To overcome this drawback more number of smaller caches and more channels enables more number of threads to fetch data in parallel. Thus GPUs have high memory thorughput as compared to CPU.<br/><br/>
 
 5. **CUDA Matrix Multiplication**<br/><br/>
@@ -156,6 +158,7 @@ The control unit fetches instruction per warp instead of per thread thus reducin
 The same instruction is applied to all threads in a SIMD or SIMT (Single Instruction Multiple Thread) fashion. The lane size for SIMD is 32 here.<br/><br/>
 ![Warp architecture](/docs/assets/warp_arc.png)
 <br/><br/>
+A single control unit serving for multiple threads.<br/><br/>
 Since all threads in a warp follow same instruction, a CUDA program having an if-else statement which is dependent on thread index i.e. some threads will execute if statement whereas other threads will execute else statment, will be run twice by all the threads in the warp. First time all the threads will run the if block and next time will run the else block. Threads that should not run the if block will be deactivated during 1st run and similarly threads that should not run the else block will be deactivated during 2nd run.<br/><br/>
 Control divergence happens here:<br/><br/>
     ```cpp
