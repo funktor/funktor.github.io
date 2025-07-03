@@ -240,7 +240,7 @@ Similar to matrix multiplication, the input matrix can be loaded into shared mem
  	// constant memory is declared outside any function
  	__constant__ float F_c[K*K];
 	__global__ 
-	void convolution2D_constant_mem(float *a, float *out, int n, int m) {
+	void convolution2D_shared_mem(float *a, float *out, int n, int m) {
  		__shared__ float a_s[TILE_WIDTH*TILE_WIDTH];
  
 		int row = blockIdx.y*blockDim.y + threadIdx.y;
