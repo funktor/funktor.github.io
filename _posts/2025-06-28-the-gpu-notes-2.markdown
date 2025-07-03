@@ -174,15 +174,20 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
 Convolution is one of the most common operations used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below is an image depicting how convolution works. Below is a very basic implementation of 2D convolution with a filter size of K where K is assumed to be odd integer usually small in the range of `[3, 15]`. The input matrix is a and the filter matrix is F and filter size is K. <br/><br/>
 	```cpp
 	__global__ 
-	void c(float *a, float *b, float *c, int n, int m, int p) {
+	void convolution2D_basic(float *a, float *F, float *out, int K, int n, int m) {
 		int row = blockIdx.y*blockDim.y + threadIdx.y;
 		int col = blockIdx.x*blockDim.x + threadIdx.x;
+
+		float res = 0.0f;
+ 		for (int i = 0; i < K; i++) {
+ 			for (int j = 0; j < K; j++) {
+ 				int u = row-(K-1)/2+i;
+ 				int v = col-(K-1)/2+j;
+ 				if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F[i*K+j];
+ 			}
+ 		}
 	
-		if (row < n && col < p) {
-			float res = 0.0;
-			for (int i = 0; i < m; i++) res += a[row*m+i]*b[col*m+i];
-			c[row*p+col] = res;
-		}
+		out[row*m+col] = res;
 	}
 	```
 	<br/><br/>
