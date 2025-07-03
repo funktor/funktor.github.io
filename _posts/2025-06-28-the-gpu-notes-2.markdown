@@ -5,40 +5,44 @@ date:   2025-07-05 18:50:11 +0530
 categories: software-engineering
 ---
 
-In the [previous post](https://funktor.github.io/software-engineering/2025/06/21/the-gpu-notes-1.html), I started jotting down my learnings with GPU and CUDA programming and explored some of the fundamentals of GPU architecture and memory. Towards the end, we saw how we can speed up memory access in matrix multiplication in order increase TFLOPS by using shared memory tiling. In this part we will look at more GPU optimization techniques through more examples.
+In the [previous post](https://funktor.github.io/software-engineering/2025/06/21/the-gpu-notes-1.html), I started jotting down my learnings with GPU and CUDA programming and explored some of the fundamentals of GPU architecture and memory. Towards the end, we saw how we can speed up memory access in matrix multiplication in order increase TFLOPS by using shared memory tiling. In this part we will look at more GPU optimization techniques through more examples.<br/><br/>
 
 1. **Memory Coalescing**<br/><br/>
 In the previous post we saw that reading from global memory in GPU is slow because firstly they are implemented off-chip and secondly they are implemented using the DRAM cells. Shared memory and caches on the other hand are implemented on-chip and using SRAM cells. SRAM is much faster as compared to DRAM.<br/><br/>
 Similar to cache lines in CPU, when a location in the global memory is accessed, "nearby" locations are also accessible in the same CPU cycle. This saves number of CPU cycles to read the data from global memory. In CPU, the cache line size is usually 64-bytes. Once read from RAM they are stored in either L1, L2 or L3 cache. <br/><br/>
-Threads in a warp (group of 32 threads) follow the same instruction (SIMD model) and as a result the threads in warp access consecutive memory locations in the global memory. Global memory addresses are 128-byte aligned and thus accessing 4-byte floats (fp32) by a warp of 32 threads can be done in a single pass (coalesced).<br/><br/>
-Accessing with offset or strided access patterns are not coalesced. Each 128-byte segment in global memory is termed as a burst.<br/><br/>
-    ```cpp
-    __global__
-    void offset_add(float *inp, float *oup, int n, int offset) {
-        // When offset=0, access is coalesced but if offset=1, then some threads in a warp will read data from burst i
-        // and the remaining from burst i+1.
-        // In the worst case, each thread reads two bursts from the global memory.
-    
-        int index = blockIdx.x * blockDim.x + threadIdx.x;
-        index += offset;
-        oup[index] = inp[index] + 100.0;
-    }
-    
-    __global__
-    void strided_add(float *inp, float *oup, int n, int stride) {
-        // When stride=1, access is coalesced but if stride=2,
-        // then some threads in a warp will read data from burst i and the remaining from burst 2i.
-        // In the worst case, each thread reads 32 bursts from the global memory
-        // because when stride >= 32 each thread in a warp reads from a different burst.
-    
-        int index = blockIdx.x * blockDim.x + threadIdx.x;
-        index *= stride;
-        oup[index] = inp[index] + 100.0;
-    }
-    ```
-    <br/><br/>
+[Demystifying CPU Caches with Examples](https://mecha-mind.medium.com/demystifying-cpu-caches-with-examples-810534628d71)<br/><br/>
+Threads in a warp (group of 32 threads) follow the same instruction (SIMD model) and as a result the threads in warp access consecutive memory locations in the global memory. Global memory addresses are 128-byte aligned and thus accessing 4-byte floats (fp32) by a warp of 32 threads can be done in a single pass (coalesced). Each 128-byte segment in global memory is termed as a burst. <br/><br/>
+[Memory Coalescing Techniques](https://homepages.math.uic.edu/~jan/mcs572/memory_coalescing.pdf)<br/><br/>
+[Memory Access Coalescing](https://cse.iitkgp.ac.in/~soumya/hp3/slides/mem-coalesce.pdf)<br/><br/>
+Accessing with offset or strided access patterns are not coalesced as shown in the below examples. <br/><br/>
+	```cpp
+	__global__
+	void offset_add(float *inp, float *oup, int n, int offset) {
+	    // When offset=0, access is coalesced but if offset=1, then some threads in a warp will read data from burst i
+	    // and the remaining from burst i+1.
+	    // In the worst case, each thread reads two bursts from the global memory.
+	
+	    int index = blockIdx.x * blockDim.x + threadIdx.x;
+	    index += offset;
+	    oup[index] = inp[index] + 100.0;
+	}
+	
+	__global__
+	void strided_add(float *inp, float *oup, int n, int stride) {
+	    // When stride=1, access is coalesced but if stride=2,
+	    // then some threads in a warp will read data from burst i and the remaining from burst 2i.
+	    // In the worst case, each thread reads 32 bursts from the global memory
+	    // because when stride >= 32 each thread in a warp reads from a different burst.
+	
+	    int index = blockIdx.x * blockDim.x + threadIdx.x;
+	    index *= stride;
+	    oup[index] = inp[index] + 100.0;
+	}
+	```
+	<br/><br/>
 Performance takes a major hit when using strided global memory access.<br/><br/>
-In matrix multiplication using the below kernel:<br/><br/>
+[GPU Performance](https://engineering.purdue.edu/~smidkiff/ece563/NVidiaGPUTeachingToolkit/Mod6/Lecture-6-2-memory-coalescing.pdf)<br/><br/>
+In the matrix multiplication kernel we saw in the previous part:<br/><br/>
     ```cpp
     __global__ 
     void cuda_mul(float *a, float *b, float *c, int n, int m, int p) {
@@ -53,10 +57,11 @@ In matrix multiplication using the below kernel:<br/><br/>
     }
     ```
     <br/><br/>
-Each thread in warp is responsible for calculating each element of matrix c laid out in row-major order, thus threads at indices (x, y) and (x, y+1) calculates `c[x][y]` and `c[x][y+1]` respectively. Thus, access to matrix c is coalesced.<br/><br/>
-Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges such as (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and thus access is not coalesced in this case.<br/><br/>
+Each thread in a warp is responsible for calculating each element of matrix c laid out in row-major order, thus threads at indices (x, y) and (x, y+1) calculates `c[x][y]` and `c[x][y+1]` respectively. Thus, access to matrix c is coalesced.<br/><br/>
+Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges for e.g. (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and are not coalesced.<br/><br/>
 For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and thus are coalesced.<br/><br/>
 But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT`, then consecutive thread access to elements of b are not coalesced and are strided by size of m and thus would perform worse than `c=a.b`.<br/><br/>
+In the above kernel instead of passing the transpose of b, we are interchanging the x and y coordinates of b during access.<br/><br/>
     ```cpp
     __global__ 
     void cuda_mul_bt(float *a, float *b, float *c, int n, int m, int p) {
@@ -71,7 +76,11 @@ But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT
     }
     ```
     <br/><br/>
-One possible solution to overcome the issue with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory. This improves the performance.<br/><br/>
+One possible solution to overcome the problem with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory.<br/><br/>
+[Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)<br/><br/>
+But as noted in the above post, shared memory is divided into banks. Shared memory is divided into 32 banks where each bank is responsible for 32 consecutive bits. But if more than one thread in a warp accesses the same bank, then a bank conflict happens and request is serialized in that case for those threads in the warp. Bank conflict is bound to happen with F64 data type i.e. double precision floats of 64-bits because even if each thread access 2 consecutive banks, only 16 threads will have parallelized access out of 32 threads in a warp.<br/><br/>
+In latest drivers, one can configure bank size for e.g. using `cudaDeviceSetSharedMemConfig()` we can set the bank size to either 4 bytes i.e. 32 bits or 8 bytes i.e 64 bits.<br/><br/>
+A matrix multiplication kernel using transpose of b and shared memory tiling to improve performance.<br/><br/>
     ```cpp
     __global__ 
     void cuda_mul_bt_tiled(float *a, float *b, float *c, int n, int m, int p) {
@@ -104,29 +113,64 @@ One possible solution to overcome the issue with non-coalesced access in matrix 
     }
     ```
     <br/><br/>
-[High Bandwidth Memory](https://en.wikipedia.org/wiki/High_Bandwidth_Memory)
+Some good reads on shared memory and efficient matrix transpose or multiplication kernels.<br/><br/>
+[An Efficient Matrix Transpose in CUDA C/C++](https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/)<br/><br/>
+[Optimizing Matrix Transpose in CUDA](https://developer.download.nvidia.com/compute/DevZone/C/html_x64/6_Advanced/transpose/doc/MatrixTranspose.pdf)<br/><br/>
+[Access Global Memory Efficiently in CUDA C/C++ Kernels](https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/)<br/><br/>
 
-[Global Memory Coalescing](https://giahuy04.medium.com/global-memory-coalescing-37a6f9d7e314)
+2. **Thread Coarsening**<br/><br/>
+In all of the CUDA examples we saw, each thread has been assigned the task for computing one output element. For e.g. in vector addition or matrix multiplication, each thread in a block is assigned the task of computing one output element. This is useful if there are enough resources such as number of threads per block, shared memory etc. But in many practical problems, having too many threads can lead to redundant loading of data, synchronization overhead, redundant work.<br/><br/>
+To overcome such issues, one possible optimization is to reuse a thread to perform multiple computations. Without proper benchmarking this can lead to unused GPU resources.<br/><br/>
+A matrix multiplication kernel with thread coarsening where each thread is responsible for calculating 4 elements of the output matrix.<br/><br/>
+    ```cpp
+    // COARSE_FACTOR is the number of outputs computed by a single thread
+    #define COARSE_FACTOR 4
+    __global__ 
+    void cuda_mul_coarsened(float *a, float *b, float *c, int n, int m, int p) {
+        __shared__ float Mds[TILE_WIDTH*TILE_WIDTH];
+        __shared__ float Nds[TILE_WIDTH*TILE_WIDTH];
+    
+        int bx = blockIdx.x;
+        int by = blockIdx.y;
+        int tx = threadIdx.x;
+        int ty = threadIdx.y;
+    
+        int row = by*TILE_WIDTH + ty;
 
-[Memory Coalescing Techniques](https://homepages.math.uic.edu/~jan/mcs572/memory_coalescing.pdf)
+        // Each row is multiplied and summed with 4 consecutive columns to get 4 consecutive values.
+        int col_start = bx*TILE_WIDTH*COARSE_FACTOR + tx;
 
-[Memory Access Coalescing](https://cse.iitkgp.ac.in/~soumya/hp3/slides/mem-coalesce.pdf)
+        // Instead of storing in a variable, the outputs are stored in an array. Most likely it will use local memory instead of a register.
+        float Pval[COARSE_FACTOR];
+        for (int r = 0; r < COARSE_FACTOR; r++) Pval[r] = 0.0f;
+    
+        for (int ph = 0; ph < ceil(m/float(TILE_WIDTH)); ph++) {
+            if (row < n && (ph*TILE_WIDTH + tx) < m) Mds[ty*TILE_WIDTH+tx] = a[row*m + ph*TILE_WIDTH + tx];
+            else Mds[ty*TILE_WIDTH+tx] = 0.0f;
 
-[GPU Performance](https://engineering.purdue.edu/~smidkiff/ece563/NVidiaGPUTeachingToolkit/Mod6/Lecture-6-2-memory-coalescing.pdf)
+            // For each of the 4 columns of matrix b load upto 4 different tiles into shared memory.
+            for (int r = 0; r < COARSE_FACTOR; r++) {
+                int col = col_start + r*TILE_WIDTH;
+    
+                if ((ph*TILE_WIDTH + ty) < m && col < p) Nds[ty*TILE_WIDTH+tx] = b[(ph*TILE_WIDTH+ty)*p + col];
+                else Nds[ty*TILE_WIDTH+tx] = 0.0f;
+                __syncthreads();
 
-[Access Global Memory Efficiently in CUDA C/C++ Kernels](https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/)
+                for (int i = 0; i < TILE_WIDTH; i++) Pval[r] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx];
+                __syncthreads();
+            }
+        }
 
-[Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)
+        for (int r = 0; r < COARSE_FACTOR; r++) {
+            int col = col_start + r*TILE_WIDTH;
+            if (row < n && col < p) c[row*p+col] = Pval[r];
+        }
+    }
+    ```
+    <br/><br/>
+[Thread coarsening and register tiling](https://lumetta.web.engr.illinois.edu/508/slides/lecture3.pdf)<br/><br/>
 
-[An Efficient Matrix Transpose in CUDA C/C++](https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/)
-
-[Optimizing Matrix Transpose in CUDA](https://developer.download.nvidia.com/compute/DevZone/C/html_x64/6_Advanced/transpose/doc/MatrixTranspose.pdf)
-
-3. **Thread Coarsening**<br/><br/>
-
-4. **Minimize Control Divergence in Warps**<br/><br/>
-
-5. **Convolution Kernel**<br/><br/>
+3. **Convolution Kernel**<br/><br/>
 
 6. **Stencils**<br/><br/>
 
