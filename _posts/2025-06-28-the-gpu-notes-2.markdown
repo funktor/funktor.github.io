@@ -252,13 +252,16 @@ Similar to matrix multiplication, the input matrix can be loaded into shared mem
         __syncthreads();
         
         float res = 0.0f;
-        for (int i = 0; i < K; i++) {
-            for (int j = 0; j < K; j++) {
-                int u = row-(K-1)/2+i;
-                int v = col-(K-1)/2+j;
-                if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F_c[i*K+j];
-            }
-        }
+
+    	if (row >= 0 && row < n && col >= 0 and col < m) {
+	        for (int i = 0; i < K; i++) {
+	            for (int j = 0; j < K; j++) {
+	                int u = threadIdx.y-(K-1)/2+i;
+	                int v = threadIdx.x-(K-1)/2+j;
+	                if (u >= 0 && u < n && v >= 0 && v < m) res += a_s[u*TILE_WIDTH+v]*F_c[i*K+j];
+	            }
+	        }
+    	}
         
         out[row*m+col] = res;
     }
