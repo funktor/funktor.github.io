@@ -172,98 +172,98 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
 
 3. **Convolution Kernel**<br/><br/>
 Convolution is one of the most common operations used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below is an image depicting how convolution works. Below is a very basic implementation of 2D convolution with a filter size of K where K is assumed to be odd integer usually small in the range of `[3, 15]`. The input matrix is a and the filter matrix is F and filter size is K. <br/><br/>
-	```cpp
-	__global__ 
-	void convolution2D_basic(float *a, float *F, float *out, int K, int n, int m) {
-		int row = blockIdx.y*blockDim.y + threadIdx.y;
-		int col = blockIdx.x*blockDim.x + threadIdx.x;
-
-		float res = 0.0f;
- 		for (int i = 0; i < K; i++) {
- 			for (int j = 0; j < K; j++) {
- 				int u = row-(K-1)/2+i;
- 				int v = col-(K-1)/2+j;
- 				// check the boundaries
- 				if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F[i*K+j];
- 			}
- 		}
-	
-		out[row*m+col] = res;
-	}
-	```
-	<br/><br/>
+    ```cpp
+    __global__ 
+    void convolution2D_basic(float *a, float *F, float *out, int K, int n, int m) {
+        int row = blockIdx.y*blockDim.y + threadIdx.y;
+        int col = blockIdx.x*blockDim.x + threadIdx.x;
+        
+        float res = 0.0f;
+        for (int i = 0; i < K; i++) {
+            for (int j = 0; j < K; j++) {
+                int u = row-(K-1)/2+i;
+                int v = col-(K-1)/2+j;
+                // check the boundaries
+                if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F[i*K+j];
+            }
+        }
+    
+        out[row*m+col] = res;
+    }
+    ```
+    <br/><br/>
 Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and caches. Another major problem arising in the convolution operation is due to the control divergence happening due to the if else checks happening at the boundaries of the input matrix. For small input matrices as compared to the filter matrix, the control divergence proportion is significant whereas for very large input matrix as compared to the filter matrix, control divergence becomes insignificant.<br/><br/>
 To improve performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented using DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, the GPU hints that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache on-chip. Below is an implementation usiing constant memory for the filter matrix.<br/><br/>
-	```cpp
- 	#define K 7
- 	// constant memory is declared outside any function
- 	__constant__ float F_c[K*K];
-	__global__ 
-	void convolution2D_constant_mem(float *a, float *out, int n, int m) {
-		int row = blockIdx.y*blockDim.y + threadIdx.y;
-		int col = blockIdx.x*blockDim.x + threadIdx.x;
-
-		float res = 0.0f;
- 		for (int i = 0; i < K; i++) {
- 			for (int j = 0; j < K; j++) {
- 				int u = row-(K-1)/2+i;
- 				int v = col-(K-1)/2+j;
- 				if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F_c[i*K+j];
- 			}
- 		}
-	
-		out[row*m+col] = res;
-	}
- 
- 	int main() {
- 		int n = 1024;
- 		int m = 1024;
- 		float *a, *out;
- 		cudaMallocManaged(&a, n * m * sizeof(float));
- 		cudaMallocManaged(&out, n * m * sizeof(float));
- 
- 		float *F;
- 		F = (float*) malloc(K * K * sizeof(float));
- 		// copies F directly to constant memory
- 		cudaMemcpyToSymbol(F, F_c, K * K * sizeof(float));
- 
- 		dim3 bd(32, 32, 1);
- 		dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
- 		convolution2D_constant_mem<<gd, bd>>(a, out, n, m);
- 	}
-	```
-	<br/><br/>
+    ```cpp
+    #define K 7
+    // constant memory is declared outside any function
+    __constant__ float F_c[K*K];
+    __global__ 
+    void convolution2D_constant_mem(float *a, float *out, int n, int m) {
+        int row = blockIdx.y*blockDim.y + threadIdx.y;
+        int col = blockIdx.x*blockDim.x + threadIdx.x;
+        
+        float res = 0.0f;
+        for (int i = 0; i < K; i++) {
+            for (int j = 0; j < K; j++) {
+                int u = row-(K-1)/2+i;
+                int v = col-(K-1)/2+j;
+                if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F_c[i*K+j];
+            }
+        }
+        
+        out[row*m+col] = res;
+    }
+    
+    int main() {
+        int n = 1024;
+        int m = 1024;
+        float *a, *out;
+        cudaMallocManaged(&a, n * m * sizeof(float));
+        cudaMallocManaged(&out, n * m * sizeof(float));
+        
+        float *F;
+        F = (float*) malloc(K * K * sizeof(float));
+        // copies F directly to constant memory
+        cudaMemcpyToSymbol(F, F_c, K * K * sizeof(float));
+        
+        dim3 bd(32, 32, 1);
+        dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
+        convolution2D_constant_mem<<gd, bd>>(a, out, n, m);
+    }
+    ```
+    <br/><br/>
 Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling.<br/><br/>
-	```cpp
- 	#define K 7
- 	#define TILE_WIDTH 32
- 	// constant memory is declared outside any function
- 	__constant__ float F_c[K*K];
-	__global__ 
-	void convolution2D_shared_mem(float *a, float *out, int n, int m) {
- 		__shared__ float a_s[TILE_WIDTH*TILE_WIDTH];
- 
-		int row = blockIdx.y*blockDim.y + threadIdx.y;
-		int col = blockIdx.x*blockDim.x + threadIdx.x;
-
-		if (row >= 0 && row < n && col >= 0 and col < m) a_s[threadIdx.y*TILE_WIDTH + threadIdx.x] = a[row*m + col];
- 		else a_s[threadIdx.y*TILE_WIDTH + threadIdx.x] = 0.0f;
-
- 		__syncthreads();
-
-		float res = 0.0f;
- 		for (int i = 0; i < K; i++) {
- 			for (int j = 0; j < K; j++) {
- 				int u = row-(K-1)/2+i;
- 				int v = col-(K-1)/2+j;
- 				if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F_c[i*K+j];
- 			}
- 		}
-	
-		out[row*m+col] = res;
-	}
-	```
-	<br/><br/>
+    ```cpp
+    #define K 7
+    #define TILE_WIDTH 32
+    // constant memory is declared outside any function
+    __constant__ float F_c[K*K];
+    __global__ 
+    void convolution2D_shared_mem(float *a, float *out, int n, int m) {
+        __shared__ float a_s[TILE_WIDTH*TILE_WIDTH];
+        
+        int row = blockIdx.y*blockDim.y + threadIdx.y;
+        int col = blockIdx.x*blockDim.x + threadIdx.x;
+        
+        if (row >= 0 && row < n && col >= 0 and col < m) a_s[threadIdx.y*TILE_WIDTH + threadIdx.x] = a[row*m + col];
+        else a_s[threadIdx.y*TILE_WIDTH + threadIdx.x] = 0.0f;
+        
+        __syncthreads();
+        
+        float res = 0.0f;
+        for (int i = 0; i < K; i++) {
+            for (int j = 0; j < K; j++) {
+                int u = row-(K-1)/2+i;
+                int v = col-(K-1)/2+j;
+                if (u >= 0 && u < n && v >= 0 && v < m) res += a[u*m+v]*F_c[i*K+j];
+            }
+        }
+        
+        out[row*m+col] = res;
+    }
+    ```
+    <br/><br/>
 
 6. **Stencils**<br/><br/>
 
