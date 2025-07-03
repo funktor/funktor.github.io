@@ -53,9 +53,9 @@ In matrix multiplication using the below kernel:<br/><br/>
     }
     ```
     <br/><br/>
-Since each thread in warp is responsible for calculating each element of matrix c laid out in row-major order, thus threads at indices (x, y) and (x, y+1) calculates `c[x][y]` and `c[x][y+1]` respectively. Thus, access to matrix c is coalesced.<br/><br/>
-Also, for consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory and thus are coalesced. Consecutive threads at the edges such as (x, y+m-1) and (x+1, 0) reads 2 different rows of a with a stride of m (column width) and thus access is not coalesced in this case.<br/><br/>
-For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and are coalesced.<br/><br/>
+Each thread in warp is responsible for calculating each element of matrix c laid out in row-major order, thus threads at indices (x, y) and (x, y+1) calculates `c[x][y]` and `c[x][y+1]` respectively. Thus, access to matrix c is coalesced.<br/><br/>
+Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges such as (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and thus access is not coalesced in this case.<br/><br/>
+For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and thus are coalesced.<br/><br/>
 But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT`, then consecutive thread access to elements of b are not coalesced and are strided by size of m and thus would perform worse than `c=a.b`.<br/><br/>
     ```cpp
     __global__ 
@@ -71,7 +71,39 @@ But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT
     }
     ```
     <br/><br/>
-One possible solution to speed-up access to non-consecutive memory locations is to read the data from the global memory to shared memory in coalesced manner and then read from shared memory in un-coalesced manner since shared memory is 100x faster than global memory. In our matrix multiplication using tiling example from previous part highlights this optimization.
+One possible solution to overcome the issue with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory. This improves the performance.<br/><br/>
+    ```cpp
+    __global__ 
+    void cuda_mul_bt_tiled(float *a, float *b, float *c, int n, int m, int p) {
+        __shared__ float Mds[TILE_WIDTH*TILE_WIDTH];
+        __shared__ float Nds[TILE_WIDTH*TILE_WIDTH];
+    
+        int bx = blockIdx.x;
+        int by = blockIdx.y;
+        int tx = threadIdx.x;
+        int ty = threadIdx.y;
+    
+        int row = by*TILE_WIDTH + ty;
+        int col = bx*TILE_WIDTH + tx;
+    
+        float res = 0.0;
+        for (int ph = 0; ph < ceil(m/float(TILE_WIDTH)); ph++) {
+            if (row < n && (ph*TILE_WIDTH + tx) < m) Mds[ty*TILE_WIDTH+tx] = a[row*m + ph*TILE_WIDTH + tx];
+            else Mds[ty*TILE_WIDTH+tx] = 0.0f;
+    
+            if ((ph*TILE_WIDTH + ty) < m && col < p) Nds[tx*TILE_WIDTH+ty] = b[col*m + (ph*TILE_WIDTH+ty)];
+            else Nds[tx*TILE_WIDTH+ty] = 0.0f;
+    
+            __syncthreads();
+    
+            for (int i = 0; i < TILE_WIDTH; i++) res += Mds[ty*TILE_WIDTH+i]*Nds[tx*TILE_WIDTH+i];
+            __syncthreads();
+        }
+    
+        if (row < n && col < p) c[row*p+col] = res;
+    }
+    ```
+    <br/><br/>
 [High Bandwidth Memory](https://en.wikipedia.org/wiki/High_Bandwidth_Memory)
 
 [Global Memory Coalescing](https://giahuy04.medium.com/global-memory-coalescing-37a6f9d7e314)
@@ -85,6 +117,10 @@ One possible solution to speed-up access to non-consecutive memory locations is 
 [Access Global Memory Efficiently in CUDA C/C++ Kernels](https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/)
 
 [Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)
+
+[An Efficient Matrix Transpose in CUDA C/C++](https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/)
+
+[Optimizing Matrix Transpose in CUDA](https://developer.download.nvidia.com/compute/DevZone/C/html_x64/6_Advanced/transpose/doc/MatrixTranspose.pdf)
 
 3. **Thread Coarsening**<br/><br/>
 
