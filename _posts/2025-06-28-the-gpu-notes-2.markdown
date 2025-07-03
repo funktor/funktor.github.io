@@ -191,6 +191,8 @@ Convolution is one of the most common operations used in deep learning. 2D and 3
 	}
 	```
 	<br/><br/>
+Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and caches. Another major problem arising in the convolution operation is due to the control divergence happening due to the if else checks happening at the boundaries of the input matrix. For small input matrices as compared to the filter matrix, the control divergence proportion is significant whereas for very large input matrix as compared to the filter matrix, control divergence becomes insignificant.<br/><br/>
+To improve performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented similar to the DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, the GPU hints that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache on-chip. Below is an implementation usiing constant memory for the filter matrix.<br/><br/>
 
 6. **Stencils**<br/><br/>
 
