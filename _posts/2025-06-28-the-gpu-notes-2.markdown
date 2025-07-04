@@ -239,24 +239,24 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
 Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
 	```cpp
 	#define K 7
-
- 	// Thread block size is equal to the INP_TILE_WIDTH because INP_TILE_WIDTH > OUT_TILE_WIDTH and if
- 	// block size was equal to OUT_TILE_WIDTH, then we cannot access elements outside of the OUT_TILE_WIDTH
- 	// as they would not be loaded in shared memory as shared memory size is equivalent to block size.
- 	// If the block size is equal to the OUT_TILE_WIDTH, then we need to iterate to load the input tile
- 	// in the shared memory.
- 	#define INP_TILE_WIDTH 32
-
- 	// OUT_TILE_WIDTH excludes the (K-1)/2 sections on either side
+	
+	// Thread block size is equal to the INP_TILE_WIDTH because INP_TILE_WIDTH > OUT_TILE_WIDTH and if
+	// block size was equal to OUT_TILE_WIDTH, then we cannot access elements outside of the OUT_TILE_WIDTH
+	// as they would not be loaded in shared memory as shared memory size is equivalent to block size.
+	// If the block size is equal to the OUT_TILE_WIDTH, then we need to iterate to load the input tile
+	// in the shared memory.
+	#define INP_TILE_WIDTH 32
+	
+	// OUT_TILE_WIDTH excludes the (K-1)/2 sections on either side
 	#define OUT_TILE_WIDTH (INP_TILE_WIDTH - (K-1))
- 
+	
 	// constant memory is declared outside any function
 	__constant__ float F_c[K*K];
 	__global__ 
 	void convolution2D_shared_mem(float *a, float *out, int n, int m) {
-		__shared__ float a_s[TILE_WIDTH*TILE_WIDTH];
-
- 		// Load the input tile into shared memory
+		__shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
+		
+		// Load the input tile into shared memory
 		int inp_row = blockIdx.y*INP_TILE_WIDTH + threadIdx.y;
 		int inp_col = blockIdx.x*INP_TILE_WIDTH + threadIdx.x;
 		
@@ -274,15 +274,19 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matr
 				if (u >= 0 && u < n && v >= 0 && v < m) res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
 			}
 		}
-
+		
 		// Map the input (inp_row, inp_col) to output (out_row, out_col)
- 		int out_row = inp_row-(K-1)/2;
- 		int out_col = inp_col-(K-1)/2;
-
- 		if (out_row >= 0 && out_row < n && out_col >= 0 && out_col < m) out[out_row*m+out_col] = res;
+		int out_row = inp_row-(K-1)/2;
+		int out_col = inp_col-(K-1)/2;
+		
+		if (out_row >= 0 && out_row < n && out_col >= 0 && out_col < m) out[out_row*m+out_col] = res;
 	}
 	```
 	<br/><br/>
+We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
+`INP_TILE_WIDTH^2*K^2*2/INP_TILE_WIDTH^2*4 = K^2/2`<br/><br/>
+Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
+
 
 6. **Stencils**<br/><br/>
 
