@@ -367,6 +367,38 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matr
 We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
 `INP_TILE_WIDTH^2*K^2*2/INP_TILE_WIDTH^2*4 = K^2/2`<br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
+	```cpp
+	__global__ 
+	void conv2D_shared_mem(float *a, float *c, int n, int m) {
+	    __shared__ float a_s[OUT_TILE_WIDTH*OUT_TILE_WIDTH];
+	    
+	    // Load the input tile into shared memory
+	    int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
+	    int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
+	
+	    if (row < n && col < m) a_s[threadIdx.y*OUT_TILE_WIDTH + threadIdx.x] = a[row*m + col];
+	
+	    __syncthreads();
+	    
+	    float res = 0.0f;
+	    
+	    for (int i = 0; i < K; i++) {
+	        for (int j = 0; j < K; j++) {
+	            int u = threadIdx.y-(K-1)/2+i;
+	            int v = threadIdx.x-(K-1)/2+j;
+	
+	            int w = row-(K-1)/2+i;
+	            int z = col-(K-1)/2+j;
+	
+	            if (u >= 0 && u < OUT_TILE_WIDTH && v >= 0 && v < OUT_TILE_WIDTH) res += a_s[u*OUT_TILE_WIDTH+v]*F_c[i*K+j];
+	            else if (w >= 0 && w < n && z >= 0 && z < m) res += a[w*m+z]*F_c[i*K+j];
+	        }
+	    }
+	    
+	    if (row < n && col < m) c[row*m+col] = res;
+	}
+	```
+ 	<br/><br/>
 
 
 6. **Stencils**<br/><br/>
