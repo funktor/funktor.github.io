@@ -169,6 +169,7 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
     ```
     <br/><br/>
 [Thread coarsening and register tiling](https://lumetta.web.engr.illinois.edu/508/slides/lecture3.pdf)<br/><br/>
+To find the optimum value of the COARSE_FACTOR, we can experiment with different values and check the stats.<br/><br/>
 
 3. **Convolution Kernel**<br/><br/>
 Convolution is one of the most common operation used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below image depicts how convolution works.<br/><br/>
@@ -249,6 +250,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
     }
     ```
     <br/><br/>
+![Constant Memory](/docs/assets/gpu_arch.png)<br/><br/>
 Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
     ```cpp
     #define K 7
@@ -327,6 +329,7 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input
     }
     ```
     <br/><br/>
+![Tiled Convolution](/docs/assets/conv_tiled.jpg)<br/><br/>
 We can approximately calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of (approx) bytes read from the DRAM is `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in `K^2` multiplications and then there are `K^2` additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2 * K^2 * 2`. The OP/B ratio is: `(INP_TILE_WIDTH^2 * K^2 * 2)/(INP_TILE_WIDTH^2 * 4) = K^2/2`. <br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
 The actual calculation is a bit complex since at the boundaries the input tile has fewer than `INP_TILE_WIDTH*INP_TILE_WIDTH` elements and also some input tile elements are loaded by multiple blocks of threads as they are overlapping. <br/><br/>
