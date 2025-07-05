@@ -225,7 +225,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
         float *a, *f, *out;
     
         cudaMallocManaged(&a, n * m * sizeof(float));
-    	cudaMallocManaged(&f, K * K * sizeof(float));
+        cudaMallocManaged(&f, K * K * sizeof(float));
         cudaMallocManaged(&out, n * m * sizeof(float));
     
         // copies f directly to constant memory
