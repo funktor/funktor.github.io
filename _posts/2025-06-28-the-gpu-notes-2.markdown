@@ -193,7 +193,7 @@ Convolution is one of the most common operation used in deep learning. 2D and 3D
     }
     ```
     <br/><br/>
-Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and/or caches. Another major problem arising in the convolution operation is control divergence due to the if else checks happening at the boundaries of the input matrix. Threads in a warp are supposed to follow SIMD but with if-else condition, SIMD breaks. Threads in warps near the boundaries will have different paths and hence divergence happens. <br/><br/>
+Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and/or caches. Another major problem arising in the convolution operation is control divergence occurring due to the if else checks happening at the boundaries of the input matrix. Threads in a warp are supposed to follow SIMD but with if-else condition, SIMD breaks. Threads in warps near the boundaries will have different paths and hence divergence happens. <br/><br/>
 For small input matrices as compared to the filter matrix, the proportion of threads involved in control divergence is significant whereas for very large input matrix as compared to the filter matrix, control divergence becomes insignificant.<br/><br/>
 To improve OP/B performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented using DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, it hints the GPU that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache. Below is an implementation using constant memory for the filter matrix.<br/><br/>
     ```cpp
@@ -219,16 +219,16 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
     }
     
     int main() {
-        int n = 1024;
-        int m = 1024;
-        float *a, *out;
+        int n = 4096;
+        int m = 4096;
+    
+        float *a, *f, *out;
         cudaMallocManaged(&a, n * m * sizeof(float));
+    	cudaMallocManaged(&f, K * K * sizeof(float));
         cudaMallocManaged(&out, n * m * sizeof(float));
-        
-        float *F;
-        F = (float*) malloc(K * K * sizeof(float));
-        // copies F directly to constant memory
-        cudaMemcpyToSymbol(F_c, F, K * K * sizeof(float));
+    
+        // copies f directly to constant memory
+        cudaMemcpyToSymbol(F_c, f, K * K * sizeof(float));
         
         dim3 bd(32, 32, 1);
         dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
@@ -236,84 +236,84 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
     }
     ```
     <br/><br/>
-Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
-    ```cpp
-    #define K 7
-    
-    // Thread block size is equal to the OUT_TILE_WIDTH
-    #define OUT_TILE_WIDTH 32
-    
-    // INP_TILE_WIDTH includes additional (K-1)/2 rows and columns on either side
-    #define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
-    
-    // constant memory is declared outside any function
-    __constant__ float F_c[K*K];
-    __global__ 
-    void conv2D_shared_mem(float *a, float *c, int n, int m) {
-    	// shared memory size is INP_TILE_WIDTH*INP_TILE_WIDTH
-    	// but block size is OUT_TILE_WIDTH*OUT_TILE_WIDTH
-        __shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
-        
-        // Load the input tile into shared memory
-        int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
-        int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
-
-    	// Since the number of elements in input tile is greater than the number of threads in a block
-    	// each thread thus loads multiple input tile elements from DRAM into shared memory.
-        int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
-    
-        for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
-    		// get the index in shared memory array
-            int u = i/INP_TILE_WIDTH;
-            int v = i % INP_TILE_WIDTH;
-
-    		// get the absolute index
-            int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
-            int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
-    
-            if (p >= 0 && p < n && q >= 0 && q < m) a_s[i] = a[p*m+q];
-            else a_s[i] = 0.0f;
-        }
-    
-        __syncthreads();
-        
-        float res = 0.0f;
-        
-        for (int i = 0; i < K; i++) {
-            for (int j = 0; j < K; j++) {
-                int u = threadIdx.y+i;
-                int v = threadIdx.x+j;
-                res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
-            }
-        }
-        
-        if (row < n && col < m) c[row*m+col] = res;
-    }
-    
-    int main(){
-        int n = 4096;
-        int m = 4096;
-    
-        float *a, *f, *out;
-    
-        cudaMallocManaged(&a, n*m*sizeof(float));
-    	cudaMallocManaged(&f, K*K*sizeof(float));
-        cudaMallocManaged(&out, n*m*sizeof(float));
-    
-        cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
-    
-        dim3 bd(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
-        dim3 gd(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
-    
-        conv2D_shared_mem<<<gd, bd>>>(a, out, n, m);
-        cudaDeviceSynchronize();
-
-    	cudaFree(a);
+Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
+	```cpp
+	#define K 7
+	
+	// Thread block size is equal to the OUT_TILE_WIDTH
+	#define OUT_TILE_WIDTH 32
+	
+	// INP_TILE_WIDTH includes additional (K-1)/2 rows and columns on either side
+	#define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
+	
+	// constant memory is declared outside any function
+	__constant__ float F_c[K*K];
+	__global__ 
+	void conv2D_shared_mem(float *a, float *c, int n, int m) {
+		// shared memory size is INP_TILE_WIDTH*INP_TILE_WIDTH
+		// but block size is OUT_TILE_WIDTH*OUT_TILE_WIDTH
+		__shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
+		
+		// Load the input tile into shared memory
+		int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
+		int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
+		
+		// Since the number of elements in input tile is greater than the number of threads in a block
+		// each thread thus loads multiple input tile elements from DRAM into shared memory.
+		int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
+		
+		for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
+			// get the index in shared memory array
+			int u = i/INP_TILE_WIDTH;
+			int v = i % INP_TILE_WIDTH;
+			
+			// get the absolute index
+			int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
+			int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
+			
+			if (p >= 0 && p < n && q >= 0 && q < m) a_s[i] = a[p*m+q];
+			else a_s[i] = 0.0f;
+		}
+		
+		__syncthreads();
+		
+		float res = 0.0f;
+		
+		for (int i = 0; i < K; i++) {
+			for (int j = 0; j < K; j++) {
+				int u = threadIdx.y+i;
+				int v = threadIdx.x+j;
+				res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
+			}
+		}
+		
+		if (row < n && col < m) c[row*m+col] = res;
+	}
+	
+	int main(){
+		int n = 4096;
+		int m = 4096;
+		
+		float *a, *f, *out;
+		
+		cudaMallocManaged(&a, n*m*sizeof(float));
+		cudaMallocManaged(&f, K*K*sizeof(float));
+		cudaMallocManaged(&out, n*m*sizeof(float));
+		
+		cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
+		
+		dim3 bd(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
+		dim3 gd(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
+		
+		conv2D_shared_mem<<<gd, bd>>>(a, out, n, m);
+		cudaDeviceSynchronize();
+		
+		cudaFree(a);
 		cudaFree(f);
-    	cudaFree(out);
-    }
-    ```
-    <br/><br/>
+		cudaFree(out);
+	}
+	```
+	<br/><br/>
 We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
 `INP_TILE_WIDTH^2*K^2*2/INP_TILE_WIDTH^2*4 = K^2/2`<br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
