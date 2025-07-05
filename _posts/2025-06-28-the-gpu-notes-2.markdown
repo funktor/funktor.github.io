@@ -12,6 +12,7 @@ In the previous post we saw that reading from global memory in GPU is slow becau
 Similar to cache lines in CPU, when a location in the global memory is accessed, "nearby" locations are also accessible in the same CPU cycle. This saves number of CPU cycles to read the data from global memory. In CPU, the cache line size is usually 64-bytes. Once read from RAM they are stored in either L1, L2 or L3 cache. <br/><br/>
 [Demystifying CPU Caches with Examples](https://mecha-mind.medium.com/demystifying-cpu-caches-with-examples-810534628d71)<br/><br/>
 Threads in a warp (group of 32 threads) follow the same instruction (SIMD model) and as a result the threads in warp access consecutive memory locations in the global memory. Global memory addresses are 128-byte aligned and thus accessing 4-byte floats (fp32) by a warp of 32 threads can be done in a single pass (coalesced). Each 128-byte segment in global memory is termed as a burst. <br/><br/>
+![Memory Coalescing](/docs/assets/coalesce.png)<br/><br/>
 [Memory Coalescing Techniques](https://homepages.math.uic.edu/~jan/mcs572/memory_coalescing.pdf)<br/><br/>
 [Memory Access Coalescing](https://cse.iitkgp.ac.in/~soumya/hp3/slides/mem-coalesce.pdf)<br/><br/>
 Accessing with offset or strided access patterns are not coalesced as shown in the below examples. <br/><br/>
@@ -60,6 +61,7 @@ In the matrix multiplication kernel we saw in the previous part:<br/><br/>
 Each thread in a warp is responsible for calculating each element of matrix c laid out in row-major order, thus threads at indices (x, y) and (x, y+1) calculates `c[x][y]` and `c[x][y+1]` respectively. Thus, access to matrix c is coalesced.<br/><br/>
 Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges for e.g. (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and are not coalesced.<br/><br/>
 For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and thus are coalesced.<br/><br/>
+![Memory Coalescing](/docs/assets/coalesced.jpg)<br/><br/>
 But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT`, then consecutive thread access to elements of b are not coalesced and are strided by size of m and thus would perform worse than `c=a.b`.<br/><br/>
 In the above kernel instead of passing the transpose of b, we are interchanging the x and y coordinates of b during access.<br/><br/>
     ```cpp
@@ -76,6 +78,7 @@ In the above kernel instead of passing the transpose of b, we are interchanging 
     }
     ```
     <br/><br/>
+![Memory Coalescing](/docs/assets/uncoalesced.jpg)<br/><br/>
 One possible solution to overcome the problem with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory.<br/><br/>
 [Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)<br/><br/>
 But as noted in the above post, shared memory is divided into banks. Shared memory is divided into 32 banks where each bank is responsible for 32 consecutive bits. But if more than one thread in a warp accesses the same bank, then a bank conflict happens and request is serialized in that case for those threads in the warp. Bank conflict is bound to happen with F64 data type i.e. double precision floats of 64-bits because even if each thread access 2 consecutive banks, only 16 threads will have parallelized access out of 32 threads in a warp.<br/><br/>
