@@ -174,7 +174,7 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
 Convolution is one of the most common operation used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below image depicts how convolution works. A very basic implementation of a 2D convolution with a filter size of K where K is assumed to be odd integer usually small in the range of `[3, 15]`. The input matrix is `a` and the filter matrix is `F` and filter size is `K`. <br/><br/>
     ```cpp
     __global__ 
-    void convolution2D_basic(float *a, float *F, float *out, int K, int n, int m) {
+    void conv2D_basic(float *a, float *F, float *out, int K, int n, int m) {
         int row = blockIdx.y*blockDim.y + threadIdx.y;
         int col = blockIdx.x*blockDim.x + threadIdx.x;
         
@@ -189,7 +189,7 @@ Convolution is one of the most common operation used in deep learning. 2D and 3D
             }
         }
     
-        out[row*m+col] = res;
+        if (row < n && col < m) out[row*m+col] = res;
     }
     ```
     <br/><br/>
@@ -202,7 +202,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
     // constant memory is declared outside any function
     __constant__ float F_c[K*K];
     __global__ 
-    void convolution2D_constant_mem(float *a, float *out, int n, int m) {
+    void conv2D_constant_mem(float *a, float *out, int n, int m) {
         int row = blockIdx.y*blockDim.y + threadIdx.y;
         int col = blockIdx.x*blockDim.x + threadIdx.x;
         
@@ -215,7 +215,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
             }
         }
         
-        out[row*m+col] = res;
+        if (row < n && col < m) out[row*m+col] = res;
     }
     
     int main() {
@@ -232,7 +232,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
         
         dim3 bd(32, 32, 1);
         dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
-        convolution2D_constant_mem<<gd, bd>>(a, out, n, m);
+        conv2D_constant_mem<<gd, bd>>(a, out, n, m);
     }
     ```
     <br/><br/>
@@ -245,41 +245,122 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matr
     // as they would not be loaded in shared memory as shared memory size is equivalent to block size.
     // If the block size is equal to the OUT_TILE_WIDTH, then we need to iterate to load the input tile
     // in the shared memory.
-    #define INP_TILE_WIDTH 32
+    #define OUT_TILE_WIDTH 32
     
     // OUT_TILE_WIDTH excludes the (K-1)/2 sections on either side
-    #define OUT_TILE_WIDTH (INP_TILE_WIDTH - (K-1))
+    #define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
     
     // constant memory is declared outside any function
     __constant__ float F_c[K*K];
     __global__ 
-    void convolution2D_shared_mem(float *a, float *out, int n, int m) {
+    void conv2D_shared_mem(float *a, float *c, int n, int m) {
         __shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
         
         // Load the input tile into shared memory
-        int inp_row = blockIdx.y*INP_TILE_WIDTH + threadIdx.y;
-        int inp_col = blockIdx.x*INP_TILE_WIDTH + threadIdx.x;
-        
-        if (inp_row < n && inp_col < m) a_s[threadIdx.y*INP_TILE_WIDTH + threadIdx.x] = a[inp_row*m + inp_col];
-        else a_s[threadIdx.y*INP_TILE_WIDTH + threadIdx.x] = 0.0f;
-        
+        int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
+        int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
+    
+        int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
+    
+        for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
+            int u = i/INP_TILE_WIDTH;
+            int v = i % INP_TILE_WIDTH;
+    
+            int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
+            int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
+    
+            if (p >= 0 && p < n && q >= 0 && q < m) a_s[i] = a[p*m+q];
+            else a_s[i] = 0.0f;
+        }
+    
         __syncthreads();
         
         float res = 0.0f;
         
         for (int i = 0; i < K; i++) {
             for (int j = 0; j < K; j++) {
-                int u = threadIdx.y-(K-1)/2+i;
-                int v = threadIdx.x-(K-1)/2+j;
-                if (u >= 0 && u < n && v >= 0 && v < m) res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
+                int u = threadIdx.y+i;
+                int v = threadIdx.x+j;
+                res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
             }
         }
         
-        // Map the input (inp_row, inp_col) to output (out_row, out_col)
-        int out_row = inp_row-(K-1)/2;
-        int out_col = inp_col-(K-1)/2;
-        
-        if (out_row >= 0 && out_row < n && out_col >= 0 && out_col < m) out[out_row*m+out_col] = res;
+        if (row < n && col < m) c[row*m+col] = res;
+    }
+    
+    int main(){
+        int n = 4096;
+        int m = 4096;
+        int k = 11;
+    
+        float *a, *f, *c1, *c2, *c3, *c4;
+    
+        cudaMallocManaged(&a, n*m*sizeof(float));
+        cudaMallocManaged(&c1, n*m*sizeof(float));
+        cudaMallocManaged(&c2, n*m*sizeof(float));
+        cudaMallocManaged(&c3, n*m*sizeof(float));
+        cudaMallocManaged(&c4, n*m*sizeof(float));
+        cudaMallocManaged(&f, k*k*sizeof(float));
+    
+        generate_data(a, n, m);
+        generate_data(f, k, k);
+    
+        cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
+    
+        auto start = std::chrono::high_resolution_clock::now();
+        conv2d(a, f, c1, k, n, m);
+        auto stop = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+    
+        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
+    
+        // print_vector(c1, 5000, 5100);
+    
+        start = std::chrono::high_resolution_clock::now();
+    
+        dim3 bd(32, 32, 1);
+        dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
+    
+        conv2D_basic<<<gd, bd>>>(a, f, c2, k, n, m);
+        cudaDeviceSynchronize();
+    
+        stop = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+    
+        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
+        std::cout << are_equal(c2, c1, 5000, 5100) << std::endl;
+    
+        // print_vector(c2, 5000, 5100);
+    
+        start = std::chrono::high_resolution_clock::now();
+    
+        conv2D_constant_mem<<<gd, bd>>>(a, c3, n, m);
+        cudaDeviceSynchronize();
+    
+        stop = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+    
+        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
+        std::cout << are_equal(c3, c1, 5000, 5100) << std::endl;
+    
+        // print_vector(c3, 5000, 5100);
+    
+        start = std::chrono::high_resolution_clock::now();
+    
+        dim3 bd1(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
+        dim3 gd1(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
+    
+        conv2D_shared_mem<<<gd1, bd1>>>(a, c4, n, m);
+        cudaDeviceSynchronize();
+    
+        stop = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+    
+        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
+        std::cout << are_equal(c4, c1, 5000, 5100) << std::endl;
+    
+        // print_vector(c4, 5000, 5100);
+    
     }
     ```
     <br/><br/>
