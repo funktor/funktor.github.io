@@ -228,7 +228,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
         float *F;
         F = (float*) malloc(K * K * sizeof(float));
         // copies F directly to constant memory
-        cudaMemcpyToSymbol(F, F_c, K * K * sizeof(float));
+        cudaMemcpyToSymbol(F_c, F, K * K * sizeof(float));
         
         dim3 bd(32, 32, 1);
         dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
@@ -240,32 +240,34 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matr
     ```cpp
     #define K 7
     
-    // Thread block size is equal to the INP_TILE_WIDTH because INP_TILE_WIDTH > OUT_TILE_WIDTH and if
-    // block size was equal to OUT_TILE_WIDTH, then we cannot access elements outside of the OUT_TILE_WIDTH
-    // as they would not be loaded in shared memory as shared memory size is equivalent to block size.
-    // If the block size is equal to the OUT_TILE_WIDTH, then we need to iterate to load the input tile
-    // in the shared memory.
+    // Thread block size is equal to the OUT_TILE_WIDTH
     #define OUT_TILE_WIDTH 32
     
-    // OUT_TILE_WIDTH excludes the (K-1)/2 sections on either side
+    // INP_TILE_WIDTH includes additional (K-1)/2 rows and columns on either side
     #define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
     
     // constant memory is declared outside any function
     __constant__ float F_c[K*K];
     __global__ 
     void conv2D_shared_mem(float *a, float *c, int n, int m) {
+    	// shared memory size is INP_TILE_WIDTH*INP_TILE_WIDTH
+    	// but block size is OUT_TILE_WIDTH*OUT_TILE_WIDTH
         __shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
         
         // Load the input tile into shared memory
         int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
         int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
-    
+
+    	// Since the number of elements in input tile is greater than the number of threads in a block
+    	// each thread thus loads multiple input tile elements from DRAM into shared memory.
         int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
     
         for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
+    		// get the index in shared memory array
             int u = i/INP_TILE_WIDTH;
             int v = i % INP_TILE_WIDTH;
-    
+
+    		// get the absolute index
             int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
             int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
     
@@ -291,82 +293,32 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (input matr
     int main(){
         int n = 4096;
         int m = 4096;
-        int k = 11;
     
-        float *a, *f, *c1, *c2, *c3, *c4;
+        float *a, *f, *out;
     
         cudaMallocManaged(&a, n*m*sizeof(float));
-        cudaMallocManaged(&c1, n*m*sizeof(float));
-        cudaMallocManaged(&c2, n*m*sizeof(float));
-        cudaMallocManaged(&c3, n*m*sizeof(float));
-        cudaMallocManaged(&c4, n*m*sizeof(float));
-        cudaMallocManaged(&f, k*k*sizeof(float));
-    
-        generate_data(a, n, m);
-        generate_data(f, k, k);
+    	cudaMallocManaged(&f, K*K*sizeof(float));
+        cudaMallocManaged(&out, n*m*sizeof(float));
     
         cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
     
-        auto start = std::chrono::high_resolution_clock::now();
-        conv2d(a, f, c1, k, n, m);
-        auto stop = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
+        dim3 bd(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
+        dim3 gd(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
     
-        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
-    
-        // print_vector(c1, 5000, 5100);
-    
-        start = std::chrono::high_resolution_clock::now();
-    
-        dim3 bd(32, 32, 1);
-        dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
-    
-        conv2D_basic<<<gd, bd>>>(a, f, c2, k, n, m);
+        conv2D_shared_mem<<<gd, bd>>>(a, out, n, m);
         cudaDeviceSynchronize();
-    
-        stop = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-    
-        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
-        std::cout << are_equal(c2, c1, 5000, 5100) << std::endl;
-    
-        // print_vector(c2, 5000, 5100);
-    
-        start = std::chrono::high_resolution_clock::now();
-    
-        conv2D_constant_mem<<<gd, bd>>>(a, c3, n, m);
-        cudaDeviceSynchronize();
-    
-        stop = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-    
-        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
-        std::cout << are_equal(c3, c1, 5000, 5100) << std::endl;
-    
-        // print_vector(c3, 5000, 5100);
-    
-        start = std::chrono::high_resolution_clock::now();
-    
-        dim3 bd1(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
-        dim3 gd1(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
-    
-        conv2D_shared_mem<<<gd1, bd1>>>(a, c4, n, m);
-        cudaDeviceSynchronize();
-    
-        stop = std::chrono::high_resolution_clock::now();
-        duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop - start);
-    
-        std::cout << "CUDA Duration = " << duration.count() << " ms" << std::endl;
-        std::cout << are_equal(c4, c1, 5000, 5100) << std::endl;
-    
-        // print_vector(c4, 5000, 5100);
-    
+
+    	cudaFree(a);
+		cudaFree(f);
+    	cudaFree(out);
     }
     ```
     <br/><br/>
-We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
+We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
 `INP_TILE_WIDTH^2*K^2*2/INP_TILE_WIDTH^2*4 = K^2/2`<br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
+The elements in the input tile that are located at the boundaries of the output tile are called the halo cells as they are not part of the output but is required to calculate the output values by multiplying with the filter.<br/><br/>
+One issue with the above kernel is that for elements at the boundaries, we have to unnecessarly iterate over "non-existent" indices to load the input tile into shared memory. This consumes GPU cycles. Also, for multiple output tiles, there is overlap between the input tile elements and thus the same input tile element might be loaded by multiple blocks into the shared memory and thus duplicating effort. Duplicate loading cannot be avoided as shared memory is scoped per block. One possible solution to this is not to load the halo cells and fetch them directly from DRAM and hope that DRAM caches the halo cell values. <br/><br/>
 	```cpp
 	__global__ 
 	void conv2D_shared_mem(float *a, float *c, int n, int m) {
