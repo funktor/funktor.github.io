@@ -200,7 +200,7 @@ A very basic implementation of a 2D convolution with a filter size of K where K 
     ```
     <br/><br/>
 Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and/or caches. Another major problem arising in the convolution operation is control divergence occurring due to the if else checks happening at the boundaries of the input matrix. Threads in a warp are supposed to follow SIMD but with if-else condition, SIMD breaks. Threads in warps near the boundaries will have different paths and hence divergence happens. <br/><br/>
-[Warp Control Divergence](https://www.aussieai.com/blog/cuda-thread-divergence)
+[Warp Control Divergence](https://www.aussieai.com/blog/cuda-thread-divergence)<br/><br/>
 For small input matrices as compared to the filter matrix, the proportion of threads involved in control divergence is significant whereas for very large input matrix as compared to the filter matrix, control divergence becomes insignificant.<br/><br/>
 To improve OP/B performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented using DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, it hints the GPU that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache. Below is an implementation using constant memory for the filter matrix.<br/><br/>
     ```cpp
