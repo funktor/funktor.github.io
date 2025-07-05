@@ -171,7 +171,13 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
 [Thread coarsening and register tiling](https://lumetta.web.engr.illinois.edu/508/slides/lecture3.pdf)<br/><br/>
 
 3. **Convolution Kernel**<br/><br/>
-Convolution is one of the most common operation used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below image depicts how convolution works. A very basic implementation of a 2D convolution with a filter size of K where K is assumed to be odd integer usually small in the range of `[3, 15]`. The input matrix is `a` and the filter matrix is `F` and filter size is `K`. <br/><br/>
+Convolution is one of the most common operation used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below image depicts how convolution works.<br/><br/>
+![Conv2D](/docs/assets/conv2d.png)<br/><br/>
+![Conv2D](/docs/assets/convolution-2.gif)<br/><br/>
+[2D Convolution in Image Processing](https://www.allaboutcircuits.com/technical-articles/two-dimensional-convolution-in-image-processing/)<br/><br/>
+[PyTorch 2D Convolution](https://docs.pytorch.org/docs/stable/generated/torch.nn.Conv2d.html)<br/><br/>
+[Example of 2D Convolution](https://www.songho.ca/dsp/convolution/convolution2d_example.html)<br/><br/>
+A very basic implementation of a 2D convolution with a filter size of K where K is assumed to be odd integer usually small in the range of `[3, 15]`. The input matrix is `a` and the filter matrix is `F` and filter size is `K`. <br/><br/>
     ```cpp
     __global__ 
     void conv2D_basic(float *a, float *F, float *out, int K, int n, int m) {
@@ -194,6 +200,7 @@ Convolution is one of the most common operation used in deep learning. 2D and 3D
     ```
     <br/><br/>
 Similar to the matrix multiplication kernel, the above convolution has OP/B ratio of only 0.25 i.e. for every 8 byte of data loaded from DRAM, only 2 operations (1 multiplication and 1 addition) are performed. This can be improved by using shared memory, constant memory and/or caches. Another major problem arising in the convolution operation is control divergence occurring due to the if else checks happening at the boundaries of the input matrix. Threads in a warp are supposed to follow SIMD but with if-else condition, SIMD breaks. Threads in warps near the boundaries will have different paths and hence divergence happens. <br/><br/>
+[Warp Control Divergence](https://www.aussieai.com/blog/cuda-thread-divergence)
 For small input matrices as compared to the filter matrix, the proportion of threads involved in control divergence is significant whereas for very large input matrix as compared to the filter matrix, control divergence becomes insignificant.<br/><br/>
 To improve OP/B performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented using DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, it hints the GPU that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache. Below is an implementation using constant memory for the filter matrix.<br/><br/>
     ```cpp
@@ -361,7 +368,7 @@ One issue with the above kernel is that for elements at the boundaries, we have 
     ```
     <br/><br/>
 
-4. **Reduction and atomic operations**<br/><br/>
+5. **Reduction and atomic operations**<br/><br/>
 
-5. **Kernel Fusion**<br/><br/>
+6. **Kernel Fusion**<br/><br/>
 
