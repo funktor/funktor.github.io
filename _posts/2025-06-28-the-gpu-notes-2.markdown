@@ -361,10 +361,7 @@ One issue with the above kernel is that for elements at the boundaries, we have 
     ```
     <br/><br/>
 
+4. **Reduction and atomic operations**<br/><br/>
 
-6. **Stencils**<br/><br/>
-
-7. **Parallel histogram, reduction and atomic operations**<br/><br/>
-
-8. **Prefix Sums**<br/><br/>
+5. **Kernel Fusion**<br/><br/>
 
