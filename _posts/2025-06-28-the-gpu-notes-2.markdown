@@ -15,31 +15,31 @@ Threads in a warp (group of 32 threads) follow the same instruction (SIMD model)
 [Memory Coalescing Techniques](https://homepages.math.uic.edu/~jan/mcs572/memory_coalescing.pdf)<br/><br/>
 [Memory Access Coalescing](https://cse.iitkgp.ac.in/~soumya/hp3/slides/mem-coalesce.pdf)<br/><br/>
 Accessing with offset or strided access patterns are not coalesced as shown in the below examples. <br/><br/>
-	```cpp
-	__global__
-	void offset_add(float *inp, float *oup, int n, int offset) {
-	    // When offset=0, access is coalesced but if offset=1, then some threads in a warp will read data from burst i
-	    // and the remaining from burst i+1.
-	    // In the worst case, each thread reads two bursts from the global memory.
-	
-	    int index = blockIdx.x * blockDim.x + threadIdx.x;
-	    index += offset;
-	    oup[index] = inp[index] + 100.0;
-	}
-	
-	__global__
-	void strided_add(float *inp, float *oup, int n, int stride) {
-	    // When stride=1, access is coalesced but if stride=2,
-	    // then some threads in a warp will read data from burst i and the remaining from burst 2i.
-	    // In the worst case, each thread reads 32 bursts from the global memory
-	    // because when stride >= 32 each thread in a warp reads from a different burst.
-	
-	    int index = blockIdx.x * blockDim.x + threadIdx.x;
-	    index *= stride;
-	    oup[index] = inp[index] + 100.0;
-	}
-	```
-	<br/><br/>
+    ```cpp
+    __global__
+    void offset_add(float *inp, float *oup, int n, int offset) {
+        // When offset=0, access is coalesced but if offset=1, then some threads in a warp will read data from burst i
+        // and the remaining from burst i+1.
+        // In the worst case, each thread reads two bursts from the global memory.
+        
+        int index = blockIdx.x * blockDim.x + threadIdx.x;
+        index += offset;
+        oup[index] = inp[index] + 100.0;
+    }
+    
+    __global__
+    void strided_add(float *inp, float *oup, int n, int stride) {
+        // When stride=1, access is coalesced but if stride=2,
+        // then some threads in a warp will read data from burst i and the remaining from burst 2i.
+        // In the worst case, each thread reads 32 bursts from the global memory
+        // because when stride >= 32 each thread in a warp reads from a different burst.
+        
+        int index = blockIdx.x * blockDim.x + threadIdx.x;
+        index *= stride;
+        oup[index] = inp[index] + 100.0;
+    }
+    ```
+    <br/><br/>
 Performance takes a major hit when using strided global memory access.<br/><br/>
 [GPU Performance](https://engineering.purdue.edu/~smidkiff/ece563/NVidiaGPUTeachingToolkit/Mod6/Lecture-6-2-memory-coalescing.pdf)<br/><br/>
 In the matrix multiplication kernel we saw in the previous part:<br/><br/>
@@ -223,6 +223,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
         int m = 4096;
     
         float *a, *f, *out;
+    
         cudaMallocManaged(&a, n * m * sizeof(float));
     	cudaMallocManaged(&f, K * K * sizeof(float));
         cudaMallocManaged(&out, n * m * sizeof(float));
@@ -233,124 +234,132 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
         dim3 bd(32, 32, 1);
         dim3 gd(ceil(m/32.0), ceil(n/32.0), 1);
         conv2D_constant_mem<<gd, bd>>(a, out, n, m);
+        cudaDeviceSynchronize();
+        
+        cudaFree(a);
+        cudaFree(f);
+        cudaFree(out);
     }
     ```
     <br/><br/>
 Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
-	```cpp
-	#define K 7
-	
-	// Thread block size is equal to the OUT_TILE_WIDTH
-	#define OUT_TILE_WIDTH 32
-	
-	// INP_TILE_WIDTH includes additional (K-1)/2 rows and columns on either side
-	#define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
-	
-	// constant memory is declared outside any function
-	__constant__ float F_c[K*K];
-	__global__ 
-	void conv2D_shared_mem(float *a, float *c, int n, int m) {
-		// shared memory size is INP_TILE_WIDTH*INP_TILE_WIDTH
-		// but block size is OUT_TILE_WIDTH*OUT_TILE_WIDTH
-		__shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
-		
-		// Load the input tile into shared memory
-		int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
-		int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
-		
-		// Since the number of elements in input tile is greater than the number of threads in a block
-		// each thread thus loads multiple input tile elements from DRAM into shared memory.
-		int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
-		
-		for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
-			// get the index in shared memory array
-			int u = i/INP_TILE_WIDTH;
-			int v = i % INP_TILE_WIDTH;
-			
-			// get the absolute index
-			int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
-			int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
-			
-			if (p >= 0 && p < n && q >= 0 && q < m) a_s[i] = a[p*m+q];
-			else a_s[i] = 0.0f;
-		}
-		
-		__syncthreads();
-		
-		float res = 0.0f;
-		
-		for (int i = 0; i < K; i++) {
-			for (int j = 0; j < K; j++) {
-				int u = threadIdx.y+i;
-				int v = threadIdx.x+j;
-				res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
-			}
-		}
-		
-		if (row < n && col < m) c[row*m+col] = res;
-	}
-	
-	int main(){
-		int n = 4096;
-		int m = 4096;
-		
-		float *a, *f, *out;
-		
-		cudaMallocManaged(&a, n*m*sizeof(float));
-		cudaMallocManaged(&f, K*K*sizeof(float));
-		cudaMallocManaged(&out, n*m*sizeof(float));
-		
-		cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
-		
-		dim3 bd(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
-		dim3 gd(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
-		
-		conv2D_shared_mem<<<gd, bd>>>(a, out, n, m);
-		cudaDeviceSynchronize();
-		
-		cudaFree(a);
-		cudaFree(f);
-		cudaFree(out);
-	}
-	```
-	<br/><br/>
-We can calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of bytes read from the DRAM = `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in K^2 multiplications and then there are K^2 additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2*K^2*2`. The OP/B ratio is:
-`INP_TILE_WIDTH^2*K^2*2/INP_TILE_WIDTH^2*4 = K^2/2`<br/><br/>
+    ```cpp
+    #define K 7
+    
+    // Thread block size is equal to the OUT_TILE_WIDTH
+    #define OUT_TILE_WIDTH 32
+    
+    // INP_TILE_WIDTH includes additional (K-1)/2 rows and columns on either side of output tile
+    #define INP_TILE_WIDTH (OUT_TILE_WIDTH + (K-1))
+    
+    // constant memory is declared outside any function
+    __constant__ float F_c[K*K];
+    __global__ 
+    void conv2D_shared_mem(float *a, float *c, int n, int m) {
+        // shared memory size is INP_TILE_WIDTH*INP_TILE_WIDTH
+        // but block size is OUT_TILE_WIDTH*OUT_TILE_WIDTH
+        __shared__ float a_s[INP_TILE_WIDTH*INP_TILE_WIDTH];
+        
+        int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
+        int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
+        
+        // Since the number of elements in input tile is greater than the number of threads in a block
+        // each thread thus loads multiple input tile elements from DRAM into shared memory.
+        int index = threadIdx.y*OUT_TILE_WIDTH + threadIdx.x;
+        
+        for (int i = index; i < INP_TILE_WIDTH*INP_TILE_WIDTH; i += OUT_TILE_WIDTH*OUT_TILE_WIDTH) {
+            // get the index in shared memory array
+            int u = i/INP_TILE_WIDTH;
+            int v = i % INP_TILE_WIDTH;
+            
+            // get the absolute index
+            int p = blockIdx.y*OUT_TILE_WIDTH - (K-1)/2 + u;
+            int q = blockIdx.x*OUT_TILE_WIDTH - (K-1)/2 + v;
+            
+            if (p >= 0 && p < n && q >= 0 && q < m) a_s[i] = a[p*m+q];
+            else a_s[i] = 0.0f;
+        }
+        
+        __syncthreads();
+
+        // run convolution with shared memory once the input tile is loaded.
+        float res = 0.0f;
+        
+        for (int i = 0; i < K; i++) {
+            for (int j = 0; j < K; j++) {
+                int u = threadIdx.y+i;
+                int v = threadIdx.x+j;
+                res += a_s[u*INP_TILE_WIDTH+v]*F_c[i*K+j];
+            }
+        }
+        
+        if (row < n && col < m) c[row*m+col] = res;
+    }
+    
+    int main(){
+        int n = 4096;
+        int m = 4096;
+        
+        float *a, *f, *out;
+        
+        cudaMallocManaged(&a, n*m*sizeof(float));
+        cudaMallocManaged(&f, K*K*sizeof(float));
+        cudaMallocManaged(&out, n*m*sizeof(float));
+        
+        cudaMemcpyToSymbol(F_c, f, K*K*sizeof(float));
+        
+        dim3 bd(OUT_TILE_WIDTH, OUT_TILE_WIDTH, 1);
+        dim3 gd(ceil(m/float(OUT_TILE_WIDTH)), ceil(n/float(OUT_TILE_WIDTH)), 1);
+        
+        conv2D_shared_mem<<<gd, bd>>>(a, out, n, m);
+        cudaDeviceSynchronize();
+        
+        cudaFree(a);
+        cudaFree(f);
+        cudaFree(out);
+    }
+    ```
+    <br/><br/>
+We can approximately calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of (approx) bytes read from the DRAM is `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in `K^2` multiplications and then there are `K^2` additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2 * K^2 * 2`. The OP/B ratio is: `(INP_TILE_WIDTH^2 * K^2 * 2)/(INP_TILE_WIDTH^2 * 4) = K^2/2`. <br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
+The actual calculation is a bit complex since at the boundaries the input tile has fewer than `INP_TILE_WIDTH*INP_TILE_WIDTH` elements and also some input tile elements are loaded by multiple blocks of threads as they are overlapping. <br/><br/>
 The elements in the input tile that are located at the boundaries of the output tile are called the halo cells as they are not part of the output but is required to calculate the output values by multiplying with the filter.<br/><br/>
 One issue with the above kernel is that for elements at the boundaries, we have to unnecessarly iterate over "non-existent" indices to load the input tile into shared memory. This consumes GPU cycles. Also, for multiple output tiles, there is overlap between the input tile elements and thus the same input tile element might be loaded by multiple blocks into the shared memory and thus duplicating effort. Duplicate loading cannot be avoided as shared memory is scoped per block. One possible solution to this is not to load the halo cells and fetch them directly from DRAM and hope that DRAM caches the halo cell values. <br/><br/>
-	```cpp
-	__global__ 
-	void conv2D_shared_mem(float *a, float *c, int n, int m) {
-	    __shared__ float a_s[OUT_TILE_WIDTH*OUT_TILE_WIDTH];
-	    
-	    // Load the input tile into shared memory
-	    int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
-	    int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
-	
-	    if (row < n && col < m) a_s[threadIdx.y*OUT_TILE_WIDTH + threadIdx.x] = a[row*m + col];
-	
-	    __syncthreads();
-	    
-	    float res = 0.0f;
-	    
-	    for (int i = 0; i < K; i++) {
-	        for (int j = 0; j < K; j++) {
-	            int u = threadIdx.y-(K-1)/2+i;
-	            int v = threadIdx.x-(K-1)/2+j;
-	
-	            int w = row-(K-1)/2+i;
-	            int z = col-(K-1)/2+j;
-	
-	            if (u >= 0 && u < OUT_TILE_WIDTH && v >= 0 && v < OUT_TILE_WIDTH) res += a_s[u*OUT_TILE_WIDTH+v]*F_c[i*K+j];
-	            else if (w >= 0 && w < n && z >= 0 && z < m) res += a[w*m+z]*F_c[i*K+j];
-	        }
-	    }
-	    
-	    if (row < n && col < m) c[row*m+col] = res;
-	}
-	```
- 	<br/><br/>
+    ```cpp
+    __global__ 
+    void conv2D_shared_mem(float *a, float *c, int n, int m) {
+        __shared__ float a_s[OUT_TILE_WIDTH*OUT_TILE_WIDTH];
+        
+        int row = blockIdx.y*OUT_TILE_WIDTH + threadIdx.y;
+        int col = blockIdx.x*OUT_TILE_WIDTH + threadIdx.x;
+
+        // Load the input tile (without halo cells) into shared memory
+        if (row < n && col < m) a_s[threadIdx.y*OUT_TILE_WIDTH + threadIdx.x] = a[row*m + col];
+        
+        __syncthreads();
+        
+        float res = 0.0f;
+        
+        for (int i = 0; i < K; i++) {
+            for (int j = 0; j < K; j++) {
+                // local block indices
+                int u = threadIdx.y-(K-1)/2+i;
+                int v = threadIdx.x-(K-1)/2+j;
+
+                // global indices
+                int w = row-(K-1)/2+i;
+                int z = col-(K-1)/2+j;
+
+                // if local indices are of halo cells then read directly from global memory else use shared memory
+                if (u >= 0 && u < OUT_TILE_WIDTH && v >= 0 && v < OUT_TILE_WIDTH) res += a_s[u*OUT_TILE_WIDTH+v]*F_c[i*K+j];
+                else if (w >= 0 && w < n && z >= 0 && z < m) res += a[w*m+z]*F_c[i*K+j];
+            }
+        }
+        
+        if (row < n && col < m) c[row*m+col] = res;
+    }
+    ```
+    <br/><br/>
 
 
 6. **Stencils**<br/><br/>
