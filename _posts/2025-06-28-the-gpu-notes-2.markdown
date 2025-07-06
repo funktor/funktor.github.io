@@ -374,7 +374,96 @@ One issue with the above kernel is that for elements at the boundaries, we have 
     ```
     <br/><br/>
 
-5. **Reduction and atomic operations**<br/><br/>
+4. **Reduction and atomic operations**<br/><br/>
+So far all the problems we have solved using CUDA are conflict free i.e. each output computed by a thread is independent of any other output computed by some other thread. As you know that when working with threads in CPU, most practical problem requires thread-safety. For e.g. in the classic example of `x = x+1`, if x=10 and 2 threads A and B is incrementing x simulataneously, then there is a chance of race-condition. Threads A reads x=10, increments x by 1 to 11 but before updating x in the register or memory thread B reads x but since x has not yet updated, B will also read x=10. As a result bit A and B updates x to 11 whereas it should be x=12. <br/><br/>
+In GPU, similar race conditions can happen using threads.<br/><br/>
+Let's look at the 1st problem of parallel histogram calculation where given a stream of characters in a-z, we need to calculate the frequencies of bucket of size b. For e.g. if b=4, then the buckets are `[a-d]`, `[e-h]`, `[i-l]`, `[m-p]`, `[q-t]`, `[u-x]`, and `[y-z]`. Thus whenever we encounter some character, we find the bucket where it should lie and then increment the count of that bucket. For e.g. if character is `g`, then we see that it should lie in the bucket `[e-h]`.<br/><br/>
+A simple CPU version of the problem:
+    ```cpp
+    void histogram(char *s, int *histo, int n, int m, int b) {
+        for (int i = 0; i < n; i++) {
+            char c = s[i];
+            int c_int = c - 'a';
+            histo[c_int/b] += 1;
+        }
+    }
+    int main() {
+        int n = 1e5;
+        int b = 4;
+        int m = ceil(26.0/b);
+        char *s = (char *)malloc(n*sizeof(char));
+        int *histo = (int *)malloc(m*sizeof(int));
+        for (int i = 0; i < m ; i++) histo[i] = 0;
+    
+        histogram(s, histo, n, m, b);
+        free(s);
+        free(histo);
+    }
+    ```
+    <br/><br/>
+In order to parallelize the above, we can have each thread operate on each character in the input.<br/><br/>
+    ```cpp
+    void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+        int index = blockIdx.x*blockDim.x + threadIdx.x;
+        if (index < n) {
+            char c = s[index];
+            int c_int = c - 'a';
+            histo[c_int/b] += 1;
+        }
+    }
+    int main() {
+        int n = 1e5;
+        int b = 4;
+        int m = ceil(26.0/b);
+        char *s = (char *)malloc(n*sizeof(char));
+        int *histo = (int *)malloc(m*sizeof(int));
+        for (int i = 0; i < m ; i++) histo[i] = 0;
+    
+        histogram(s, histo, n, m, b);
+        free(s);
+        free(histo);
+    }
+    ```
+    <br/><br/>
+But note that when multiple threads are updating `histo[c_int/b]` it can lead to race condition. CUDA provides functions for atomic operations such as atomicAdd() for addition, atomicMul() for multiplication and so on. <br/><br/>
+    ```cpp
+    void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+        int index = blockIdx.x*blockDim.x + threadIdx.x;
+        if (index < n) {
+            char c = s[index];
+            int c_int = c - 'a';
+            atomicAdd(&(histo[c_int/b]), 1);
+        }
+    }
+    ```
+    <br/><br/>
+Atomic operations have penalty on performance. When multiple threads are operating on atomic functions, they are effectively serialized. Thus, performance degrades in the case of parallel histogram if many threads are writing to the same same bucket index. All threads reading and writing to dame bucket index will be serialized. <br/><br/>
+We can improve the performance by using private buckets per block i.e. each block will have its private copy of buckets and each thread in a block will update its private copy. After that all the private buckets are merged into a single bucket. The private buckets are implemented using shared memory as they are 10x faster than DRAM global memory.<br/><br/>
+    ```cpp
+    #define NBINS 
+    void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+        __shared__ int histo_s[NBINS];
+    
+        int index = blockIdx.x*blockDim.x + threadIdx.x;
+        for (int i = 0; i < NBINS; i++) histo_s[i] = 0;
+        __syncthreads();
+    
+        if (index < n) {
+            char c = s[index];
+            int c_int = c - 'a';
+            atomicAdd(&(histo_s[c_int/b]), 1);
+        }
+
+        if (blockIdx.x > 0) {
+            __syncthreads();
+            for (int i = threadIdx.x; i < NBINS; i += blockIdx.x) {
+                int cnt = histo_s[i];
+                atomicAdd(&(histo[c_int/b]), cnt);
+            }
+        }
+    }
+    ```
+    <br/><br/>
 
 6. **Kernel Fusion**<br/><br/>
 
