@@ -487,6 +487,41 @@ The private buckets can be implemented using shared memory as they are 10x faste
     }
     ```
     <br/><br/>
+If the number of characters are too high, we might be spawning too many threads if the distribution of characters is skewed. One possible way to handle too many characters in the input is thread coarsening where a single thread is responsible for updating the histogram corresponding to multiple characters. <br/><br/>
+    ```cpp
+    #define BUCKETS 7
+    #define COARSE_FACTOR 16
+    void cuda_histogram_privatization_coarsening(char *s, int *histo, int n, int m, int b) {
+        // private histogram copies held in shared memory
+        __shared__ int histo_s[NBINS];
+    
+        int index = blockIdx.x*blockDim.x + threadIdx.x;
+
+        // Since number of buckets can be greater than the number of threads in a block, each thread
+        // initializes multiple buckets. 
+        for (int i = threadIdx.x; i < BUCKETS; i += blockDim.x) histo_s[i] = 0;
+        __syncthreads();
+
+        // consecutive threads operates on consecutive elements as then the access to DRAM
+        // is coalesced.
+        for (int i = index; i < n; i += blockDim.x*gridDim.x) {
+            char c = s[i];
+            int c_int = c - 'a';
+
+            // update private copy of buckets in shared memory
+            atomicAdd(&(histo_s[c_int/b]), 1);
+        }
+        __syncthreads();
+
+        // update bucket in global memory with values from shared memory
+        for (int i = threadIdx.x; i < BUCKETS; i += blockDim.x) {
+            int cnt = histo_s[i];
+            if (cnt > 0) atomicAdd(&(histo[i]), cnt);
+        }
+    }
+    ```
+    <br/><br/>
+Another possible way to implement coarsening is to have each thread operate on multiple consecutive characters but in that case the access to DRAM is not coalesced. Note that in CPU, accessing consecutive elements by same thread is faster due to cache lines where once a block of 64 bytes data is loaded into cache, further request for same data is served from cache. <br/><br/>
 
 6. **Kernel Fusion**<br/><br/>
 
