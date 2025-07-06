@@ -381,6 +381,10 @@ Let's look at the 1st problem of parallel histogram calculation where given a st
 A simple CPU version of the problem:
     ```cpp
     void histogram(char *s, int *histo, int n, int m, int b) {
+        // buckets are stored in histo array where it is assumed that each
+        // bucket corresponds to an index. For e.g. [a-d] is index 0, [e-h]
+        // is index 1 and so on. Thus getting bucket index for character is
+        // done by dividing the index of character by bucket size i.e. 4.
         for (int i = 0; i < n; i++) {
             char c = s[i];
             int c_int = c - 'a';
@@ -404,6 +408,10 @@ A simple CPU version of the problem:
 In order to parallelize the above, we can have each thread operate on each character in the input.<br/><br/>
     ```cpp
     void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+        // buckets are stored in histo array where it is assumed that each
+        // bucket corresponds to an index. For e.g. [a-d] is index 0, [e-h]
+        // is index 1 and so on. Thus getting bucket index for character is
+        // done by dividing the index of character by bucket size i.e. 4.
         int index = blockIdx.x*blockDim.x + threadIdx.x;
         if (index < n) {
             char c = s[index];
@@ -415,19 +423,28 @@ In order to parallelize the above, we can have each thread operate on each chara
         int n = 1e5;
         int b = 4;
         int m = ceil(26.0/b);
-        char *s = (char *)malloc(n*sizeof(char));
-        int *histo = (int *)malloc(m*sizeof(int));
-        for (int i = 0; i < m ; i++) histo[i] = 0;
+
+        char *s;
+        int *histo;
     
-        histogram(s, histo, n, m, b);
-        free(s);
-        free(histo);
+        cudaMallocManaged(&s, n*sizeof(char));
+        cudaMallocManaged(&histo, m*sizeof(int));
+    
+        for (int i = 0; i < m ; i++) histo[i] = 0;
+        cuda_histogram<<ceil(n/1024.0), 1024>>(s, histo, n, m, b);
+    
+        cudaFree(s);
+        cudaFree(histo);
     }
     ```
     <br/><br/>
 But note that when multiple threads are updating `histo[c_int/b]` it can lead to race condition. CUDA provides functions for atomic operations such as atomicAdd() for addition, atomicMul() for multiplication and so on. <br/><br/>
     ```cpp
     void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+        // buckets are stored in histo array where it is assumed that each
+        // bucket corresponds to an index. For e.g. [a-d] is index 0, [e-h]
+        // is index 1 and so on. Thus getting bucket index for character is
+        // done by dividing the index of character by bucket size i.e. 4.
         int index = blockIdx.x*blockDim.x + threadIdx.x;
         if (index < n) {
             char c = s[index];
@@ -437,29 +454,35 @@ But note that when multiple threads are updating `histo[c_int/b]` it can lead to
     }
     ```
     <br/><br/>
-Atomic operations have penalty on performance. When multiple threads are operating on atomic functions, they are effectively serialized. Thus, performance degrades in the case of parallel histogram if many threads are writing to the same same bucket index. All threads reading and writing to dame bucket index will be serialized. <br/><br/>
-We can improve the performance by using private buckets per block i.e. each block will have its private copy of buckets and each thread in a block will update its private copy. After that all the private buckets are merged into a single bucket. The private buckets are implemented using shared memory as they are 10x faster than DRAM global memory.<br/><br/>
+Atomic operations have penalty on performance. When multiple threads are operating on atomic functions, they are effectively serialized. Thus, performance degrades in the case of parallel histogram if many threads are writing to the same bucket index. All threads reading and writing to same bucket index will be serialized. <br/><br/>
+We can improve the performance by using private buckets per block i.e. each block will have its private copy of buckets and each thread in a block will update its private copy. After that all the private buckets are merged into a single bucket.<br/><br/>
+The private buckets can be implemented using shared memory as they are 10x faster than DRAM global memory.<br/><br/>
     ```cpp
-    #define NBINS 
-    void cuda_histogram(char *s, int *histo, int n, int m, int b) {
+    #define BUCKETS 7
+    void cuda_histogram_privatization(char *s, int *histo, int n, int m, int b) {
+        // private histogram copies held in shared memory
         __shared__ int histo_s[NBINS];
     
         int index = blockIdx.x*blockDim.x + threadIdx.x;
-        for (int i = 0; i < NBINS; i++) histo_s[i] = 0;
+
+        // Since number of buckets can be greater than the number of threads in a block, each thread
+        // initializes multiple buckets. 
+        for (int i = threadIdx.x; i < BUCKETS; i += blockDim.x) histo_s[i] = 0;
         __syncthreads();
     
         if (index < n) {
             char c = s[index];
             int c_int = c - 'a';
+
+            // update private copy of buckets in shared memory
             atomicAdd(&(histo_s[c_int/b]), 1);
         }
+        __syncthreads();
 
-        if (blockIdx.x > 0) {
-            __syncthreads();
-            for (int i = threadIdx.x; i < NBINS; i += blockIdx.x) {
-                int cnt = histo_s[i];
-                atomicAdd(&(histo[c_int/b]), cnt);
-            }
+        // update bucket in global memory with values from shared memory
+        for (int i = threadIdx.x; i < BUCKETS; i += blockDim.x) {
+            int cnt = histo_s[i];
+            if (cnt > 0) atomicAdd(&(histo[i]), cnt);
         }
     }
     ```
