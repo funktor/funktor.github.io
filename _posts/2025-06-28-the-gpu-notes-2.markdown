@@ -547,7 +547,8 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the re
         // load the inp in shared memory
         // threads corresponds to the even indices in the shared memory array.
         int idx = 2*blockIdx.x*blockDim.x + 2*threadIdx.x;
-        out_s[2*threadIdx.x] = inp[idx] + inp[idx + 1];
+        if (idx + 1 < n) out_s[2*threadIdx.x] = inp[idx] + inp[idx + 1];
+        else out_s[2*threadIdx.x] = inp[x];
         __syncthreads();
 
         for (stride = 2; stride < blockDim.x; stride *= 2) {
