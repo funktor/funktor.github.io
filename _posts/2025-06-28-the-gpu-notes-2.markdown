@@ -534,7 +534,7 @@ Similar to the parallel histogram problem above, one of the most common problem 
     <br/><br/>
 After these we can optimize the above kernel by using techniques like memory coalescing, shared memory & tiling and thread coarsening. The problem with the above technique is that multiple threads writing to same location in either global memory or shared memory. Even with shared memory we have seen that bank conflicts can arise which effectively makes the addition serial instead of parallel.<br/><br/>
 A concept similar to private buckets for parallel histogram is reduction trees for summation etc. Idea is that we will recursively calculate the sum. Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` values summed up in parallel. The below diagram highlights the reduction tree process. <br/><br/>
-There are 2 possible ways to build the reduction tree. In the 1st method, the resource utilization can be calculated as follows:
+There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
     void vector_sum_red_tree(float *inp, float *out, int n) {
@@ -547,12 +547,15 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the re
         // load the inp in shared memory
         // threads corresponds to the even indices in the shared memory array.
         int idx = 2*blockIdx.x*blockDim.x + 2*threadIdx.x;
+    
         if (idx + 1 < n) out_s[2*threadIdx.x] = inp[idx] + inp[idx + 1];
-        else out_s[2*threadIdx.x] = inp[x];
+        else if (idx < n) out_s[2*threadIdx.x] = inp[idx];
         __syncthreads();
 
         for (stride = 2; stride < blockDim.x; stride *= 2) {
-            if (2*threadIdx.x % 2*stride == 0) out_s[2*threadIdx.x] += out_s[2*threadIdx.x + stride];
+            if (2*threadIdx.x % 2*stride == 0) {
+                if (2*threadIdx.x + stride < 2*TILE_WIDTH) out_s[2*threadIdx.x] += out_s[2*threadIdx.x + stride];
+            }
             __syncthreads();
         }
     
@@ -561,14 +564,35 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the re
 
     int main() {
         int n = 1e5;
-        
-    }
-    0 - 0 - 0 + 2
-    1 - 4 - 4 + 6
-    2 - 8 - 8 + 10
+    
+        float *inp, *out;
+        cudaMallocManaged(&inp, n*sizeof(float));
+        cudaMallocManaged(&out, sizeof(float));
 
-    0 - 0 - 0 + 4
-    1 - 8 - 8 + 12
+        vector_sum_red_tree<<ceil(n/1024.0), 1024>>(inp, out, n);
+        std::cout << out[0] << std::endl;
+        cudaFree(inp);
+        cudaFree(out);
+    }
     ```
     <br/><br/>
+In the 2nd method, the threads are assigned to consecutive indices of the input array.<br/><br/>
+    ```cpp
+    #define TILE_WIDTH 1024
+    void vector_sum_red_tree(float *inp, float *out, int n) {
+        __shared__ float out_s[TILE_WIDTH];
 
+        int idx = 2*blockIdx.x*blockDim.x + threadIdx.x;
+        if (threadIdx.x + TILE_WIDTH < n) out_s[threadIdx.x] = inp[threadIdx.x] + inp[threadIdx.x + TILE_WIDTH];
+        else out_s[threadIdx.x] = inp[threadIdx.x];
+        __syncthreads();
+
+        for (stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
+            if (threadIdx.x < TILE_WIDTH/2) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+            __syncthreads();
+        }
+    
+        atomicAdd(&out[0], out_s[0]);
+    }
+    ```
+    <br/><br/>
