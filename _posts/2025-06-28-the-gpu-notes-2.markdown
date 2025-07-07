@@ -522,6 +522,52 @@ If the number of characters are too high, we might be spawning too many threads 
     ```
     <br/><br/>
 Another possible way to implement coarsening is to have each thread operate on multiple consecutive characters but in that case the access to DRAM is not coalesced. Note that in CPU, accessing consecutive elements by same thread is faster due to cache lines where once a block of 64 bytes data is loaded into cache, further request for same data is served from cache. <br/><br/>
+Similar to the parallel histogram problem above, one of the most common problem involving reduction is vector summation. In vector dot product, we need to sum the products of individual elements of 2 vectors. One simple strategy is for each thread to do an `atomicAdd()` on the 1st element of the vector and finally return the 1st element.<br/><br/>
+    ```cpp
+    void vector_sum(float *inp, float *out, int n) {
+        int index = blockIdx.x*blockDim.x + threadIdx.x;
+        if (index == 0) out[0] = 0.0f;
+        __syncthreads();
+        if (index < n) atomicAdd(out, inp[index]);
+    }
+    ```
+    <br/><br/>
+After these we can optimize the above kernel by using techniques like memory coalescing, shared memory & tiling and thread coarsening. The problem with the above technique is that multiple threads writing to same location in either global memory or shared memory. Even with shared memory we have seen that bank conflicts can arise which effectively makes the addition serial instead of parallel.<br/><br/>
+A concept similar to private buckets for parallel histogram is reduction trees for summation etc. Idea is that we will recursively calculate the sum. Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` values summed up in parallel. The below diagram highlights the reduction tree process. <br/><br/>
+There are 2 possible ways to build the reduction tree. In the 1st method, the resource utilization can be calculated as follows:
+    ```cpp
+    #define TILE_WIDTH 1024
+    void vector_sum_red_tree(float *inp, float *out, int n) {
+        // shared memory holds inp elements twice the number of threads in block
+        // for 1024 threads in block, shared memory size is 2048
+        __shared__ float out_s[2*TILE_WIDTH];
 
-6. **Kernel Fusion**<br/><br/>
+        // size of inp vec in each block is 2*blockIdx.x*blockDim.x which is
+        // same as 2*TILE_WIDTH
+        // load the inp in shared memory
+        // threads corresponds to the even indices in the shared memory array.
+        int idx = 2*blockIdx.x*blockDim.x + 2*threadIdx.x;
+        out_s[2*threadIdx.x] = inp[idx] + inp[idx + 1];
+        __syncthreads();
+
+        for (stride = 2; stride < blockDim.x; stride *= 2) {
+            if (2*threadIdx.x % 2*stride == 0) out_s[2*threadIdx.x] += out_s[2*threadIdx.x + stride];
+            __syncthreads();
+        }
+    
+        atomicAdd(&out[0], out_s[0]);
+    }
+
+    int main() {
+        int n = 1e5;
+        
+    }
+    0 - 0 - 0 + 2
+    1 - 4 - 4 + 6
+    2 - 8 - 8 + 10
+
+    0 - 0 - 0 + 4
+    1 - 8 - 8 + 12
+    ```
+    <br/><br/>
 
