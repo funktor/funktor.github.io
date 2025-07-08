@@ -542,8 +542,7 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the th
         // for 1024 threads in block, shared memory size is 2048
         __shared__ float out_s[2*TILE_WIDTH];
 
-        // size of inp vec in each block is 2*blockIdx.x*blockDim.x which is
-        // same as 2*TILE_WIDTH
+        // size of inp vec in each block is 2*blockDim.x which is same as 2*TILE_WIDTH.
         // load the inp in shared memory
         // threads corresponds to the even indices in the shared memory array.
         int idx = 2*blockIdx.x*blockDim.x + 2*threadIdx.x;
@@ -583,12 +582,36 @@ In the 2nd method, the threads are assigned to consecutive indices of the input 
         __shared__ float out_s[TILE_WIDTH];
 
         int idx = 2*blockIdx.x*blockDim.x + threadIdx.x;
-        if (threadIdx.x + TILE_WIDTH < n) out_s[threadIdx.x] = inp[threadIdx.x] + inp[threadIdx.x + TILE_WIDTH];
-        else out_s[threadIdx.x] = inp[threadIdx.x];
+        if (threadIdx.x + TILE_WIDTH < n) out_s[threadIdx.x] = inp[idx] + inp[idx + TILE_WIDTH];
+        else out_s[threadIdx.x] = inp[idx];
         __syncthreads();
 
         for (stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
-            if (threadIdx.x < TILE_WIDTH/2) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+            if (threadIdx.x < stride) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+            __syncthreads();
+        }
+    
+        atomicAdd(&out[0], out_s[0]);
+    }
+    ```
+    <br/><br/>
+Note that inside the stride for-loop, maximum number of threads required is when stride = TILE_WIDTH/2 and the number of threads required is N/4 where N is the number of elements in the input vector. Thus, one can use thread coarsening by using only N/4 threads per block and using N/4 threads to load out_s in shared memory in the 1st step, or in other words each block of threads works with input array of size 4 times the block size i.e.
+    ```cpp
+    #define TILE_WIDTH 1024
+    #define COARSE_FACTOR 4
+    void vector_sum_red_tree(float *inp, float *out, int n) {
+        __shared__ float out_s[TILE_WIDTH];
+
+        int idx = COARSE_FACTOR*blockIdx.x*blockDim.x + threadIdx.x;
+        float s = 0.0f;
+        for (int i = idx; i < COARSE_FACTOR*(blockIdx.x + 1)*blockDim.x; i += TILE_WIDTH) {
+            if (i < n) s += inp[i];
+        }
+        out_s[threadIdx.x] = s;
+        __syncthreads();
+
+        for (stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
+            if (threadIdx.x < stride) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
             __syncthreads();
         }
     
