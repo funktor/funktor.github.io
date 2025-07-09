@@ -621,6 +621,10 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the th
     ```
     <br/><br/>
 The above method doesn't have very good resource utilization and have lot of control divergence because for further stages only a fraction of threads are used to calculate the sum. If in a warp of 32 threads, at-least one thread is used then the whole warp is active to consume GPU resources. But if no thread in a warp is active, it doesnt't consume any GPU resource. Let's look at one block of 1024 threads i.e. 32 warps working with 2048 elements of the input array.<br/><br/>
+| First Header  | Second Header |
+| ------------- | ------------- |
+| Content Cell  | Content Cell  |
+| Content Cell  | Content Cell  |
 In the 1st stage, all the threads are active, thus number of thread resources consumed (number of active warps * 32) = 1024, and number of threads active = 1024.<br/><br/>
 In the 2nd stage, only 512 threads are active and from each warp 16 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 512.<br/><br/>
 In the 3rd stage, only 256 threads are active and from each warp 8 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 256.<br/><br/>
