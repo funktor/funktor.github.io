@@ -375,9 +375,9 @@ One issue with the above kernel is that for elements at the boundaries, we have 
     <br/><br/>
 
 4. **Reduction and atomic operations**<br/><br/>
-So far all the problems we have solved using CUDA are conflict free i.e. each output computed by a thread is independent of any other output computed by some other thread. As you know that when working with threads in CPU, most practical problem requires thread-safety. For e.g. in the classic example of `x = x+1`, if x=10 and 2 threads A and B is incrementing x simulataneously, then there is a chance of race-condition. Threads A reads x=10, increments x by 1 to 11 but before updating x in the register or memory thread B reads x but since x has not yet updated, B will also read x=10. As a result bit A and B updates x to 11 whereas it should be x=12. <br/><br/>
+So far all the problems we have solved using CUDA are conflict free i.e. each output computed by a thread is independent of any other output computed by another thread. As you know that when working with threads in CPU, most practical problem requires thread-safety. For e.g. in the classic example of `x = x+1`, if x=10 and 2 threads A and B is incrementing x simulataneously, then there is a chance of race-condition. Threads A reads x=10, increments x by 1 to 11 but before updating x in the register or memory thread B reads x but since x has not yet updated, B will also read x=10. As a result bit A and B updates x to 11. <br/><br/>
 In GPU, similar race conditions can happen using threads.<br/><br/>
-Let's look at the 1st problem of parallel histogram calculation where given a stream of characters in a-z, we need to calculate the frequencies of bucket of size b. For e.g. if b=4, then the buckets are `[a-d]`, `[e-h]`, `[i-l]`, `[m-p]`, `[q-t]`, `[u-x]`, and `[y-z]`. Thus whenever we encounter some character, we find the bucket where it should lie and then increment the count of that bucket. For e.g. if character is `g`, then we see that it should lie in the bucket `[e-h]`.<br/><br/>
+Let's look at the 1st problem of parallel histogram calculation where given a stream of characters in a-z, we need to calculate the frequencies of bucket of size b. For e.g. if b=4, then the buckets are `[a-d]`, `[e-h]`, `[i-l]`, `[m-p]`, `[q-t]`, `[u-x]`, and `[y-z]`. Thus whenever we encounter some character, we find the bucket where it should lie and then increment the count of that bucket. For e.g. if character is `g`, then it should lie in the bucket `[e-h]`.<br/><br/>
 A simple CPU version of the problem:
     ```cpp
     void histogram(char *s, int *histo, int n, int m, int b) {
@@ -391,11 +391,15 @@ A simple CPU version of the problem:
             histo[c_int/b] += 1;
         }
     }
+    
     int main() {
         int n = 1e5;
         int b = 4;
         int m = ceil(26.0/b);
         char *s = (char *)malloc(n*sizeof(char));
+    
+        // generate some random stream of characters of size n here.
+    
         int *histo = (int *)malloc(m*sizeof(int));
         for (int i = 0; i < m ; i++) histo[i] = 0;
     
@@ -407,6 +411,7 @@ A simple CPU version of the problem:
     <br/><br/>
 In order to parallelize the above, we can have each thread operate on each character in the input.<br/><br/>
     ```cpp
+    __global__
     void cuda_histogram(char *s, int *histo, int n, int m, int b) {
         // buckets are stored in histo array where it is assumed that each
         // bucket corresponds to an index. For e.g. [a-d] is index 0, [e-h]
@@ -419,6 +424,7 @@ In order to parallelize the above, we can have each thread operate on each chara
             histo[c_int/b] += 1;
         }
     }
+    
     int main() {
         int n = 1e5;
         int b = 4;
@@ -429,9 +435,11 @@ In order to parallelize the above, we can have each thread operate on each chara
     
         cudaMallocManaged(&s, n*sizeof(char));
         cudaMallocManaged(&histo, m*sizeof(int));
+
+        // generate some random stream of characters of size n here.
     
         for (int i = 0; i < m ; i++) histo[i] = 0;
-        cuda_histogram<<ceil(n/1024.0), 1024>>(s, histo, n, m, b);
+        cuda_histogram<<<ceil(n/1024.0), 1024>>>(s, histo, n, m, b);
     
         cudaFree(s);
         cudaFree(histo);
@@ -439,7 +447,9 @@ In order to parallelize the above, we can have each thread operate on each chara
     ```
     <br/><br/>
 But note that when multiple threads are updating `histo[c_int/b]` it can lead to race condition. CUDA provides functions for atomic operations such as atomicAdd() for addition, atomicMul() for multiplication and so on. <br/><br/>
+[Atomic functions in cuda](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#atomic-functions)<br/><br/>
     ```cpp
+    __global__
     void cuda_histogram(char *s, int *histo, int n, int m, int b) {
         // buckets are stored in histo array where it is assumed that each
         // bucket corresponds to an index. For e.g. [a-d] is index 0, [e-h]
@@ -459,9 +469,10 @@ We can improve the performance by using private buckets per block i.e. each bloc
 The private buckets can be implemented using shared memory as they are 10x faster than DRAM global memory.<br/><br/>
     ```cpp
     #define BUCKETS 7
+    __global__
     void cuda_histogram_privatization(char *s, int *histo, int n, int m, int b) {
         // private histogram copies held in shared memory
-        __shared__ int histo_s[NBINS];
+        __shared__ int histo_s[BUCKETS];
     
         int index = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -474,7 +485,7 @@ The private buckets can be implemented using shared memory as they are 10x faste
             char c = s[index];
             int c_int = c - 'a';
 
-            // update private copy of buckets in shared memory
+            // update the private copy of buckets in shared memory
             atomicAdd(&(histo_s[c_int/b]), 1);
         }
         __syncthreads();
@@ -487,13 +498,14 @@ The private buckets can be implemented using shared memory as they are 10x faste
     }
     ```
     <br/><br/>
-If the number of characters are too high, we might be spawning too many threads if the distribution of characters is skewed. One possible way to handle too many characters in the input is thread coarsening where a single thread is responsible for updating the histogram corresponding to multiple characters. <br/><br/>
+If the number of characters are too high, we might be spawning too many threads and worse if the distribution of buckets is skewed. One possible way to handle a lot of characters in the input is thread coarsening where a single thread is responsible for updating the histogram corresponding to multiple characters. <br/><br/>
     ```cpp
     #define BUCKETS 7
     #define COARSE_FACTOR 16
+    __global__
     void cuda_histogram_privatization_coarsening(char *s, int *histo, int n, int m, int b) {
         // private histogram copies held in shared memory
-        __shared__ int histo_s[NBINS];
+        __shared__ int histo_s[BUCKETS];
     
         int index = blockIdx.x*blockDim.x + threadIdx.x;
 
@@ -518,6 +530,28 @@ If the number of characters are too high, we might be spawning too many threads 
             int cnt = histo_s[i];
             if (cnt > 0) atomicAdd(&(histo[i]), cnt);
         }
+    }
+
+    int main() {
+        int n = 1e5;
+        int b = 4;
+        int m = ceil(26.0/b);
+
+        char *s;
+        int *histo;
+    
+        cudaMallocManaged(&s, n*sizeof(char));
+        cudaMallocManaged(&histo, m*sizeof(int));
+
+        // generate some random stream of characters of size n here.
+    
+        for (int i = 0; i < m ; i++) histo[i] = 0;
+
+        int n_threads = ceil(n/COARSE_FACTOR);
+        cuda_histogram<<<ceil(n_threads/1024.0), 1024>>>(s, histo, n, m, b);
+    
+        cudaFree(s);
+        cudaFree(histo);
     }
     ```
     <br/><br/>
