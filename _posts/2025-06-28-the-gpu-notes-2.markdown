@@ -532,9 +532,11 @@ Similar to the parallel histogram problem above, one of the common problem invol
     ```
     <br/><br/>
 After these we can optimize the above kernel by using techniques like memory coalescing, shared memory & tiling and thread coarsening. The problem with the above technique is that multiple threads writing to same location in either global memory or shared memory. Even with shared memory we have seen that bank conflicts can arise which effectively makes the addition serial instead of parallel.<br/><br/>
-A concept similar to private buckets for parallel histogram is reduction trees for summation. Idea is that we will recursively calculate the sum. In the 1st stage, half of the threads will calculate the sum of 2 distinct locations and store the result in one of the location. In the next stage, 1/4 th of the threads will calculate the sum of 2 distinct locations those that were updated in the 1st stage and so on, until we will have one thread to calculate the final sum.<br/><br/>
+A concept similar to private buckets for parallel histogram is reduction trees for summation. Idea is that we will recursively calculate the sum. In the 1st stage, half of the threads will calculate the sum of 2 distinct locations and store the result in one of the locations. In the next stage, 1/4th the threads will again calculate the sum of 2 distinct locations those that were updated in the 1st stage and so on, until we will have one thread to calculate the final sum.<br/><br/>
 Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` threads each summing up 2 distinct locations updated in stage K-1. The below diagram highlights the reduction tree process. <br/><br/>
-There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows:<br/><br/>
+![Reduction tree](/docs/assets/parallel-sum-reduction-tree-graphviz.png)<br/><br/>
+There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows.:<br/><br/>
+![parallel reduce 1](/docs/assets/parallel_reduce.png)<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
     __global__
@@ -584,7 +586,22 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the th
     }
     ```
     <br/><br/>
+The above method doesn't have very good resource utilization and have lot of control divergence because for further stages only a fraction of threads are used to calculate the sum. If in a warp of 32 threads, at-least one thread is used then the whole warp is active to consume GPU resources. But if no thread in a warp is active, it doesnt't consume any GPU resource. Let's look at one block of 1024 threads i.e. 32 warps working with 2048 elements of the input array.<br/><br/>
+In the 1st stage, all the threads are active, thus number of thread resources consumed (number of active warps*32) = 1024, and number of threads active = 1024.<br/><br/>
+In the 2nd stage, only 512 threads are active and from each warp 16 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 512.<br/><br/>
+In the 3rd stage, only 256 threads are active and from each warp 8 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 256.<br/><br/>
+In the 4th stage, only 128 threads are active and from each warp 4 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 128.<br/><br/>
+In the 5th stage, only 64 threads are active and from each warp 2 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 64.<br/><br/>
+In the 6th stage, only 32 threads are active and from each warp only 1 thread is active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 32.<br/><br/>
+In the 7th stage, only 16 threads are active and only 16 out of 32 warps have 1 thread active, hence only 16 warps active. Thus, number of thread resources consumed = 16 * 32 = 512, and number of threads active = 16.<br/><br/>
+In the 8th stage, only 8 threads are active and only 8 out of 32 warps have 1 thread active, hence only 8 warps active. Thus, number of thread resources consumed = 8 * 32 = 256, and number of threads active = 8.<br/><br/>
+In the 9th stage, only 4 threads are active and only 4 out of 32 warps have 1 thread active, hence only 4 warps active. Thus, number of thread resources consumed = 4 * 32 = 128, and number of threads active = 4.<br/><br/>
+In the 10th stage, only 2 threads are active and only 2 out of 32 warps have 1 thread active, hence only 2 warps active. Thus, number of thread resources consumed = 2 * 32 = 64, and number of threads active = 2.<br/><br/>
+In the last stage, only 1 threads are active and only 1 out of 32 warps have 1 thread active, hence only 1 warp active. Thus, number of thread resources consumed = 1 * 32 = 32, and number of threads active = 1.<br/><br/>
+Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512)/(32+64+128+256+512+1024*5) = 0.167`.<br/><br/>
+
 In the 2nd method, the threads are assigned to consecutive indices of the input array.<br/><br/>
+![parallel reduce 2](/docs/assets/shared-reduce.png)<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
     __global__
