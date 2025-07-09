@@ -587,7 +587,7 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the th
     ```
     <br/><br/>
 The above method doesn't have very good resource utilization and have lot of control divergence because for further stages only a fraction of threads are used to calculate the sum. If in a warp of 32 threads, at-least one thread is used then the whole warp is active to consume GPU resources. But if no thread in a warp is active, it doesnt't consume any GPU resource. Let's look at one block of 1024 threads i.e. 32 warps working with 2048 elements of the input array.<br/><br/>
-In the 1st stage, all the threads are active, thus number of thread resources consumed (number of active warps*32) = 1024, and number of threads active = 1024.<br/><br/>
+In the 1st stage, all the threads are active, thus number of thread resources consumed (number of active warps * 32) = 1024, and number of threads active = 1024.<br/><br/>
 In the 2nd stage, only 512 threads are active and from each warp 16 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 512.<br/><br/>
 In the 3rd stage, only 256 threads are active and from each warp 8 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 256.<br/><br/>
 In the 4th stage, only 128 threads are active and from each warp 4 threads are active, hence all warps are active. Thus, number of thread resources consumed = 1024, and number of threads active = 128.<br/><br/>
@@ -599,7 +599,6 @@ In the 9th stage, only 4 threads are active and only 4 out of 32 warps have 1 th
 In the 10th stage, only 2 threads are active and only 2 out of 32 warps have 1 thread active, hence only 2 warps active. Thus, number of thread resources consumed = 2 * 32 = 64, and number of threads active = 2.<br/><br/>
 In the last stage, only 1 threads are active and only 1 out of 32 warps have 1 thread active, hence only 1 warp active. Thus, number of thread resources consumed = 1 * 32 = 32, and number of threads active = 1.<br/><br/>
 Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512)/(32+64+128+256+512+1024*5) = 0.167`.<br/><br/>
-
 In the 2nd method, the threads are assigned to consecutive indices of the input array.<br/><br/>
 ![parallel reduce 2](/docs/assets/shared-reduce.png)<br/><br/>
     ```cpp
@@ -627,6 +626,19 @@ In the 2nd method, the threads are assigned to consecutive indices of the input 
     }
     ```
     <br/><br/>
+In the 2nd method, resource utilization is better as compared to the 1st method. Let's look at the same ratio as above.<br/><br/>
+In the 1st stage, all the threads are active, thus number of thread resources consumed (number of active warps * 32) = 1024, and number of threads active = 1024.<br/><br/>
+In the 2nd stage, only 512 threads are active and only the 1st 16 warps out of 32 warps are active. Thus, number of thread resources consumed = 16 * 32 = 512, and number of threads active = 512.<br/><br/>
+In the 3rd stage, only 256 threads are active and only the 1st 8 warps out of 32 warps are active. Thus, number of thread resources consumed = 8 * 32 = 256, and number of threads active = 256.<br/><br/>
+In the 4th stage, only 128 threads are active and only the 1st 4 warps out of 32 warps are active. Thus, number of thread resources consumed = 4 * 32 = 128, and number of threads active = 128.<br/><br/>
+In the 5th stage, only 64 threads are active and only the 1st 2 warps out of 32 warps are active. Thus, number of thread resources consumed = 2 * 32 = 64, and number of threads active = 64.<br/><br/>
+In the 6th stage, only 32 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 32.<br/><br/>
+In the 7th stage, only 16 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 16.<br/><br/>
+In the 8th stage, only 8 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 8.<br/><br/>
+In the 9th stage, only 4 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 4.<br/><br/>
+In the 10th stage, only 2 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 2.<br/><br/>
+In the last stage, only 1 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 1.<br/><br/>
+Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512)/(32*6+64+128+256+512+1024) = 0.47`.<br/><br/>
 Using thread coarsening we can further improve the thread re-usability of the above code as follows. Each block of thread works with 2*COARSE_FACTOR number of input elements:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
