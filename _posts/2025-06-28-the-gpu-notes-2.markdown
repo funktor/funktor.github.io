@@ -522,19 +522,18 @@ If the number of characters are too high, we might be spawning too many threads 
     ```
     <br/><br/>
 Another possible way to implement coarsening is to have each thread operate on multiple consecutive characters but in that case the access to DRAM is not coalesced. Note that in CPU, accessing consecutive elements by same thread is faster due to cache lines where once a block of 64 bytes data is loaded into cache, further request for same data is served from cache. <br/><br/>
-Similar to the parallel histogram problem above, one of the most common problem involving reduction is vector summation. In vector dot product, we need to sum the products of individual elements of 2 vectors. One simple strategy is for each thread to do an `atomicAdd()` on the 1st element of the vector and finally return the 1st element.<br/><br/>
+Similar to the parallel histogram problem above, one of the common problem involving reduction is vector summation. In vector dot product, we need to sum the products of individual elements of 2 vectors. One simple strategy is for each thread is to do an `atomicAdd()` on the output with the corresponding element from the input.<br/><br/>
     ```cpp
     __global__
     void vector_sum(float *inp, float *out, int n) {
         int index = blockIdx.x*blockDim.x + threadIdx.x;
-        if (index == 0) out[0] = 0.0f;
-        __syncthreads();
         if (index < n) atomicAdd(out, inp[index]);
     }
     ```
     <br/><br/>
 After these we can optimize the above kernel by using techniques like memory coalescing, shared memory & tiling and thread coarsening. The problem with the above technique is that multiple threads writing to same location in either global memory or shared memory. Even with shared memory we have seen that bank conflicts can arise which effectively makes the addition serial instead of parallel.<br/><br/>
-A concept similar to private buckets for parallel histogram is reduction trees for summation etc. Idea is that we will recursively calculate the sum. Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` values summed up in parallel. The below diagram highlights the reduction tree process. <br/><br/>
+A concept similar to private buckets for parallel histogram is reduction trees for summation. Idea is that we will recursively calculate the sum. In the 1st stage, half of the threads will calculate the sum of 2 distinct locations and store the result in one of the location. In the next stage, 1/4 th of the threads will calculate the sum of 2 distinct locations those that were updated in the 1st stage and so on, until we will have one thread to calculate the final sum.<br/><br/>
+Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` threads each summing up 2 distinct locations updated in stage K-1. The below diagram highlights the reduction tree process. <br/><br/>
 There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
