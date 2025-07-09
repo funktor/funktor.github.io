@@ -639,7 +639,7 @@ In the 9th stage, only 4 threads are active and only the 1st warp out of 32 warp
 In the 10th stage, only 2 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 2.<br/><br/>
 In the last stage, only 1 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 1.<br/><br/>
 Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512+1024)/(32*6+64+128+256+512+1024) = 0.94`.<br/><br/>
-Using thread coarsening we can further improve the thread re-usability of the above code as follows. Each block of thread works with 2*COARSE_FACTOR number of input elements:<br/><br/>
+Using thread coarsening we can further improve the thread re-usability of the above code as follows. Each block of thread works with 2*COARSE_FACTOR number of input elements. Coarsening is used only while loading the initial sums into shared memory array:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
     #define COARSE_FACTOR 2
