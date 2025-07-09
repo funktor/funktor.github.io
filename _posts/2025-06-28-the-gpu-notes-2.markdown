@@ -598,7 +598,7 @@ In the 8th stage, only 8 threads are active and only 8 out of 32 warps have 1 th
 In the 9th stage, only 4 threads are active and only 4 out of 32 warps have 1 thread active, hence only 4 warps active. Thus, number of thread resources consumed = 4 * 32 = 128, and number of threads active = 4.<br/><br/>
 In the 10th stage, only 2 threads are active and only 2 out of 32 warps have 1 thread active, hence only 2 warps active. Thus, number of thread resources consumed = 2 * 32 = 64, and number of threads active = 2.<br/><br/>
 In the last stage, only 1 threads are active and only 1 out of 32 warps have 1 thread active, hence only 1 warp active. Thus, number of thread resources consumed = 1 * 32 = 32, and number of threads active = 1.<br/><br/>
-Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512)/(32+64+128+256+512+1024*5) = 0.167`.<br/><br/>
+Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512+1024)/(32+64+128+256+512+1024*6) = 0.29`.<br/><br/>
 In the 2nd method, the threads are assigned to consecutive indices of the input array.<br/><br/>
 ![parallel reduce 2](/docs/assets/shared-reduce.png)<br/><br/>
     ```cpp
@@ -638,7 +638,7 @@ In the 8th stage, only 8 threads are active and only the 1st warp out of 32 warp
 In the 9th stage, only 4 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 4.<br/><br/>
 In the 10th stage, only 2 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 2.<br/><br/>
 In the last stage, only 1 threads are active and only the 1st warp out of 32 warps are active. Thus, number of thread resources consumed = 32, and number of threads active = 1.<br/><br/>
-Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512)/(32*6+64+128+256+512+1024) = 0.47`.<br/><br/>
+Thus the ratio of total number of active threads to total number of threads resource consumed = `(1+2+4+8+16+32+64+128+256+512+1024)/(32*6+64+128+256+512+1024) = 0.94`.<br/><br/>
 Using thread coarsening we can further improve the thread re-usability of the above code as follows. Each block of thread works with 2*COARSE_FACTOR number of input elements:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
