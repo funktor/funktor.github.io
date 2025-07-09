@@ -568,9 +568,8 @@ Similar to the parallel histogram problem above, one of the common problem invol
 After these we can optimize the above kernel by using techniques like memory coalescing, shared memory & tiling and thread coarsening. The problem with the above technique is that multiple threads writing to same location in either global memory or shared memory. Even with shared memory we have seen that bank conflicts can arise which effectively makes the addition serial instead of parallel.<br/><br/>
 A concept similar to private buckets for parallel histogram is reduction trees for summation. Idea is that we will recursively calculate the sum. In the 1st stage, half of the threads will calculate the sum of 2 distinct locations and store the result in one of the locations. In the next stage, 1/4th the threads will again calculate the sum of 2 distinct locations those that were updated in the 1st stage and so on, until we will have one thread to calculate the final sum.<br/><br/>
 Thus to sum N input elements, there will be O(log(N)) stages and for each stage K, we will have `N/2^K` threads each summing up 2 distinct locations updated in stage K-1. The below diagram highlights the reduction tree process. <br/><br/>
-![Reduction tree](/docs/assets/parallel-sum-reduction-tree-graphviz.png)<br/><br/>
-There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows.:<br/><br/>
 ![parallel reduce 1](/docs/assets/parallel_reduce.png)<br/><br/>
+The threads are assigned to even numbered indices of the input array as follows.:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
     __global__
