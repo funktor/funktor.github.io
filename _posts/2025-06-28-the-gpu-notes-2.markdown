@@ -524,6 +524,7 @@ If the number of characters are too high, we might be spawning too many threads 
 Another possible way to implement coarsening is to have each thread operate on multiple consecutive characters but in that case the access to DRAM is not coalesced. Note that in CPU, accessing consecutive elements by same thread is faster due to cache lines where once a block of 64 bytes data is loaded into cache, further request for same data is served from cache. <br/><br/>
 Similar to the parallel histogram problem above, one of the most common problem involving reduction is vector summation. In vector dot product, we need to sum the products of individual elements of 2 vectors. One simple strategy is for each thread to do an `atomicAdd()` on the 1st element of the vector and finally return the 1st element.<br/><br/>
     ```cpp
+    __global__
     void vector_sum(float *inp, float *out, int n) {
         int index = blockIdx.x*blockDim.x + threadIdx.x;
         if (index == 0) out[0] = 0.0f;
@@ -537,6 +538,7 @@ A concept similar to private buckets for parallel histogram is reduction trees f
 There are 2 possible ways to build the reduction tree. In the 1st method, the threads are assigned to even numbered indices of the input array as follows:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
+    __global__
     void vector_sum_red_tree(float *inp, float *out, int n) {
         // shared memory holds inp elements twice the number of threads in block
         // for 1024 threads in block, shared memory size is 2048
@@ -545,77 +547,99 @@ There are 2 possible ways to build the reduction tree. In the 1st method, the th
         // size of inp vec in each block is 2*blockDim.x which is same as 2*TILE_WIDTH.
         // load the inp in shared memory
         // threads corresponds to the even indices in the shared memory array.
+    
         int idx = 2*blockIdx.x*blockDim.x + 2*threadIdx.x;
     
         if (idx + 1 < n) out_s[2*threadIdx.x] = inp[idx] + inp[idx + 1];
         else if (idx < n) out_s[2*threadIdx.x] = inp[idx];
+        else out_s[2*threadIdx.x] = 0.0f;
         __syncthreads();
-
-        for (stride = 2; stride < blockDim.x; stride *= 2) {
-            if (2*threadIdx.x % 2*stride == 0) {
+    
+        for (int stride = 2; stride < 2*TILE_WIDTH; stride *= 2) {
+            if (threadIdx.x % stride == 0) {
                 if (2*threadIdx.x + stride < 2*TILE_WIDTH) out_s[2*threadIdx.x] += out_s[2*threadIdx.x + stride];
             }
             __syncthreads();
         }
     
-        atomicAdd(&out[0], out_s[0]);
+        if (threadIdx.x == 0) atomicAdd(&out[0], out_s[0]);
     }
 
     int main() {
-        int n = 1e5;
+        int n = 1e6;
+        float *a;
+        float *b;
     
-        float *inp, *out;
-        cudaMallocManaged(&inp, n*sizeof(float));
-        cudaMallocManaged(&out, sizeof(float));
-
-        vector_sum_red_tree<<ceil(n/1024.0), 1024>>(inp, out, n);
-        std::cout << out[0] << std::endl;
-        cudaFree(inp);
-        cudaFree(out);
+        cudaMallocManaged(&a, sizeof(float)*n);
+        cudaMallocManaged(&b, sizeof(float));
+    
+        b[0] = 0.0f;
+        vector_sum_red_tree<<<ceil(n/float(2*TILE_WIDTH)), TILE_WIDTH>>>(a, b, n);
+        cudaDeviceSynchronize();
+        std::cout << "Result: " << b[0] << std::endl;
+    
+        cudaFree(a);
+        cudaFree(b);
+    
+        return 0;
     }
     ```
     <br/><br/>
 In the 2nd method, the threads are assigned to consecutive indices of the input array.<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
-    void vector_sum_red_tree(float *inp, float *out, int n) {
+    __global__
+    void vector_sum_red_tree_consecutive(float *inp, float *out, int n) {
         __shared__ float out_s[TILE_WIDTH];
 
         int idx = 2*blockIdx.x*blockDim.x + threadIdx.x;
-        if (threadIdx.x + TILE_WIDTH < n) out_s[threadIdx.x] = inp[idx] + inp[idx + TILE_WIDTH];
-        else out_s[threadIdx.x] = inp[idx];
+
+        // update shared memory array
+        if (idx + TILE_WIDTH < n) out_s[threadIdx.x] = inp[idx] + inp[idx + TILE_WIDTH];
+        else if (idx < n) out_s[threadIdx.x] = inp[idx];
+        else out_s[threadIdx.x] = 0.0f;
         __syncthreads();
 
-        for (stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
-            if (threadIdx.x < stride) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+        for (int stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
+            if (threadIdx.x < stride) {
+                if (threadIdx.x + stride < TILE_WIDTH) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+            }
             __syncthreads();
         }
     
-        atomicAdd(&out[0], out_s[0]);
+        if (threadIdx.x == 0) atomicAdd(&out[0], out_s[0]);
     }
     ```
     <br/><br/>
-Note that inside the stride for-loop, maximum number of threads required is when stride = TILE_WIDTH/2 and the number of threads required is N/4 where N is the number of elements in the input vector. Thus, one can use thread coarsening by using only N/4 threads per block and using N/4 threads to load out_s in shared memory in the 1st step, or in other words each block of threads works with input array of size 4 times the block size i.e.
+Using thread coarsening we can further improve the thread re-usability of the above code as follows. Each block of thread works with 2*COARSE_FACTOR number of input elements:<br/><br/>
     ```cpp
     #define TILE_WIDTH 1024
-    #define COARSE_FACTOR 4
-    void vector_sum_red_tree(float *inp, float *out, int n) {
+    #define COARSE_FACTOR 2
+    __global__
+    void vector_sum_red_tree_coarsened(float *inp, float *out, int n) {
         __shared__ float out_s[TILE_WIDTH];
 
-        int idx = COARSE_FACTOR*blockIdx.x*blockDim.x + threadIdx.x;
+        // each block of thread works with 2*COARSE_FACTOR number of
+        // input elements.
+        int idx = 2*COARSE_FACTOR*blockIdx.x*blockDim.x + threadIdx.x;
+
+        // for each shared memory index array i, assign it the values
+        // inp[i] + inp[i+TILE_WIDTH] + inp[i+2*TILE_WIDTH] + ... upto 2*COARSE_FACTOR
         float s = 0.0f;
-        for (int i = idx; i < COARSE_FACTOR*(blockIdx.x + 1)*blockDim.x; i += TILE_WIDTH) {
+        for (int i = idx; i < 2*COARSE_FACTOR*(blockIdx.x+1)*blockDim.x; i += TILE_WIDTH) {
             if (i < n) s += inp[i];
         }
         out_s[threadIdx.x] = s;
         __syncthreads();
-
-        for (stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
-            if (threadIdx.x < stride) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+    
+        for (int stride = TILE_WIDTH/2; stride >= 1; stride /= 2) {
+            if (threadIdx.x < stride) {
+                if (threadIdx.x + stride < TILE_WIDTH) out_s[threadIdx.x] += out_s[threadIdx.x + stride];
+            }
             __syncthreads();
         }
     
-        atomicAdd(&out[0], out_s[0]);
+        if (threadIdx.x == 0) atomicAdd(&out[0], out_s[0]);
     }
     ```
     <br/><br/>
