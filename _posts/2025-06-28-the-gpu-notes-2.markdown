@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "The GPU Notes - Part 2"
-date:   2025-07-10 18:50:11 +0530
+date:   2025-07-08 18:50:11 +0530
 categories: software-engineering
 ---
 
@@ -62,6 +62,7 @@ Each thread in a warp is responsible for calculating each element of matrix c la
 Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges for e.g. (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and are not coalesced.<br/><br/>
 For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and thus are coalesced.<br/><br/>
 ![Memory Coalescing](/docs/assets/coalesced.jpg)<br/><br/>
+In the above matrix, since elements are laid out in row-major order, consecutive threads access consecutive locations in the global memory and thus access is coalesced.<br/><br/>
 But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT`, then consecutive thread access to elements of b are not coalesced and are strided by size of m and thus would perform worse than `c=a.b`.<br/><br/>
 In the above kernel instead of passing the transpose of b, we are interchanging the x and y coordinates of b during access.<br/><br/>
     ```cpp
@@ -79,9 +80,10 @@ In the above kernel instead of passing the transpose of b, we are interchanging 
     ```
     <br/><br/>
 ![Memory Coalescing](/docs/assets/uncoalesced.jpg)<br/><br/>
+In the above matrix, elements are laid out in column-major order, consecutive threads access locations in the global memory separated by column-size width and thus access is not coalesced.<br/><br/>
 One possible solution to overcome the problem with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory.<br/><br/>
 [Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)<br/><br/>
-But as noted in the above post, shared memory is divided into banks. Shared memory is divided into 32 banks where each bank is responsible for 32 consecutive bits. But if more than one thread in a warp accesses the same bank, then a bank conflict happens and request is serialized in that case for those threads in the warp. Bank conflict is bound to happen with F64 data type i.e. double precision floats of 64-bits because even if each thread access 2 consecutive banks, only 16 threads will have parallelized access out of 32 threads in a warp.<br/><br/>
+But as noted in the above post, shared memory is divided into banks. Shared memory is divided into 32 banks where each bank is responsible for 32 consecutive bits. But if more than one thread in a warp accesses the same bank, then a bank conflict happens and request is serialized for those threads in the warp. Bank conflict is bound to happen with F64 data type i.e. double precision floats of 64-bits because even if each thread access 2 consecutive banks, only 16 threads will have parallelized access out of 32 threads in a warp.<br/><br/>
 In latest drivers, one can configure bank size for e.g. using `cudaDeviceSetSharedMemConfig()` we can set the bank size to either 4 bytes i.e. 32 bits or 8 bytes i.e 64 bits.<br/><br/>
 A matrix multiplication kernel using transpose of b and shared memory tiling to improve performance.<br/><br/>
     ```cpp
