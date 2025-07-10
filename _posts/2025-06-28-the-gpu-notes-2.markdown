@@ -5,10 +5,11 @@ date:   2025-07-08 18:50:11 +0530
 categories: software-engineering
 ---
 
-In the [previous post](https://funktor.github.io/software-engineering/2025/06/21/the-gpu-notes-1.html), I started jotting down my learnings with GPU and CUDA programming and explored some of the fundamentals of GPU architecture and memory. Towards the end, we saw how we can speed up memory access in matrix multiplication in order increase TFLOPS by using shared memory tiling. In this part we will look at more GPU optimization techniques through more examples.<br/><br/>
+In the [previous post](https://funktor.github.io/software-engineering/2025/06/21/the-gpu-notes-1.html), I started jotting down my learnings with GPU and CUDA programming and explored some of the fundamentals of GPU architecture and memory. Towards the end, we saw how we can speed up memory access in matrix multiplication in order to increase TFLOPS by using shared memory tiling. In this part we will look at some GPU optimization techniques through examples.<br/><br/>
 
 1. **Memory Coalescing**<br/><br/>
 In the previous post we saw that reading from global memory in GPU is slow because firstly they are implemented off-chip and secondly they are implemented using the DRAM cells. Shared memory and caches on the other hand are implemented on-chip and using SRAM cells. SRAM is much faster as compared to DRAM.<br/><br/>
+[DRAM vs SRAM](https://www.youtube.com/watch?v=VToZeD5HhoM&pp=0gcJCfwAo7VqN5tD)<br/><br/>
 Similar to cache lines in CPU, when a location in the global memory is accessed, "nearby" locations are also accessible in the same CPU cycle. This saves number of CPU cycles to read the data from global memory. In CPU, the cache line size is usually 64-bytes. Once read from RAM they are stored in either L1, L2 or L3 cache. <br/><br/>
 [Demystifying CPU Caches with Examples](https://mecha-mind.medium.com/demystifying-cpu-caches-with-examples-810534628d71)<br/><br/>
 Threads in a warp (group of 32 threads) follow the same instruction (SIMD model) and as a result the threads in warp access consecutive memory locations in the global memory. Global memory addresses are 128-byte aligned and thus accessing 4-byte floats (fp32) by a warp of 32 threads can be done in a single pass (coalesced). Each 128-byte segment in global memory is termed as a burst. <br/><br/>
@@ -41,7 +42,7 @@ Accessing with offset or strided access patterns are not coalesced as shown in t
     }
     ```
     <br/><br/>
-Performance takes a major hit when using strided global memory access.<br/><br/>
+Performance takes a major hit when using strided global memory access. The strided access pattern takes almost 10x (on RTX4050) the time it takes for coalesced or offset access for the same number of input elements and same number of threads.<br/><br/>
 [GPU Performance](https://engineering.purdue.edu/~smidkiff/ece563/NVidiaGPUTeachingToolkit/Mod6/Lecture-6-2-memory-coalescing.pdf)<br/><br/>
 In the matrix multiplication kernel we saw in the previous part:<br/><br/>
     ```cpp
@@ -62,7 +63,7 @@ Each thread in a warp is responsible for calculating each element of matrix c la
 Consecutive threads at indices (x, y) and (x, y+1) reads the same elements from row x of matrix a and thus uses the same burst from the global memory except at the edges for e.g. (x, y+m-1) and (x+1, 0) which reads 2 different rows x and x+1 from a with a stride of m (column width) and are not coalesced.<br/><br/>
 For matrix b, the threads at indices (x, y) and (x, y+1) reads consecutive columns y and y+1 and thus are coalesced.<br/><br/>
 ![Memory Coalescing](/docs/assets/coalesced.jpg)<br/><br/>
-In the above matrix, since elements are laid out in row-major order, consecutive threads access consecutive locations in the global memory and thus access is coalesced.<br/><br/>
+In the above matrix, elements are laid out in row-major order and threads are also aligned in row-major order. Consecutive threads are accessing consecutive columns from the matrix in the global memory and thus access is coalesced. This is the case for matrix b in our matrix multiplication code.<br/><br/>
 But if instead of the multiplication `c=a.b`, it was transpose of b i.e. `c=a.bT`, then consecutive thread access to elements of b are not coalesced and are strided by size of m and thus would perform worse than `c=a.b`.<br/><br/>
 In the above kernel instead of passing the transpose of b, we are interchanging the x and y coordinates of b during access.<br/><br/>
     ```cpp
@@ -80,7 +81,7 @@ In the above kernel instead of passing the transpose of b, we are interchanging 
     ```
     <br/><br/>
 ![Memory Coalescing](/docs/assets/uncoalesced.jpg)<br/><br/>
-In the above matrix, elements are laid out in column-major order, consecutive threads access locations in the global memory separated by column-size width and thus access is not coalesced.<br/><br/>
+In the above matrix, although the elements are laid out in row-major order but since we need to access the transpose of the matrix, thus the threads needs to access in column-major order. Consecutive threads are accessing consecutive rows which are stride by column-size width and thus access is not coalesced.<br/><br/>
 One possible solution to overcome the problem with non-coalesced access in matrix transpose multiplication is to use the shared memory with tiling as we saw in the previous part. With shared memory tiling, the matrix b is loaded in transpose from global memory to shared memory first, the multiplication between the elements of a and b happens with data from shared memory.<br/><br/>
 [Using Shared Memory in CUDA C/C++](https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/)<br/><br/>
 But as noted in the above post, shared memory is divided into banks. Shared memory is divided into 32 banks where each bank is responsible for 32 consecutive bits. But if more than one thread in a warp accesses the same bank, then a bank conflict happens and request is serialized for those threads in the warp. Bank conflict is bound to happen with F64 data type i.e. double precision floats of 64-bits because even if each thread access 2 consecutive banks, only 16 threads will have parallelized access out of 32 threads in a warp.<br/><br/>
@@ -123,7 +124,7 @@ Some good reads on shared memory and efficient matrix transpose or multiplicatio
 [Optimizing Matrix Transpose in CUDA](https://developer.download.nvidia.com/compute/DevZone/C/html_x64/6_Advanced/transpose/doc/MatrixTranspose.pdf)<br/><br/>
 [Access Global Memory Efficiently in CUDA C/C++ Kernels](https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/)<br/><br/>
 
-2. **Thread Coarsening**<br/><br/>
+3. **Thread Coarsening**<br/><br/>
 In all of the CUDA examples we saw, each thread has been assigned the task for computing one output element. For e.g. in vector addition or matrix multiplication, each thread in a block is assigned the task of computing one output element. This is useful if there are enough resources such as number of threads per block, shared memory etc. But in many practical problems, having too many threads can lead to redundant loading of data, synchronization overhead, redundant work.<br/><br/>
 To overcome such issues, one possible optimization is to reuse a thread to perform multiple computations. Without proper benchmarking this can lead to unused GPU resources.<br/><br/>
 A matrix multiplication kernel with thread coarsening where each thread is responsible for calculating 4 elements of the output matrix.<br/><br/>
@@ -176,7 +177,7 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
 [Thread coarsening and register tiling](https://lumetta.web.engr.illinois.edu/508/slides/lecture3.pdf)<br/><br/>
 To find the optimum value of the COARSE_FACTOR, we can experiment with different values and check the stats.<br/><br/>
 
-3. **Convolution Kernel**<br/><br/>
+4. **Convolution Kernel**<br/><br/>
 Convolution is one of the most common operation used in deep learning. 2D and 3D convolutions are used for image and video based ML problems whereas 1D convolutions are primarily used for text based ML problems. They operate like a sliding window to capture neighborhood information. Below image depicts how convolution works.<br/><br/>
 ![Conv2D](/docs/assets/conv2d.png)<br/><br/>
 ![Conv2D](/docs/assets/convolution-2.gif)<br/><br/>
@@ -376,7 +377,7 @@ One issue with the above kernel is that for elements at the boundaries, we have 
     ```
     <br/><br/>
 
-4. **Reduction and atomic operations**<br/><br/>
+5. **Reduction and atomic operations**<br/><br/>
 So far all the problems we have solved using CUDA are conflict free i.e. each output computed by a thread is independent of any other output computed by another thread. As you know that when working with threads in CPU, most practical problem requires thread-safety. For e.g. in the classic example of `x = x+1`, if x=10 and 2 threads A and B is incrementing x simulataneously, then there is a chance of race-condition. Threads A reads x=10, increments x by 1 to 11 but before updating x in the register or memory thread B reads x but since x has not yet updated, B will also read x=10. As a result bit A and B updates x to 11. <br/><br/>
 In GPU, similar race conditions can happen using threads.<br/><br/>
 Let's look at the 1st problem of parallel histogram calculation where given a stream of characters in a-z, we need to calculate the frequencies of bucket of size b. For e.g. if b=4, then the buckets are `[a-d]`, `[e-h]`, `[i-l]`, `[m-p]`, `[q-t]`, `[u-x]`, and `[y-z]`. Thus whenever we encounter some character, we find the bucket where it should lie and then increment the count of that bucket. For e.g. if character is `g`, then it should lie in the bucket `[e-h]`.<br/><br/>
