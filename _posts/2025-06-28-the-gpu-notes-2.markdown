@@ -215,7 +215,7 @@ For small input matrices as compared to the filter matrix, the proportion of thr
 To improve OP/B performance, 1st step is to put the filter matrix in constant memory. Constant memory is implemented using DRAM and is off-chip but it is read-only. When the data is loaded from constant memory, it hints the GPU that the data should be cached on-chip in either L1 or L2 cache as aggressively as possible. Thus, the data is loaded from constant memory only once, for future invocations, it is served from either L1 or L2 cache. Below is an implementation using constant memory for the filter matrix.<br/><br/>
     ```cpp
     // filter size
-    #define K 7
+    #define K 11
     // constant memory is declared outside any function
     __constant__ float F_c[K*K];
     __global__ 
@@ -236,8 +236,8 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
     }
     
     int main() {
-        int n = 4096;
-        int m = 4096;
+        int n = 1e4;
+        int m = 1e3;
     
         float *a, *f, *out;
     
@@ -262,7 +262,7 @@ To improve OP/B performance, 1st step is to put the filter matrix in constant me
 ![Constant Memory](/docs/assets/gpu_arch.png)<br/><br/>
 Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input matrix elements) is loaded from DRAM for 2 operations i.e. OP/B ratio is 0.5. The filter matrix elements are served from cache. Similar to matrix multiplication, the input matrix can be loaded into shared memory and we can perform the convolution using tiling. <br/><br/>
     ```cpp
-    #define K 7
+    #define K 11
     
     // Thread block size is equal to the OUT_TILE_WIDTH
     #define OUT_TILE_WIDTH 32
@@ -315,8 +315,8 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input
     }
     
     int main(){
-        int n = 4096;
-        int m = 4096;
+        int n = 1e4;
+        int m = 1e3;
         
         float *a, *f, *out;
         
@@ -339,6 +339,7 @@ Using constant memory, the OP/B ratio is doubled because now 4 bytes (only input
     ```
     <br/><br/>
 ![Tiled Convolution](/docs/assets/conv_tiled.jpg)<br/><br/>
+Standard CPU convolution on a matrix of size 1e4 x 1e3 and filter size of 11x11 takes somewhere around 700ms whereas both the GPU kernel based convolutions (with and without shared memory tiling) takes somewhere around only 20ms.<br/><br/>
 We can approximately calculate the OP/B ratio for the above kernel as follows: For each input tile loaded into shared memory, total number of (approx) bytes read from the DRAM is `INP_TILE_WIDTH*INP_TILE_WIDTH*4`. For each element of the input tile, multiply the filter matrix of dim `K*K` with `K*K` elements of the input tile resulting in `K^2` multiplications and then there are `K^2` additions to sum up the products. This is repeated for all elements of the input tile i.e. number of operations = `INP_TILE_WIDTH^2 * K^2 * 2`. The OP/B ratio is: `(INP_TILE_WIDTH^2 * K^2 * 2)/(INP_TILE_WIDTH^2 * 4) = K^2/2`. <br/><br/>
 Larger filter sizes has greater OP/B ratio because each input element is used by more threads. <br/><br/>
 The actual calculation is a bit complex since at the boundaries the input tile has fewer than `INP_TILE_WIDTH*INP_TILE_WIDTH` elements and also some input tile elements are loaded by multiple blocks of threads as they are overlapping. <br/><br/>
@@ -354,6 +355,7 @@ One issue with the above kernel is that for elements at the boundaries, we have 
 
         // Load the input tile (without halo cells) into shared memory
         if (row < n && col < m) a_s[threadIdx.y*OUT_TILE_WIDTH + threadIdx.x] = a[row*m + col];
+        else a_s[threadIdx.y*OUT_TILE_WIDTH + threadIdx.x] = 0.0f;
         
         __syncthreads();
         
@@ -720,3 +722,4 @@ Using thread coarsening we can further improve the thread re-usability of the ab
     }
     ```
     <br/><br/>
+In the next few parts of the series we will take a look at some common algorithmic problems and how to solve them using parallel algorithms and CUDA and optimize the performances. We will also look at some key GPU concepts related to deep learning such as cuDNN, cuBLAS, Tensor Cores and Kernel Fusion along the way.
