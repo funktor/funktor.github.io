@@ -105,7 +105,9 @@ A matrix multiplication kernel using transpose of b and shared memory tiling to 
         for (int ph = 0; ph < ceil(m/float(TILE_WIDTH)); ph++) {
             if (row < n && (ph*TILE_WIDTH + tx) < m) Mds[ty*TILE_WIDTH+tx] = a[row*m + ph*TILE_WIDTH + tx];
             else Mds[ty*TILE_WIDTH+tx] = 0.0f;
-    
+
+            // load the elements of b into shared memory by accessing consecutive rows instead of columns
+            // this is uncoalesced access
             if ((ph*TILE_WIDTH + ty) < m && col < p) Nds[tx*TILE_WIDTH+ty] = b[col*m + (ph*TILE_WIDTH+ty)];
             else Nds[tx*TILE_WIDTH+ty] = 0.0f;
     
@@ -119,7 +121,7 @@ A matrix multiplication kernel using transpose of b and shared memory tiling to 
     }
     ```
     <br/><br/>
-Some good reads on shared memory and efficient matrix transpose or multiplication kernels.<br/><br/>
+With matrix sizes of 2048x2048, it takes somewhere around 1100ms for multiplication with transpose without shared memory tiling and around 750ms with shared memory tiling on my RTX4050 running on WSL Ubuntu. Some good reads on shared memory and efficient matrix transpose or multiplication kernels.<br/><br/>
 [An Efficient Matrix Transpose in CUDA C/C++](https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/)<br/><br/>
 [Optimizing Matrix Transpose in CUDA](https://developer.download.nvidia.com/compute/DevZone/C/html_x64/6_Advanced/transpose/doc/MatrixTranspose.pdf)<br/><br/>
 [Access Global Memory Efficiently in CUDA C/C++ Kernels](https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/)<br/><br/>
@@ -127,7 +129,7 @@ Some good reads on shared memory and efficient matrix transpose or multiplicatio
 3. **Thread Coarsening**<br/><br/>
 In all of the CUDA examples we saw, each thread has been assigned the task for computing one output element. For e.g. in vector addition or matrix multiplication, each thread in a block is assigned the task of computing one output element. This is useful if there are enough resources such as number of threads per block, shared memory etc. But in many practical problems, having too many threads can lead to redundant loading of data, synchronization overhead, redundant work.<br/><br/>
 To overcome such issues, one possible optimization is to reuse a thread to perform multiple computations. Without proper benchmarking this can lead to unused GPU resources.<br/><br/>
-A matrix multiplication kernel with thread coarsening where each thread is responsible for calculating 4 elements of the output matrix.<br/><br/>
+A matrix multiplication (with b transpose) kernel with thread coarsening where each thread is responsible for calculating 4 elements of the output matrix.<br/><br/>
     ```cpp
     // COARSE_FACTOR is the number of outputs computed by a single thread
     #define COARSE_FACTOR 4
@@ -158,11 +160,11 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
             for (int r = 0; r < COARSE_FACTOR; r++) {
                 int col = col_start + r*TILE_WIDTH;
     
-                if ((ph*TILE_WIDTH + ty) < m && col < p) Nds[ty*TILE_WIDTH+tx] = b[(ph*TILE_WIDTH+ty)*p + col];
-                else Nds[ty*TILE_WIDTH+tx] = 0.0f;
+                if ((ph*TILE_WIDTH + ty) < m && col < p) Nds[tx*TILE_WIDTH+ty] = b[col*m + (ph*TILE_WIDTH+ty)];
+                else Nds[tx*TILE_WIDTH+ty] = 0.0f;
                 __syncthreads();
 
-                for (int i = 0; i < TILE_WIDTH; i++) Pval[r] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx];
+                for (int i = 0; i < TILE_WIDTH; i++) Pval[r] += Mds[ty*TILE_WIDTH+i]*Nds[tx*TILE_WIDTH+i];
                 __syncthreads();
             }
         }
@@ -174,6 +176,7 @@ A matrix multiplication kernel with thread coarsening where each thread is respo
     }
     ```
     <br/><br/>
+For the matrix multiplication kernel with transpose in the above section, with a COARSE_FACTOR of 4, it takes somewhere around 550ms as compared to 750ms without coarsening.<br/><br/>
 [Thread coarsening and register tiling](https://lumetta.web.engr.illinois.edu/508/slides/lecture3.pdf)<br/><br/>
 To find the optimum value of the COARSE_FACTOR, we can experiment with different values and check the stats.<br/><br/>
 
