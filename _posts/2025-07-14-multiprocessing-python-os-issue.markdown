@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Python multiprocessing - why it works in Linux and not in MacOS"
-date:   2025-07-16 18:50:11 +0530
+date:   2025-07-14 18:50:11 +0530
 categories: software-engineering
 ---
 
