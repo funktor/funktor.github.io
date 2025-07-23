@@ -30,7 +30,7 @@ But note that the dot product <Q(i), Q(j)> is symmetric w.r.t i and j i.e.<br/><
   ```
   <br/><br/>
 The weights may not be symmetric in a sequence of tokens. For e.g. for the sequence "My phone has a RAM of 6GB", the score of the token "phone" w.r.t. the token "RAM" need not be same as the score of the token "RAM" w.r.t. "phone" because "RAM" could also score highly with some other tokens such as "computer" or "laptop" etc. elsewhere in the input sequence. Thus, there is no need for the dot product to be symmetric.<br/><br/>
-Here comes another vector K(j) corresponding to each token index j and then the dot product is calculated as: <Q(i), K(j))>. <br/><br/>
+The simplest way to extend this logic is to introduce another vector K(j) corresponding to each token index j and then the dot product is calculated as: <Q(i), K(j))>. <br/><br/>
 Thus<br/><br/>
   ```
   R(i,t) = <Q(i, t-1), K(0, t-1)> * V(0,t-1)
@@ -39,12 +39,14 @@ Thus<br/><br/>
          + <Q(i, t-1), K(n-1, t-1)> * V(n-1,t-1)
   ```
   <br/><br/>
-The dot products <Q(i), K(j))> are not symmetric i.e.
+One can easily verify that the dot products <Q(i), K(j))> are not symmetric i.e.
   ```
   <Q(i), K(j)> != <Q(j), K(i)>
   ```
   <br/><br/>
 Note that the calculations for R(i,t) can be easily parallelized as each i are independent. R(i,t) only depends on parameters from the epoch t-1. Moreover one can conveniently represent the vectors in the form of matrices and the products and summations as matrix multiplications or dot product operations. This enables us to use fast matrix libraries such as BLAS with CPU and cuBLAS with GPUs. Numpy and Scipy uses BLAS in the backend to optimize matrix operations.<br/><br/>
+[BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms)<br/><br/>
 Assuming that there are N tokens and the matrices Q, K and V are all of dimensions d, then Q, K, V and R are all of shape (N, d)<br/><br/>
-
+![Attention Representation](/docs/assets/rep.png)<br/><br/>
 Note that the actual implementation of Attention differs from this derivation because there are few things we have not taken care of such as converting the weights into probability scores using a softmax function and normalizing the weights by the square root of the vector dimensions. The actual formula for the attention scores looks something like:<br/><br/>
+![Attention Representation2](/docs/assets/rep2.png)<br/><br/>
