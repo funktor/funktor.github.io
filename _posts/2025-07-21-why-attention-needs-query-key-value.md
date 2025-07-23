@@ -51,3 +51,97 @@ Assuming that there are N tokens and the matrices Q, K and V are all of dimensio
 ![Attention Representation2](/docs/assets/attention.png)<br/><br/>
 Note that the actual implementation of Attention differs from this derivation because there are few things we have not taken care of such as converting the weights into probability scores using a softmax function and normalizing the weights by the square root of the vector dimensions. The actual formula for the attention scores looks something like:<br/><br/>
 ![Attention Representation3](/docs/assets/rep2.png)<br/><br/>
+Sample implementation of the attention representations in C++ and OpenMP (for CPU parallelization):
+  ```cpp
+  void dot_product(
+      float *a, 
+      float *b, 
+      float *c, 
+      const unsigned int nr_a, 
+      const unsigned int nc_a, 
+      const unsigned int nr_b, 
+      const unsigned int nc_b) {
+  
+      assert(nc_a == nr_b);
+      for (unsigned int i = 0; i < nr_a*nc_b; i++) c[i] = 0.0;
+  
+      omp_set_num_threads(8);
+      #pragma omp parallel for shared(a, b, c)
+      for (unsigned int i = 0; i < nr_a; i++) {
+          for (unsigned int j = 0; j < nc_a; j++) {
+              for (unsigned int k = 0; k < nc_b; k++) {
+                  c[i*nc_b+k] += a[i*nc_a+j]*b[j*nc_b+k];
+              }
+          }
+      }
+  }
+  
+  void dot_product_b_transpose(
+      float *a, 
+      float *b, 
+      float *c, 
+      const unsigned int nr_a, 
+      const unsigned int nc_a, 
+      const unsigned int nr_b, 
+      const unsigned int nc_b) {
+      
+      assert(nc_a == nc_b);
+      for (unsigned int i = 0; i < nr_a*nr_b; i++) c[i] = 0.0;
+  
+      omp_set_num_threads(8);
+      #pragma omp parallel for shared(a, b, c)
+      for (unsigned int i = 0; i < nr_a; i++) {
+          for (unsigned int k = 0; k < nr_b; k++) {
+              float h = 0.0;
+              for (unsigned int j = 0; j < nr_b; j++) {
+                  h += a[i*nc_a+j]*b[k*nc_b+j];
+              }
+              c[i*nr_b+k] = h;
+          }
+      }
+  }
+  
+  void softmax(
+      float *scores, 
+      const unsigned int n, 
+      const unsigned int m) {
+  
+      float *row_sum = new float[n];
+      float *row_max = new float[n];
+  
+      for (unsigned int i = 0; i < n; i++) {
+          row_sum[i] = 0.0;
+          row_max[i] = -MAXFLOAT;
+      }
+  
+      for (unsigned int i = 0; i < n*m; i++) row_max[i/m] = max(row_max[i/m], scores[i]);
+      for (unsigned int i = 0; i < n*m; i++) row_sum[i/m] += exp(scores[i]-row_max[i/m]);
+      for (unsigned int i = 0; i < n*m; i++) scores[i] = exp(scores[i]-row_max[i/m])/row_sum[i/m];
+  }
+  
+  void score_transform(
+      float *scores, 
+      const unsigned int n, 
+      const unsigned int m, 
+      const unsigned int d) {
+  
+      assert(d > 0);
+      for (unsigned int i = 0; i < n*m; i++) scores[i] /= sqrt(d);
+      softmax(scores, n, m);
+  }
+  
+  void attention(
+      float *Q, 
+      float *K, 
+      float *V, 
+      float *R, 
+      const unsigned int n, 
+      const unsigned int d) {
+          
+      float *scores = new float[n*n];
+      
+      dot_product_b_transpose(Q, K, scores, n, d, n, d);
+      score_transform(scores, n, n, d);
+      dot_product(scores, V, R, n, n, n, d);
+  }
+  ```
