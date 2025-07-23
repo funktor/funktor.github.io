@@ -48,5 +48,6 @@ Note that the calculations for R(i,t) can be easily parallelized as each i are i
 [BLAS](https://en.wikipedia.org/wiki/Basic_Linear_Algebra_Subprograms)<br/><br/>
 Assuming that there are N tokens and the matrices Q, K and V are all of dimensions d, then Q, K, V and R are all of shape (N, d)<br/><br/>
 ![Attention Representation](/docs/assets/rep.png)<br/><br/>
+![Attention Representation2](/docs/assets/attention.png)<br/><br/>
 Note that the actual implementation of Attention differs from this derivation because there are few things we have not taken care of such as converting the weights into probability scores using a softmax function and normalizing the weights by the square root of the vector dimensions. The actual formula for the attention scores looks something like:<br/><br/>
-![Attention Representation2](/docs/assets/rep2.png)<br/><br/>
+![Attention Representation3](/docs/assets/rep2.png)<br/><br/>
