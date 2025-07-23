@@ -14,8 +14,9 @@ The idea is to calculate the representation R(i) for the token at index i as a f
   R(i,t) = w(0,t-1) * V(0,t-1) + w(1,t-1) * V(1,t-1) + ... + w(n-1,t-1) * V(n-1,t-1)
   ```
   <br/><br/>
+Note that this may not be the only way but probably the most simple way. For e.g. one can also concatenate the vectors V(j) but if the sequence length is very long, the resultant vector would also be very long.<br/><br/>
 The index 't' denotes the epoch number. The above equation denotes that the representation for current epoch t and token index i is dependent only on weights w and vectors V from the previous epoch t-1.<br/><br/>
-The weights w(j) should be some function of the current token index i, else if w(j) was independent of i in the above equation, then for all indices i, R(i) would be same. One possible mechanism is to have another vector Q(j) corresponding to each token index j and then w(j) = <Q(i), Q(j)> i.e. dot product of Q(i) and Q(j). <br/><br/>
+The weights w(j) respresents the importance of the j-th token for predicting the i-th token in the sequence and it should be some function of the current token index i, else if w(j) was independent of i in the above equation, then for all indices i, R(i) would be same. One possible mechanism is to have another vector Q(j) corresponding to each token index j and then w(j) = <Q(i), Q(j)> i.e. dot product of Q(i) and Q(j). <br/><br/>
 Thus<br/><br/>
   ```
   R(i,t) =  <Q(i, t-1), Q(0, t-1)> * V(0,t-1)
