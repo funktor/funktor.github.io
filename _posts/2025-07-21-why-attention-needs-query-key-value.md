@@ -45,6 +45,6 @@ The dot products <Q(i), K(j))> are not symmetric i.e.
   ```
   <br/><br/>
 Note that the calculations for R(i,t) can be easily parallelized as each i are independent. R(i,t) only depends on parameters from the epoch t-1. Moreover one can conveniently represent the vectors in the form of matrices and the products and summations as matrix multiplications or dot product operations. This enables us to use fast matrix libraries such as BLAS with CPU and cuBLAS with GPUs. Numpy and Scipy uses BLAS in the backend to optimize matrix operations.<br/><br/>
+Assuming that there are N tokens and the matrices Q, K and V are all of dimensions d, then Q, K, V and R are all of shape (N, d)<br/><br/>
 
-Thus, the above mechanism satisfies our requirements i.e.
-1. Calculating the representations R are not sequential in nature.
+Note that the actual implementation of Attention differs from this derivation because there are few things we have not taken care of such as converting the weights into probability scores using a softmax function and normalizing the weights by the square root of the vector dimensions. The actual formula for the attention scores looks something like:<br/><br/>
