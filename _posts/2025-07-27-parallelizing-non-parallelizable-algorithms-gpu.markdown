@@ -80,8 +80,28 @@ void prefix_sum_kogge_stone(float *arr, float *out, int n) {
 ```
 <br/><br/>
 A common way to synchronize all threads across all blocks is to use a `while () {}` loop like the one shown above. Using a global variable `counter`, each threads takes turn to update its value and when all thread updates the value only then the current thread is able to break out of the while loop. A common danger in the above code is when number of SMs are smaller than the number of blocks in which case we might see a deadlock happening.<br/><br/>
-Synchronizing all threads across all blocks penalize performance heavily. An alternative way to implement the Kogge-Stone algorithm is to run the Kogge-Stone algorithm per block first. After this all blocks would have computed its own prefix sums. Except for the 1st block all other blocks will have only partial prefix sums.
-Using a global array S of length equal to the number of blocks, each index i in S stores the value of the prefix sum from the last index from each block.
-Then each 
+Synchronizing all threads across all blocks penalize performance heavily. An alternative way to implement the Kogge-Stone algorithm is to run the algorithm per block first. After this all blocks would have computed its own prefix sums. Except for the 1st block all other blocks will have only partial prefix sums.<br/><br/>
+Using a global array S of length equal to the number of blocks, each index i in S stores the value of the prefix sum from the last index from each block. Thus each element of S corresponds to one block.<br/><br/>
+Then run the prefix sum algorithm on the global array S. <br/><br/>
+Then for each block, for each index i add the value of `S[blockIdx.x-1]` i.e. the value of S corresponding to the previous block to itself. In this way each output element will have the correct value.<br/><br/>
+Taking an example:
+```
+A = [2,1,5,8,9,0,4,6,3,4,5,4,1,7,7,2]
+block size = 4
+A0 = [2,1,5,8] P0 = [2,3,8,16]
+A1 = [9,0,4,6] P1 = [9,9,13,19]
+A2 = [3,4,5,4] P2 = [3,7,12,16]
+A3 = [1,7,7,2] P3 = [1,7,15,17]
 
+S  = [16, 19, 16, 17]
+PS = [16, 35, 51, 68]
+
+P0' = P0 = [2, 3, 8, 16]
+P1' = P1 + PS[0] = [9+16, 9+16, 13+16, 19+16] = [25, 25, 29, 35]
+P2' = P2 + PS[1] = [3+35, 7+35, 12+35, 16+35] = [38, 42, 47, 51]
+P3' = P3 + PS[2] = [1+51, 7+51, 15+51, 17+51] = [52, 58, 66, 68]
+
+P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
+```
+<br/><br/>
 
