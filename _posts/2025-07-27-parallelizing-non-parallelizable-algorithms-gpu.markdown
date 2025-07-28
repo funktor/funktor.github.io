@@ -112,7 +112,7 @@ P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
 ```
 <br/><br/>
 Instead of running prefix sum algorithm twice, once on A and once on S in the above algorithm, one can modify the above algorithm as follows:<br/><br/>
-After step 1, for each block check if the S element corresponding to the previous block i.e. `S[blockIdx.x-1]` has been set. If the S element in the previous block has been set, then update the S element of current block by adding `S[blockIdx.x-1]` to the last element of the P array. After that, update all indices corresponding to P in the current block by adding `S[blockIdx.x-1]`.<br/><br/>
+After step 1, for each block check if the S element corresponding to the previous block i.e. `S[blockIdx.x-1]` has been set. If the S element in the previous block has been set, then update the S element of current block by adding `S[blockIdx.x-1]` to the last element of its P array. After that, update all indices for P in the current block by adding `S[blockIdx.x-1]`.<br/><br/>
 ```
 Input : A = [2,1,5,8,9,0,4,6,3,4,5,4,1,7,7,2]
 block size = 4
@@ -133,7 +133,7 @@ STEP 3: Concatenate the P arrays
 P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
 ```
 <br/><br/>
-The calculations using Kogge-Stone can be further optimized by using shared memory array. In order to identify whether the S element corresponding to previous block has been set, we use another `flags` array where `flags[blockIdx.x]=1` if S corresponding to `blockIdx.x` has been calculated, else `flags[blockIdx.x]=0`.<br/><br/>
+The calculations using Kogge-Stone can be further optimized by using shared memory array. In order to identify whether the S element corresponding to previous block has been set or not, we use another `flags` array where `flags[blockIdx.x]=1` if S corresponding to `blockIdx.x` has been calculated, else `flags[blockIdx.x]=0`.<br/><br/>
 The code is as follows:<br/><br/>
 ```cpp
 __device__
@@ -159,9 +159,12 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
     extern __shared__ float XY[];
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
 
-    prefix_sum_brent_kung_block(A, XY, n);
+    // calculate kogge-stone algorithm per blcok and store the results in a shared memory array
+    prefix_sum_kogge_stone_block(A, XY, n);
 
+    // since S is updated once per block, thus the below code runs only for the 1st thread in each block
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
+        // check if the 
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
         S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(blockDim.x-1, n-1-blockIdx.x*blockDim.x)];
         __threadfence();
