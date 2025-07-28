@@ -259,5 +259,86 @@ void prefix_sum_brent_kung_block(float *arr, float *XY, int n) {
 }
 ```
 <br/><br/>
+The above algorithm can be improved by using thread coarsening as shown below. The full code using thread coarsening is as follows:
+```cpp
+#define BLOCK_WIDTH 1024
+#define COARSE_FACTOR 8
+
+__device__
+void prefix_sum_brent_kung_block_coarsened(float *A, float *XY, int n) {
+    for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+        unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
+        if (index < n) XY[i] = A[index]; 
+        else XY[i] = 0.0f;
+    }
+
+    __syncthreads();
+
+    for (unsigned int stride = 1; stride < COARSE_FACTOR*blockDim.x; stride *= 2) {
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            int j = 2*(i+1)*stride-1;
+            if (j < COARSE_FACTOR*BLOCK_WIDTH && j >= stride) XY[j] += XY[j-stride];
+        }
+        __syncthreads();
+    }
+
+    for (unsigned int stride = COARSE_FACTOR*BLOCK_WIDTH/4; stride > 0; stride /= 2) {
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            int j = 2*(i+1)*stride-1;
+            if (j + stride < COARSE_FACTOR*BLOCK_WIDTH) XY[j + stride] += XY[j];
+        }
+        __syncthreads();
+    }
+}
+
+__global__
+void prefix_sum_coarsened(float *A, float *P, int *flags, float *S, int n, int m) {
+    extern __shared__ float XY[];
+
+    prefix_sum_brent_kung_block_coarsened(A, XY, n);
+
+    if (blockIdx.x + 1 < m && threadIdx.x == 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+        S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(COARSE_FACTOR*blockDim.x-1, n-1-COARSE_FACTOR*blockIdx.x*blockDim.x)];
+        __threadfence();
+        atomicAdd(&flags[blockIdx.x + 1], 1);
+    }
+    __syncthreads();
+
+    if (blockIdx.x < m && blockIdx.x > 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            XY[i] += S[blockIdx.x];
+        }
+    }
+
+    for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+        unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
+        if (index < n) P[index] = XY[i];
+    }
+}
+
+int main(){
+    int n = 1e7;
+    int m = int(ceil(float(n)/(COARSE_FACTOR*BLOCK_WIDTH)));
+
+    float *A, *S, *P;
+    int *flags;
+
+    cudaMallocManaged(&A, n*sizeof(float));
+    cudaMallocManaged(&P, n*sizeof(float));
+    cudaMallocManaged(&S, m*sizeof(float));
+    cudaMallocManaged(&flags, m*sizeof(int));
+
+    for (int i = 0; i < m; i++) S[i] = 0.0;
+    for (int i = 0; i < m; i++) flags[i] = 0;
+    flags[0] = 1;
+
+    prefix_sum<<<m, BLOCK_WIDTH, COARSE_FACTOR*BLOCK_WIDTH*sizeof(float)>>>(A, P, flags, S, n, m);
+    cudaDeviceSynchronize();
+}
+```
+<br/><br/>
 
 
