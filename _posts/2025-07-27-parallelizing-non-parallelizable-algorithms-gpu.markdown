@@ -225,4 +225,39 @@ int main(){
 }
 ```
 <br/><br/>
+The other algorithm i.e. Brent-Kung algorithm is bit trickier to understand but often performs better than the Kogge-Stone algorithm described above. The algorithm works in 2-stages as follows:<br/><br/>
+In the first stage, each thread runs with multiple strides similar to the Kogge Stone algorithm. Assuming the algorithm runs per block, the thread with index i and stride=S will add up indices `2*(i+1)*S-1` and `2*(i+1)*S-1-S` and store the result in the index `2*(i+1)*S-1`, i.e.<br/><br/>
+`P[2*(i+1)*S-1] += P[2*(i+1)*S-1-S]`<br/><br/>
+The strides increases from 1 to BLOCK_WIDTH by repeatedly multiplying with 2.<br/><br/>
+In the next stage, the thread with index i and stride=S, will add up the indices `2*(i+1)*S-1` and `2*(i+1)*S-1+S` and store the result in the index `2*(i+1)*S-1+S`, i.e.<br/><br/>
+`P[2*(i+1)*S-1+S] += P[2*(i+1)*S-1]`<br/><br/>
+But in the 2nd stage, the strides S starts from BLOCK_WIDTH/4 and decreases to 1 in subsequent iterations by repeatedly dividing by 2.<br/><br/>
+The CUDA device code for Brent-Kung algorithm is as follows. To run the prefix_sum algorithm using Brent-Kung algorithm just replace `prefix_sum_kogge_stone_block` with `prefix_sum_brent_kung_block` in the above prefix_sum kernel above:
+```cpp
+#define BLOCK_WIDTH 1024
+
+__device__
+void prefix_sum_brent_kung_block(float *arr, float *XY, int n) {
+    unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
+
+    if (index < n) XY[threadIdx.x] = arr[index]; 
+    else XY[threadIdx.x] = 0.0f;
+
+    __syncthreads();
+
+    for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+        int i = 2*(threadIdx.x+1)*stride-1;
+        if (i < BLOCK_WIDTH && i >= stride) XY[i] += XY[i-stride];
+        __syncthreads();
+    }
+
+    for (unsigned int stride = BLOCK_WIDTH/4; stride > 0; stride /= 2) {
+        int i = 2*(threadIdx.x+1)*stride-1;
+        if (i + stride < BLOCK_WIDTH) XY[i + stride] += XY[i];
+        __syncthreads();
+    }
+}
+```
+<br/><br/>
+
 
