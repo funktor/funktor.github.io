@@ -80,4 +80,8 @@ void prefix_sum_kogge_stone(float *arr, float *out, int n) {
 ```
 <br/><br/>
 A common way to synchronize all threads across all blocks is to use a `while () {}` loop like the one shown above. Using a global variable `counter`, each threads takes turn to update its value and when all thread updates the value only then the current thread is able to break out of the while loop. A common danger in the above code is when number of SMs are smaller than the number of blocks in which case we might see a deadlock happening.<br/><br/>
+Synchronizing all threads across all blocks penalize performance heavily. An alternative way to implement the Kogge-Stone algorithm is to run the Kogge-Stone algorithm per block first. After this all blocks would have computed its own prefix sums. Except for the 1st block all other blocks will have only partial prefix sums.
+Using a global array S of length equal to the number of blocks, each index i in S stores the value of the prefix sum from the last index from each block.
+Then each 
+
 
