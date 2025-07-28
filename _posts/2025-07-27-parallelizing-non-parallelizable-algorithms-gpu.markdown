@@ -134,7 +134,7 @@ P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
 ```
 <br/><br/>
 The calculations using Kogge-Stone can be further optimized by using shared memory array. In order to identify whether the S element corresponding to previous block has been set or not, we use another `flags` array where `flags[blockIdx.x]=1` if S corresponding to `blockIdx.x` has been calculated, else `flags[blockIdx.x]=0`.<br/><br/>
-The code is as follows:<br/><br/>
+In the below code we use the logic discussed above but with a small change that each block updates the S element for the next block by adding the S value of the current block to it. Similarly for the `flags` boolean array. This doesn't change the algorithm only the block indices are shifted. The code is as follows:<br/><br/>
 ```cpp
 __device__
 void prefix_sum_kogge_stone_block(float *arr, float *XY, int n) {
@@ -164,19 +164,35 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
 
     // since S is updated once per block, thus the below code runs only for the 1st thread in each block
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
-        // check if the 
+        // check if the previous block has set the S element corresponding to current block
+        // if not then continue while loop else break loop.
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+
+        // update the S element for the next block by adding the S element of
+        // current block with the last element of XY shared memory array
         S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(blockDim.x-1, n-1-blockIdx.x*blockDim.x)];
+
+        // __threadfence() indicates that any other block will see the change in S before the change in
+        // flag set below.
         __threadfence();
+
+        // set the flag for the next block
         atomicAdd(&flags[blockIdx.x + 1], 1);
     }
+
+    // syncing threads is required here because we are reading one index of XY
+    // above and updating a different index of XY below.
     __syncthreads();
 
-    if (blockIdx.x < m && index < n && blockIdx.x > 0) {
+    if (blockIdx.x < m && blockIdx.x > 0) {
+        // check if the flag is set for current block which implies that the S element is also updated.
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+
+        // update XY shared memory array for all threads in the current block
         XY[threadIdx.x] += S[blockIdx.x];
     }
 
+    // finally update the global memory array P with XY shared memory array.
     if (index < n) P[index] = XY[threadIdx.x];
 }
 ```
