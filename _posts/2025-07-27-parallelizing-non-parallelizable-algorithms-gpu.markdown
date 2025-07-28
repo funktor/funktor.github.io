@@ -35,12 +35,11 @@ An alternative stratgey would be to use a combination of the 2 approaches above 
 [Kogge Stone Adder](https://en.wikipedia.org/wiki/Kogge–Stone_adder)<br/><br/>
 [Brent Kung Adder](https://en.wikipedia.org/wiki/Brent–Kung_adder)<br/><br/>
 Let's start with the Kogge Stone adder first. The diagrammatic representation is shown below. The algorithm works in stages as follows:<br/><br/>
-Copy the input array A in the output array P. Then for each stage S (starting from 0):<br/><br/>
-    1. For each index i greater than equal to `(1<<S)` i.e. 2 to the power of S, in the output array P, calculate the sum `P[i] = P[i]+P[i-(1<<S)]`<br/><br/>
+Copy the input array A in the output array P. Then for each stage S (starting from 0), for each index i greater than equal to `(1<<S)` i.e. 2 to the power of S, in the output array P, calculate the sum `P[i] = P[i]+P[i-(1<<S)]`<br/><br/>
 At the end of `log(N)` stages, each index i will contain the sum of `A[0] to A[i]`.<br/><br/>
-Let's implement the above in CUDA as follows:
+Let's implement the above in CUDA as follows:<br/><br/>
 ```cpp
-__device__
+__global__
 void prefix_sum_kogge_stone(float *arr, float *out, int n) {
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
     if (index < n) out[index] = arr[index];
@@ -55,3 +54,30 @@ void prefix_sum_kogge_stone(float *arr, float *out, int n) {
 }
 ```
 <br/><br/>
+In the above code we are using a temp variable to store the results of `out[threadIdx.x-stride]` before updating `out[threadIdx.x]` because for e.g. if stride=2 and threadIdx.x=5, then the thread will add `out[3]` to `out[5]` and update `out[5]`. But since threads are running in parallel, it could be that the thread with threadIdx.x=3, is also updating `out[3] = out[3] + out[1]`. Now if threadIdx.x=3 updates `out[3]` before threadIdx.x=5 reads `out[3]` we will have incorrect value stored in `out[5]` as `out[5]` requires the older value of `out[3]` and not the current value. Hence we first need to read all the older values in thread specific registers (`float temp`) and then after all threads have stored these values, we update the values.<br/><br/>
+But note that the above code will only work correctly if there is only 1 block of thread. But since a block can have a maximum upto 1024 threads thus the above code is only able to handle array sizes N <= 1024. But why this is so ?<br/><br/>
+Assuming we are having multiple blocks and each block contains 1024 threads, now for the index say 1025 i.e. block index=1 and stride=4, the update equation will look like `out[1025] = out[1025] + out[1021]`.<br/><br/>
+But note that index=1021 lies in block=0 while index=1025 in block=1 and `__syncthreads()` is only applicable at the block level i.e. the threads corresponding to indices 1021 and 1025 will not be synchronized and as a result `out[1025]` might read the updated value of `out[1021]` instead of the old value leading to incorrect results.<br/><br/>
+Block synchronization is a tricky affair in CUDA as not all blocks will be running in parallel. If number of blocks are greater than the number of streaming multiprocessors, then only a subset of all blocks will be running in parallel. The rest of the blocks will wait for their turn.<br/><br/>
+```cpp
+__device__ unsigned int counter = 0
+
+__global__
+void prefix_sum_kogge_stone(float *arr, float *out, int n) {
+    unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
+    if (index < n) out[index] = arr[index];
+
+    for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+        float temp = 0.0f;
+        if (threadIdx.x >= stride) temp = out[threadIdx.x-stride];
+        // synchronize all threads across all blocks
+        while (atomicAdd(&counter, 1) < blockDim.x*gridDim.x) {}
+        out[threadIdx.x] += temp;
+        // synchronize all threads across all blocks
+        while (atomicSub(&counter, 1) > 0) {}
+    }
+}
+```
+<br/><br/>
+A common way to synchronize all threads across all blocks is to use a `while () {}` loop like the one shown above. Using a global variable `counter`, each threads takes turn to update its value and when all thread updates the value only then the current thread is able to break out of the while loop. A common danger in the above code is when number of SMs are smaller than the number of blocks in which case we might see a deadlock happening.<br/><br/>
+
