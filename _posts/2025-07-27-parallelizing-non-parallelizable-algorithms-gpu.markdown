@@ -86,21 +86,28 @@ Then run the prefix sum algorithm on the global array S. <br/><br/>
 Then for each block, for each index i add the value of `S[blockIdx.x-1]` i.e. the value of S corresponding to the previous block to itself. In this way each output element will have the correct value.<br/><br/>
 Taking an example:
 ```
-A = [2,1,5,8,9,0,4,6,3,4,5,4,1,7,7,2]
+Input : A = [2,1,5,8,9,0,4,6,3,4,5,4,1,7,7,2]
 block size = 4
+
+STEP 1: Calculate P array for each block
 A0 = [2,1,5,8] P0 = [2,3,8,16]
 A1 = [9,0,4,6] P1 = [9,9,13,19]
 A2 = [3,4,5,4] P2 = [3,7,12,16]
 A3 = [1,7,7,2] P3 = [1,7,15,17]
 
+STEP 2: Calculate S array from last elements of each P above
 S  = [16, 19, 16, 17]
+
+STEP 3: Calculate prefix sum array for S from Step 2
 PS = [16, 35, 51, 68]
 
+STEP 3: Update P array for each block using the prefix sum S array PS above
 P0' = P0 = [2, 3, 8, 16]
 P1' = P1 + PS[0] = [9+16, 9+16, 13+16, 19+16] = [25, 25, 29, 35]
 P2' = P2 + PS[1] = [3+35, 7+35, 12+35, 16+35] = [38, 42, 47, 51]
 P3' = P3 + PS[2] = [1+51, 7+51, 15+51, 17+51] = [52, 58, 66, 68]
 
+STEP 5: Concatenate the P arrays
 P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
 ```
 <br/><br/>
