@@ -136,11 +136,13 @@ P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
 The calculations using Kogge-Stone can be further optimized by using shared memory array. In order to identify whether the S element corresponding to previous block has been set or not, we use another `flags` array where `flags[blockIdx.x]=1` if S corresponding to `blockIdx.x` has been calculated, else `flags[blockIdx.x]=0`.<br/><br/>
 In the below code we use the logic discussed above but with a small change that each block updates the S element for the next block by adding the S value of the current block to it. Similarly for the `flags` boolean array. This doesn't change the algorithm only the block indices are shifted. The code is as follows:<br/><br/>
 ```cpp
+#define BLOCK_WIDTH 1024
+
 __device__
-void prefix_sum_kogge_stone_block(float *arr, float *XY, int n) {
+void prefix_sum_kogge_stone_block(float *A, float *XY, int n) {
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
 
-    if (index < n) XY[threadIdx.x] = arr[index]; 
+    if (index < n) XY[threadIdx.x] = A[index]; 
     else XY[threadIdx.x] = 0.0f;
 
     __syncthreads();
@@ -159,12 +161,15 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
     extern __shared__ float XY[];
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
 
-    // calculate kogge-stone algorithm per blcok and store the results in a shared memory array
+    // calculate kogge-stone algorithm per blcok and store the
+    // results in a shared memory array
     prefix_sum_kogge_stone_block(A, XY, n);
 
-    // since S is updated once per block, thus the below code runs only for the 1st thread in each block
+    // since S is updated once per block, thus the below code runs
+    // only for the 1st thread in each block
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
-        // check if the previous block has set the S element corresponding to current block
+        // check if the previous block has set the S element 
+        // corresponding to current block.
         // if not then continue while loop else break loop.
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
 
@@ -172,8 +177,8 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
         // current block with the last element of XY shared memory array
         S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(blockDim.x-1, n-1-blockIdx.x*blockDim.x)];
 
-        // __threadfence() indicates that any other block will see the change in S before the change in
-        // flag set below.
+        // __threadfence() indicates that any other block will
+        // see the change in S before the change in flag set below.
         __threadfence();
 
         // set the flag for the next block
@@ -185,7 +190,8 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
     __syncthreads();
 
     if (blockIdx.x < m && blockIdx.x > 0) {
-        // check if the flag is set for current block which implies that the S element is also updated.
+        // check if the flag is set for current block which
+        // implies that the S element is also updated.
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
 
         // update XY shared memory array for all threads in the current block
@@ -193,7 +199,29 @@ void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
     }
 
     // finally update the global memory array P with XY shared memory array.
+    // __syncthreads() is not required here because we are updating XY[threadIdx.x]
+    // above and also reading from XY[threadIdx.x] below.
     if (index < n) P[index] = XY[threadIdx.x];
+}
+
+int main(){
+    int n = 1e7;
+    int m = int(ceil(float(n)/BLOCK_WIDTH));
+
+    float *A, *S, *P;
+    int *flags;
+
+    cudaMallocManaged(&A, n*sizeof(float));
+    cudaMallocManaged(&P, n*sizeof(float));
+    cudaMallocManaged(&S, m*sizeof(float));
+    cudaMallocManaged(&flags, m*sizeof(int));
+
+    for (int i = 0; i < m; i++) S[i] = 0.0;
+    for (int i = 0; i < m; i++) flags[i] = 0;
+    flags[0] = 1;
+
+    prefix_sum<<<m, BLOCK_WIDTH, BLOCK_WIDTH*sizeof(float)>>>(A, P, flags, S, n, m);
+    cudaDeviceSynchronize();
 }
 ```
 <br/><br/>
