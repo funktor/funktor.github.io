@@ -7,10 +7,10 @@ categories: software-engineering
 GPUs are highly effective in parallelizing algorithms more importantly algorithms which are inherently parallelizable as the ones we saw previously such as vector addition, matrix multiplication, convolution, histogram reduction etc. We also saw a GPU implementation of summation of an array of numbers. Unlike matrix multiplication or convolution where each thread is responsible for calculating independent or disjoint set of output values, summation of an array of numbers required only 1 output value and thus required synchronization between multiple threads. But with reduction tree technique and atomic addition it was relatively straightforward to achieve better performance on a GPU as compared to a CPU.<br/><br/>
 Given an input array A of N numbers, prefix sum return an array P of size N where `P[i]` is the summation from `A[0] to A[i]`. This is pretty straightforward to calculate using C/C++ as shown below:<br/><br/>
 ```cpp
-void prefix_sum(float *arr, float *out, unsigned int n) {
+void prefix_sum(float *A, float *P, unsigned int n) {
     for (unsigned int i = 0; i < n; i++) {
-        if (i == 0) out[i] = arr[i];
-        else out[i] = out[i-1] + arr[i];
+        if (i == 0) P[i] = A[i];
+        else P[i] = P[i-1] + A[i];
     }
 }
 ```
@@ -40,39 +40,39 @@ At the end of `log(N)` stages, each index i will contain the sum of `A[0] to A[i
 Let's implement the above in CUDA as follows:<br/><br/>
 ```cpp
 __global__
-void prefix_sum_kogge_stone(float *arr, float *out, int n) {
+void prefix_sum_kogge_stone(float *A, float *P, int n) {
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
-    if (index < n) out[index] = arr[index];
+    if (index < n) P[index] = A[index];
 
     for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
         float temp = 0.0f;
-        if (threadIdx.x >= stride) temp = out[threadIdx.x-stride];
+        if (threadIdx.x >= stride) temp = P[threadIdx.x-stride];
         __syncthreads();
-        out[threadIdx.x] += temp;
+        P[threadIdx.x] += temp;
         __syncthreads();
     }
 }
 ```
 <br/><br/>
-In the above code we are using a temp variable to store the results of `out[threadIdx.x-stride]` before updating `out[threadIdx.x]` because for e.g. if stride=2 and threadIdx.x=5, then the thread will add `out[3]` to `out[5]` and update `out[5]`. But since threads are running in parallel, it could be that the thread with threadIdx.x=3, is also updating `out[3] = out[3] + out[1]`. Now if threadIdx.x=3 updates `out[3]` before threadIdx.x=5 reads `out[3]` we will have incorrect value stored in `out[5]` as `out[5]` requires the older value of `out[3]` and not the current value. Hence we first need to read all the older values in thread specific registers (`float temp`) and then after all threads have stored these values, we update the values.<br/><br/>
+In the above code we are using a temp variable to store the results of `P[threadIdx.x-stride]` before updating `P[threadIdx.x]` because for e.g. if stride=2 and threadIdx.x=5, then the thread will add `P[3]` to `P[5]` and update `P[5]`. But since threads are running in parallel, it could be that the thread with threadIdx.x=3, is also updating `P[3] = P[3] + P[1]`. Now if threadIdx.x=3 updates `P[3]` before threadIdx.x=5 reads `P[3]` we will have incorrect value stored in `P[5]` as `P[5]` requires the older value of `P[3]` and not the current value. Hence we first need to read all the older values in thread specific registers (`float temp`) and then after all threads have stored these values, we update the values.<br/><br/>
 But note that the above code will only work correctly if there is only 1 block of thread. But since a block can have a maximum upto 1024 threads thus the above code is only able to handle array sizes N <= 1024. But why this is so ?<br/><br/>
-Assuming we are having multiple blocks and each block contains 1024 threads, now for the index say 1025 i.e. block index=1 and stride=4, the update equation will look like `out[1025] = out[1025] + out[1021]`.<br/><br/>
-But note that index=1021 lies in block=0 while index=1025 in block=1 and `__syncthreads()` is only applicable at the block level i.e. the threads corresponding to indices 1021 and 1025 will not be synchronized and as a result `out[1025]` might read the updated value of `out[1021]` instead of the old value leading to incorrect results.<br/><br/>
+Assuming we are having multiple blocks and each block contains 1024 threads, now for the index say 1025 i.e. block index=1 and stride=4, the update equation will look like `P[1025] = P[1025] + P[1021]`.<br/><br/>
+But note that index=1021 lies in block=0 while index=1025 in block=1 and `__syncthreads()` is only applicable at the block level i.e. the threads corresponding to indices 1021 and 1025 will not be synchronized and as a result `P[1025]` might read the updated value of `P[1021]` instead of the old value leading to incorrect results.<br/><br/>
 Block synchronization is a tricky affair in CUDA as not all blocks will be running in parallel. If number of blocks are greater than the number of streaming multiprocessors, then only a subset of all blocks will be running in parallel. The rest of the blocks will wait for their turn.<br/><br/>
 ```cpp
 __device__ unsigned int counter = 0
 
 __global__
-void prefix_sum_kogge_stone(float *arr, float *out, int n) {
+void prefix_sum_kogge_stone(float *A, float *P, int n) {
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
-    if (index < n) out[index] = arr[index];
+    if (index < n) P[index] = A[index];
 
     for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
         float temp = 0.0f;
-        if (threadIdx.x >= stride) temp = out[threadIdx.x-stride];
+        if (threadIdx.x >= stride) temp = P[threadIdx.x-stride];
         // synchronize all threads across all blocks
         while (atomicAdd(&counter, 1) < blockDim.x*gridDim.x) {}
-        out[threadIdx.x] += temp;
+        P[threadIdx.x] += temp;
         // synchronize all threads across all blocks
         while (atomicSub(&counter, 1) > 0) {}
     }
@@ -81,8 +81,8 @@ void prefix_sum_kogge_stone(float *arr, float *out, int n) {
 <br/><br/>
 A common way to synchronize all threads across all blocks is to use a `while () {}` loop like the one shown above. Using a global variable `counter`, each threads takes turn to update its value and when all thread updates the value only then the current thread is able to break out of the while loop. A common danger in the above code is when number of SMs are smaller than the number of blocks in which case we might see a deadlock happening.<br/><br/>
 Synchronizing all threads across all blocks penalize performance heavily. An alternative way to implement the Kogge-Stone algorithm is to run the algorithm per block first. After this all blocks would have computed its own prefix sums. Except for the 1st block all other blocks will have only partial prefix sums.<br/><br/>
-Using a global array S of length equal to the number of blocks, each index i in S stores the value of the prefix sum from the last index from each block. Thus each element of S corresponds to one block.<br/><br/>
-Then run the prefix sum algorithm on the global array S. <br/><br/>
+Using a global array S of length equal to the number of blocks, each index i in S stores the value of the prefix sum from the last index from each block. Thus each element of S corresponds to the sum of one block.<br/><br/>
+Then run the prefix sum algorithm again but now on the global array S. <br/><br/>
 Then for each block, for each index i add the value of `S[blockIdx.x-1]` i.e. the value of S corresponding to the previous block to itself. In this way each output element will have the correct value.<br/><br/>
 Taking an example:
 ```
@@ -109,6 +109,73 @@ P3' = P3 + PS[2] = [1+51, 7+51, 15+51, 17+51] = [52, 58, 66, 68]
 
 STEP 5: Concatenate the P arrays
 P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
+```
+<br/><br/>
+Instead of running prefix sum algorithm twice, once on A and once on S in the above algorithm, one can modify the above algorithm as follows:<br/><br/>
+After step 1, for each block check if the S element corresponding to the previous block i.e. `S[blockIdx.x-1]` has been set. If the S element in the previous block has been set, then update the S element of current block by adding `S[blockIdx.x-1]` to the last element of the P array. After that, update all indices corresponding to P in the current block by adding `S[blockIdx.x-1]`.<br/><br/>
+```
+Input : A = [2,1,5,8,9,0,4,6,3,4,5,4,1,7,7,2]
+block size = 4
+
+STEP 1: Calculate P array for each block
+A0 = [2,1,5,8] P0 = [2,3,8,16]
+A1 = [9,0,4,6] P1 = [9,9,13,19]
+A2 = [3,4,5,4] P2 = [3,7,12,16]
+A3 = [1,7,7,2] P3 = [1,7,15,17]
+
+STEP 2: Calculate S array from last elements of P above and previous blocks' S value.
+S0 = 0  + 16 = 16  P0 = [2, 3, 8, 16]
+S1 = 16 + 19 = 35  P1 = [9+16, 9+16, 13+16, 19+16] = [25, 25, 29, 35]
+S2 = 35 + 16 = 51  P2 = [3+35, 7+35, 12+35, 16+35] = [38, 42, 47, 51]
+S3 = 51 + 17 = 68  P3 = [1+51, 7+51, 15+51, 17+51] = [52, 58, 66, 68]
+
+STEP 3: Concatenate the P arrays
+P = [2, 3, 8, 16, 25, 25, 29, 35, 38, 42, 47, 51, 52, 58, 66, 68]
+```
+<br/><br/>
+The calculations using Kogge-Stone can be further optimized by using shared memory array. In order to identify whether the S element corresponding to previous block has been set, we use another `flags` array where `flags[blockIdx.x]=1` if S corresponding to `blockIdx.x` has been calculated, else `flags[blockIdx.x]=0`.<br/><br/>
+The code is as follows:<br/><br/>
+```cpp
+__device__
+void prefix_sum_kogge_stone_block(float *arr, float *XY, int n) {
+    unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
+
+    if (index < n) XY[threadIdx.x] = arr[index]; 
+    else XY[threadIdx.x] = 0.0f;
+
+    __syncthreads();
+
+    for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
+        float temp = 0.0f;
+        if (threadIdx.x >= stride) temp = XY[threadIdx.x-stride];
+        __syncthreads();
+        XY[threadIdx.x] += temp;
+        __syncthreads();
+    }
+}
+
+__global__
+void prefix_sum(float *A, float *P, int *flags, float *S, int n, int m) {
+    extern __shared__ float XY[];
+    unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
+
+    prefix_sum_brent_kung_block(A, XY, n);
+
+    if (blockIdx.x + 1 < m && threadIdx.x == 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+        S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(blockDim.x-1, n-1-blockIdx.x*blockDim.x)];
+        __threadfence();
+        atomicAdd(&flags[blockIdx.x + 1], 1);
+    }
+    __syncthreads();
+
+    if (blockIdx.x < m && index < n && blockIdx.x > 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+        XY[threadIdx.x] += S[blockIdx.x];
+    }
+
+    if (index < n) P[index] = XY[threadIdx.x];
+}
 ```
 <br/><br/>
 
