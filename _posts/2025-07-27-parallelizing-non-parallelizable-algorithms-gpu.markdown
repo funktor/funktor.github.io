@@ -238,7 +238,7 @@ Total work done by threads = (BLOCK_WIDTH-1) + (BLOCK_WIDTH-2) + ... + (BLOCK_WI
                            = K*BLOCK_WIDTH - (1+2+...+2^(K-1))
                            = BLOCK_WIDTH*(K-1)
 ```
-
+<br/><br/>
 The other algorithm i.e. Brent-Kung algorithm is bit trickier to understand but often performs better than the Kogge-Stone algorithm described above. The algorithm works in 2-stages as follows:<br/><br/>
 In the first stage, each thread runs with multiple strides similar to the Kogge Stone algorithm. Assuming the algorithm runs per block, the thread with index i and stride=S will add up indices `2*(i+1)*S-1` and `2*(i+1)*S-1-S` and store the result in the index `2*(i+1)*S-1`, i.e.<br/><br/>
 `P[2*(i+1)*S-1] += P[2*(i+1)*S-1-S]`<br/><br/>
@@ -271,6 +271,20 @@ void prefix_sum_brent_kung_block(float *arr, float *XY, int n) {
         __syncthreads();
     }
 }
+```
+<br/><br/>
+Considering each block, total number of strides in the Brent-Kung algorithm in 1st stage is `log2(BLOCK_WIDTH)`. Total work done across all threads can be calculated as follows:
+```
+STRIDE = 1,       Num Active Threads = BLOCK_WIDTH/2
+STRIDE = 2,       Num Active Threads = BLOCK_WIDTH/4
+STRIDE = 4,       Num Active Threads = BLOCK_WIDTH/8
+....
+STRIDE = 2^(K-1), Num Active Threads = BLOCK_WIDTH/(2^K)
+K = log2(BLOCK_WIDTH)
+
+Total work done by threads = BLOCK_WIDTH/2 + BLOCK_WIDTH/4 + ... + BLOCK_WIDTH/(2^K)
+                           = BLOCK_WIDTH/2*(1+1/2+1/4+...+1/(2^(K-1)))
+                           = BLOCK_WIDTH*(1-1/2^K)
 ```
 <br/><br/>
 The above algorithm can be improved by using thread coarsening as shown below. Each thread is responsible for calculating the prefix sums for COARSE_FACTOR number of elements. The full code using thread coarsening for Brent-Kung algorithm is shown below:
