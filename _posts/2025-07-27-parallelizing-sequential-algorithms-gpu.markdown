@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Parallelizing Non-Parallelizable algorithms on GPU - Prefix Sum"
+title:  "Parallelizing sequential algorithms on GPU - Prefix Sum"
 date:   2025-07-28 18:50:11 +0530
 categories: software-engineering
 ---
@@ -307,7 +307,7 @@ Total work done by threads = BLOCK_WIDTH/2 + BLOCK_WIDTH/4 + ... + BLOCK_WIDTH/(
 ```
 <br/><br/>
 Assuming that only Q threads per block can run in parallel (due to resource constraints), then the run-time complexity for the Brent-Kung algorithm per block is `BLOCK_WIDTH*(1-1/2^K)/Q`. In the case where we have sufficient resources then Q=BLOCK_WIDTH, then run-time complexity is `1-1/2^K` where K is defined as above.<br/><br/>
-Thus, in the worst case where Q is a small constant as compared to N, the run time complexity is `O(N)`. In the best case it is almost O(1). But rarely we will see this because there are other overheads in the process such as syncing threads per block, syncing threads across blocks etc. which is where most time goes into. As number of elements increases, number of threads required also increases and thus syncing the threads increases in complexity.<br/><br/>
+Thus, in the worst case where Q is a small constant as compared to N, the run time complexity is `O(N)`. In the best case it is almost `O(1)`. But rarely we will see this because there are other overheads in the process such as syncing threads per block, syncing threads across blocks etc. which is where most time goes into. As number of elements increases, number of threads required also increases and thus syncing the threads increases in complexity.<br/><br/>
 The above algorithms can be improved further by using thread coarsening as shown below. Each thread is responsible for calculating the prefix sums for COARSE_FACTOR number of elements. The full code using thread coarsening for Brent-Kung algorithm is shown below:
 ```cpp
 #define BLOCK_WIDTH 1024
@@ -399,6 +399,6 @@ int main(){
 }
 ```
 <br/><br/>
-Although theorectically Brent-Kung algorithm could perform better than the sequential algorithm in the ideal world, but due to multiple stages such as calculating the array S, updating S per block and passing to the next block, syncing threads per block etc. the performance is still not on par with the sequential prefix sum algorithm. On my RTX 4050, sequential algorithm with N=1e7 input elements takes around 30ms whereas the above coarsened Brent Kung algorithm takes somewhere around 60ms i.e almost double the time.
+Although theorectically Brent-Kung algorithm could perform better than the sequential algorithm in the ideal world, but due to multiple stages such as calculating the array S, updating S per block and passing to the next block, syncing threads per block etc. the performance is still not on par with the sequential prefix sum algorithm. On my RTX 4050, sequential algorithm with `N=1e7` input elements takes around `30ms` whereas the above coarsened Brent Kung algorithm takes somewhere around `60ms` i.e almost double the time.
 
 
