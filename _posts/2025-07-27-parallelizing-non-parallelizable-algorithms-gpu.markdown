@@ -225,6 +225,20 @@ int main(){
 }
 ```
 <br/><br/>
+Considering each block, total number of strides in the Kogge-Stone algorithm is `log2(BLOCK_WIDTH)`. Total work done across all threads can be calculated as follows:
+```
+STRIDE = 1,       Num Active Threads = BLOCK_WIDTH-1
+STRIDE = 2,       Num Active Threads = BLOCK_WIDTH-2
+STRIDE = 4,       Num Active Threads = BLOCK_WIDTH-4
+....
+STRIDE = 2^(K-1), Num Active Threads = BLOCK_WIDTH-2^(K-1)
+K = log2(BLOCK_WIDTH)
+
+Total work done by threads = (BLOCK_WIDTH-1) + (BLOCK_WIDTH-2) + ... + (BLOCK_WIDTH-2^(K-1))
+                           = K*BLOCK_WIDTH - (1+2+...+2^(K-1))
+                           = BLOCK_WIDTH*(K-1)
+```
+
 The other algorithm i.e. Brent-Kung algorithm is bit trickier to understand but often performs better than the Kogge-Stone algorithm described above. The algorithm works in 2-stages as follows:<br/><br/>
 In the first stage, each thread runs with multiple strides similar to the Kogge Stone algorithm. Assuming the algorithm runs per block, the thread with index i and stride=S will add up indices `2*(i+1)*S-1` and `2*(i+1)*S-1-S` and store the result in the index `2*(i+1)*S-1`, i.e.<br/><br/>
 `P[2*(i+1)*S-1] += P[2*(i+1)*S-1-S]`<br/><br/>
@@ -259,13 +273,17 @@ void prefix_sum_brent_kung_block(float *arr, float *XY, int n) {
 }
 ```
 <br/><br/>
-The above algorithm can be improved by using thread coarsening as shown below. The full code using thread coarsening is as follows:
+The above algorithm can be improved by using thread coarsening as shown below. Each thread is responsible for calculating the prefix sums for COARSE_FACTOR number of elements. The full code using thread coarsening for Brent-Kung algorithm is shown below:
 ```cpp
 #define BLOCK_WIDTH 1024
 #define COARSE_FACTOR 8
 
 __device__
-void prefix_sum_brent_kung_block_coarsened(float *A, float *XY, int n) {
+void prefix_sum_brent_kung_block_coarsened(
+                float *A,
+                float *XY,
+                unsigned int n) {
+
     for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
         unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
         if (index < n) XY[i] = A[index]; 
@@ -292,9 +310,15 @@ void prefix_sum_brent_kung_block_coarsened(float *A, float *XY, int n) {
 }
 
 __global__
-void prefix_sum_coarsened(float *A, float *P, int *flags, float *S, int n, int m) {
-    extern __shared__ float XY[];
+void prefix_sum_coarsened(
+                float *A,
+                float *P,
+                int *flags,
+                float *S,
+                unsigned int n,
+                unsigned int m) {
 
+    extern __shared__ float XY[];
     prefix_sum_brent_kung_block_coarsened(A, XY, n);
 
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
@@ -320,8 +344,8 @@ void prefix_sum_coarsened(float *A, float *P, int *flags, float *S, int n, int m
 }
 
 int main(){
-    int n = 1e7;
-    int m = int(ceil(float(n)/(COARSE_FACTOR*BLOCK_WIDTH)));
+    unsigned int n = 1e7;
+    unsigned int m = int(ceil(float(n)/(COARSE_FACTOR*BLOCK_WIDTH)));
 
     float *A, *S, *P;
     int *flags;
@@ -331,8 +355,8 @@ int main(){
     cudaMallocManaged(&S, m*sizeof(float));
     cudaMallocManaged(&flags, m*sizeof(int));
 
-    for (int i = 0; i < m; i++) S[i] = 0.0;
-    for (int i = 0; i < m; i++) flags[i] = 0;
+    for (unsigned int i = 0; i < m; i++) S[i] = 0.0;
+    for (unsigned int i = 0; i < m; i++) flags[i] = 0;
     flags[0] = 1;
 
     prefix_sum<<<m, BLOCK_WIDTH, COARSE_FACTOR*BLOCK_WIDTH*sizeof(float)>>>(A, P, flags, S, n, m);
