@@ -239,6 +239,8 @@ Total work done by threads = (BLOCK_WIDTH-1) + (BLOCK_WIDTH-2) + ... + (BLOCK_WI
                            = BLOCK_WIDTH*(K-1)
 ```
 <br/><br/>
+Assuming that only Q threads per block can run in parallel (due to resource constraints), then the run-time complexity for the Kogge-Stone algorithm per block is `BLOCK_WIDTH*(K-1)/Q`. In the case where we have sufficient resources then Q=BLOCK_WIDTH, then run-time complexity is `K-1` where K is defined as above. The analysis can easily scaled to all the elements in the array A by scaling BLOCK_WIDTH with number of blocks.<br/><br/>
+Thus, in the worst case where Q is a small constant as compared to N, the run time complexity is `O(NlogN)`.<br/><br/>
 The other algorithm i.e. Brent-Kung algorithm is bit trickier to understand but often performs better than the Kogge-Stone algorithm described above. The algorithm works in 2-stages as follows:<br/><br/>
 In the first stage, each thread runs with multiple strides similar to the Kogge Stone algorithm. Assuming the algorithm runs per block, the thread with index i and stride=S will add up indices `2*(i+1)*S-1` and `2*(i+1)*S-1-S` and store the result in the index `2*(i+1)*S-1`, i.e.<br/><br/>
 `P[2*(i+1)*S-1] += P[2*(i+1)*S-1-S]`<br/><br/>
@@ -287,7 +289,9 @@ Total work done by threads = BLOCK_WIDTH/2 + BLOCK_WIDTH/4 + ... + BLOCK_WIDTH/(
                            = BLOCK_WIDTH*(1-1/2^K)
 ```
 <br/><br/>
-The above algorithm can be improved by using thread coarsening as shown below. Each thread is responsible for calculating the prefix sums for COARSE_FACTOR number of elements. The full code using thread coarsening for Brent-Kung algorithm is shown below:
+Assuming that only Q threads per block can run in parallel (due to resource constraints), then the run-time complexity for the Brent-Kung algorithm per block is `BLOCK_WIDTH*(1-1/2^K)/Q`. In the case where we have sufficient resources then Q=BLOCK_WIDTH, then run-time complexity is `1-1/2^K` where K is defined as above.<br/><br/>
+Thus, in the worst case where Q is a small constant as compared to N, the run time complexity is `O(N)`. In the best case it is almost O(1). But rarely we will see this because there are other overheads in the process such as syncing threads per block, syncing threads across blocks etc. which is where most time goes into. As number of elements increases, number of threads required also increases and thus syncing the threads increases in complexity.<br/><br/>
+The above algorithms can be improved by using thread coarsening as shown below. Each thread is responsible for calculating the prefix sums for COARSE_FACTOR number of elements. The full code using thread coarsening for Brent-Kung algorithm is shown below:
 ```cpp
 #define BLOCK_WIDTH 1024
 #define COARSE_FACTOR 8
@@ -378,5 +382,6 @@ int main(){
 }
 ```
 <br/><br/>
+Thus, we see that intere
 
 
