@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Parallelizing Non-Parallelizable algorithms on GPU - Prefix Sum"
-date:   2025-07-30 18:50:11 +0530
+date:   2025-07-28 18:50:11 +0530
 categories: software-engineering
 ---
 GPUs are highly effective in parallelizing algorithms more importantly algorithms which are inherently parallelizable as the ones we saw previously such as vector addition, matrix multiplication, convolution, histogram reduction etc. We also saw a GPU implementation of summation of an array of numbers. Unlike matrix multiplication or convolution where each thread is responsible for calculating independent or disjoint set of output values, summation of an array of numbers required only 1 output value and thus required synchronization between multiple threads. But with reduction tree technique and atomic addition it was relatively straightforward to achieve better performance on a GPU as compared to a CPU.<br/><br/>
@@ -37,6 +37,7 @@ An alternative stratgey would be to use a combination of the 2 approaches above 
 [Kogge Stone Adder](https://en.wikipedia.org/wiki/Kogge–Stone_adder)<br/><br/>
 [Brent Kung Adder](https://en.wikipedia.org/wiki/Brent–Kung_adder)<br/><br/>
 Let's start with the Kogge Stone adder first. The diagrammatic representation is shown below. The algorithm works in stages as follows:<br/><br/>
+![Kogge Stone](/docs/assets/kogge-stone.jpg)<br/><br/>
 Copy the input array A in the output array P. Then for each stage S (starting from 0), for each index i greater than equal to `(1<<S)` i.e. 2 to the power of S, in the output array P, calculate the sum `P[i] = P[i]+P[i-(1<<S)]`<br/><br/>
 At the end of `log2(N)` stages, each index i will contain the sum of `A[0] to A[i]`.<br/><br/>
 Let's implement the above in CUDA as follows:<br/><br/>
@@ -254,6 +255,7 @@ Total work done by threads = (BLOCK_WIDTH-1) + (BLOCK_WIDTH-2) + ... + (BLOCK_WI
 Assuming that only Q threads per block can run in parallel (due to resource constraints), then the run-time complexity for the Kogge-Stone algorithm per block is `BLOCK_WIDTH*(K-1)/Q`. In the case where we have sufficient resources then Q=BLOCK_WIDTH, then run-time complexity is `K-1` where K is defined as above. The analysis can easily scaled to all the elements in the array A by scaling BLOCK_WIDTH with number of blocks.<br/><br/>
 Thus, in the worst case where Q is a small constant as compared to N, the run time complexity is `O(NlogN)`.<br/><br/>
 The other algorithm i.e. Brent-Kung algorithm is bit trickier to understand but often performs better than the Kogge-Stone algorithm described above. The algorithm works in 2-stages as follows:<br/><br/>
+![Brent Kung](/docs/assets/brent-kung.png)<br/><br/>
 In the first stage, each thread runs with multiple strides similar to the Kogge Stone algorithm. Assuming the algorithm runs per block, the thread with index i and stride=S will add up indices `j=2*(i+1)*S-1` and `j-S` and store the result in the index j, i.e.<br/><br/>
 `P[j] += P[j-S] where j=2*(i+1)*S-1`<br/><br/>
 The strides increases from 1 to BLOCK_WIDTH by repeatedly multiplying with 2.<br/><br/>
