@@ -399,6 +399,25 @@ int main(){
 }
 ```
 <br/><br/>
-Although theorectically Brent-Kung algorithm could perform better than the sequential algorithm in the ideal world, but due to multiple stages such as calculating the array S, updating S per block and passing to the next block, syncing threads per block etc. the performance is still not on par with the sequential prefix sum algorithm. On my RTX 4050, sequential algorithm with `N=1e7` input elements takes around `30ms` whereas the above coarsened Brent Kung algorithm takes somewhere around `60ms` i.e almost double the time.
+
+Although theorectically Brent-Kung algorithm could perform better than the sequential algorithm in the ideal world, but on my RTX 4050, with `N=1e7` input elements the sequential algorithm takes around `20ms` whereas the coarsened Brent Kung algorithm takes somewhere around `50ms` i.e more than double the time.<br/><br/>
+This could be due to multiple reasons for e.g. the sequential nature of block message propagation to calculate the array S i.e. updating S per block and passing it to the next block, syncing the threads per block etc. Another per block performance bottleneck is the bank memory conflict in shared memory. Assuming that shared memory per blcok is divided into 32 banks each of 32-bits i.e. each floating point number maps to one of 32 banks in shared memory. A bank conflict occurs when two or more threads access different elements mapping to the same bank.<br/><br/>
+For a given warp of 32 threads if the threads accesses consecutive elements, we will not have bank conflicts but if they are accessed with strides of 1, 2, 4, 8 and so on as in Brent-Kung algorithm we will have bank conflicts as shown below:
+```
+Non-strided access in warp
+Thread ID  : 0 1 2 ... 15 16 17 18 ... 31
+Arr Index  : 0 1 2 ... 15 16 17 18 ... 31
+Bank       : 0 1 2 ... 15 16 17 18 ... 31
+
+Elements read when stride = 1
+Thread ID  : 0 1 2 ... 15 16 17 18 ... 31 32 33 34 ... 63 64 65 66 ... 95
+Arr Index  : 0 2 4 ... 30 32 34 36 ... 62 64 66 68 ... .....
+Bank       : 0 2 4 ... 30  0  2  4 ... 30  0  2  4 ... .....
+Thus arr indices 0, 32
+```
+<br/><br/>
+but due to multiple stages such as calculating the array S, updating S per block and passing to the next block, syncing threads per block etc. the performance is still not on par with the sequential prefix sum algorithm. On my RTX 4050, sequential algorithm with `N=1e7` input elements takes around `20ms` whereas the above coarsened Brent Kung algorithm takes somewhere around `50ms` i.e more than double the time.<br/><br/>
+
+
 
 
