@@ -405,18 +405,140 @@ This could be due to multiple reasons for e.g. the sequential nature of block me
 For a given warp of 32 threads if the threads accesses consecutive elements, we will not have bank conflicts but if they are accessed with strides of 1, 2, 4, 8 and so on as in Brent-Kung algorithm we will have bank conflicts as shown below:
 ```
 Non-strided access in warp
-Thread ID  : 0 1 2 ... 15 16 17 18 ... 31
-Arr Index  : 0 1 2 ... 15 16 17 18 ... 31
-Bank       : 0 1 2 ... 15 16 17 18 ... 31
+Thread ID  : 0 1 2 ... 15 16 17 18 ... 30 31
+Arr Index  : 0 1 2 ... 15 16 17 18 ... 30 31
+Bank       : 0 1 2 ... 15 16 17 18 ... 30 31
 
 Elements read when stride = 1
-Thread ID  : 0 1 2 ... 15 16 17 18 ... 31 32 33 34 ... 63 64 65 66 ... 95
-Arr Index  : 0 2 4 ... 30 32 34 36 ... 62 64 66 68 ... .....
-Bank       : 0 2 4 ... 30  0  2  4 ... 30  0  2  4 ... .....
-Thus arr indices 0, 32
+Thread ID  : 0 1 2 ... 15 16 17 18 ... 30 31
+Arr Index  : 0 2 4 ... 30 32 34 36 ... 60 62
+Bank       : 0 2 4 ... 30  0  2  4 ... 28 30
+
+Arr indices 0 and 32 access bank 0
+Arr indices 2 and 34 access bank 2
+...
+and so on.
+Thus we have 2-way bank conflict when stride = 1
+
+Elements read when stride = 2
+Thread ID  : 0 1 2 ...  7  8  9 ... 15 16 17 18 ...  30  31
+Arr Index  : 1 5 9 ... 29 33 37 ... 61 65 69 73 ... 121 125
+Bank       : 1 5 9 ... 29  1  5 ... 29  1  5  9 ...  25  29
+
+Arr indices 1, 33, 65 and 97  all accesses bank 0
+Arr indices 5, 37, 69 and 101 all accesses bank 5
+...
+and so on.
+Thus we have 4-way bank conflict when stride = 2
 ```
 <br/><br/>
-but due to multiple stages such as calculating the array S, updating S per block and passing to the next block, syncing threads per block etc. the performance is still not on par with the sequential prefix sum algorithm. On my RTX 4050, sequential algorithm with `N=1e7` input elements takes around `20ms` whereas the above coarsened Brent Kung algorithm takes somewhere around `50ms` i.e more than double the time.<br/><br/>
+One technique used in CUDA to avoid bank conflicts is using memory padding i.e. shift the indices in shared memory by some amount by filling in with dummy indices. For e.g. in the above strided access pattern, we pad the shared memory array indices 32, 64, 96 ... with dummy values and shift the remaining indices right. Thus, what was at index 32 earlier will be at index 33 and so on. Similarly what was at index 64 earlier will now be at index 66 and so on.<br/><br/>
+Thus, an index `i` is mapped to the modified index `i + i/32` in this schema or `i + (i >> 5)`.<br/><br/>
+The Brent-Kung code modified to use memory padding:<br/><br/>
+```cpp
+#define NUM_BANKS 32
+#define LOG_NUM_BANKS 5
+#define CONFLICT_FREE_OFFSET(n)((n) >> (LOG_NUM_BANKS))
+#define BUFFER 255
+
+__device__
+void prefix_sum_brent_kung_block_coarsened(
+                float *A,
+                float *XY,
+                unsigned int n) {
+
+    for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+        unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
+        unsigned int offset = CONFLICT_FREE_OFFSET(i);
+        if (index < n) XY[i + offset] = A[index]; 
+        else XY[i + offset] = 0.0f;
+    }
+
+    __syncthreads();
+
+    for (unsigned int stride = 1; stride < COARSE_FACTOR*blockDim.x; stride *= 2) {
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            int j = 2*(i+1)*stride-1;
+            unsigned int offset1 = CONFLICT_FREE_OFFSET(j);
+            unsigned int offset2 = CONFLICT_FREE_OFFSET(j-stride);
+            if (j + offset1 < COARSE_FACTOR*BLOCK_WIDTH + BUFFER && j + offset2 >= stride)
+                XY[j + offset1] += XY[j-stride + offset2];
+        }
+        __syncthreads();
+    }
+
+    for (unsigned int stride = COARSE_FACTOR*BLOCK_WIDTH/4; stride > 0; stride /= 2) {
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            int j = 2*(i+1)*stride-1;
+            unsigned int offset1 = CONFLICT_FREE_OFFSET(j+stride);
+            unsigned int offset2 = CONFLICT_FREE_OFFSET(j);
+            if (j + stride + offset1 < COARSE_FACTOR*BLOCK_WIDTH + BUFFER)
+                XY[j + stride + offset1] += XY[j + offset2];
+        }
+        __syncthreads();
+    }
+}
+
+__global__
+void prefix_sum_coarsened(
+                float *A,
+                float *P,
+                int *flags,
+                float *S,
+                unsigned int n,
+                unsigned int m) {
+
+    extern __shared__ float XY[];
+    prefix_sum_brent_kung_block_coarsened(A, XY, n);
+
+    if (blockIdx.x + 1 < m && threadIdx.x == 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+        int j = min(COARSE_FACTOR*blockDim.x-1, n-1-COARSE_FACTOR*blockIdx.x*blockDim.x);
+        S[blockIdx.x + 1] = S[blockIdx.x] + XY[j + CONFLICT_FREE_OFFSET(j)];
+        __threadfence();
+        atomicAdd(&flags[blockIdx.x + 1], 1);
+    }
+    __syncthreads();
+
+    if (blockIdx.x < m && blockIdx.x > 0) {
+        while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+
+        for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+            int j = i + CONFLICT_FREE_OFFSET(i);
+            XY[j] += S[blockIdx.x];
+        }
+    }
+
+    for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
+        unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
+        if (index < n) P[index] = XY[i + CONFLICT_FREE_OFFSET(i)];
+    }
+}
+
+int main(){
+    unsigned int n = 1e7;
+    unsigned int m = int(ceil(float(n)/(COARSE_FACTOR*BLOCK_WIDTH)));
+
+    float *A, *S, *P;
+    int *flags;
+
+    cudaMallocManaged(&A, n*sizeof(float));
+    cudaMallocManaged(&P, n*sizeof(float));
+    cudaMallocManaged(&S, m*sizeof(float));
+    cudaMallocManaged(&flags, m*sizeof(int));
+
+    for (unsigned int i = 0; i < m; i++) S[i] = 0.0;
+    for (unsigned int i = 0; i < m; i++) flags[i] = 0;
+    flags[0] = 1;
+
+    prefix_sum<<<m, BLOCK_WIDTH, (BLOCK_WIDTH*COARSE_FACTOR + BUFFER)*sizeof(float)>>>(A, P, flags, S, n, m);
+    cudaDeviceSynchronize();
+}
+```
+<br/><br/>
+You can find more details about memory padding and bank memory conflicts in the following blog:<br/><br/>
+[Parallel Prefix Sum](https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda)<br/><br/>
+There is a very minute change in performance after this change indicating that most performance bottleneck is the block serialization part.
 
 
 
