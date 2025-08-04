@@ -358,7 +358,8 @@ void prefix_sum_coarsened(
 
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
-        S[blockIdx.x + 1] = S[blockIdx.x] + XY[min(COARSE_FACTOR*blockDim.x-1, n-1-COARSE_FACTOR*blockIdx.x*blockDim.x)];
+        S[blockIdx.x + 1] = S[blockIdx.x]
+            + XY[min(COARSE_FACTOR*blockDim.x-1, n-1-COARSE_FACTOR*blockIdx.x*blockDim.x)];
         __threadfence();
         atomicAdd(&flags[blockIdx.x + 1], 1);
     }
@@ -394,7 +395,8 @@ int main(){
     for (unsigned int i = 0; i < m; i++) flags[i] = 0;
     flags[0] = 1;
 
-    prefix_sum<<<m, BLOCK_WIDTH, COARSE_FACTOR*BLOCK_WIDTH*sizeof(float)>>>(A, P, flags, S, n, m);
+    prefix_sum<<<m, BLOCK_WIDTH,
+        COARSE_FACTOR*BLOCK_WIDTH*sizeof(float)>>>(A, P, flags, S, n, m);
     cudaDeviceSynchronize();
 }
 ```
@@ -434,6 +436,17 @@ Thus we have 4-way bank conflict when stride = 2
 <br/><br/>
 One technique used in CUDA to avoid bank conflicts is using memory padding i.e. shift the indices in shared memory by some amount by filling in with dummy indices. For e.g. in the above strided access pattern, we pad the shared memory array indices 32, 64, 96 ... with dummy values and shift the remaining indices right. Thus, what was at index 32 earlier will be at index 33 and so on. Similarly what was at index 64 earlier will now be at index 66 and so on.<br/><br/>
 Thus, an index `i` is mapped to the modified index `i + i/32` in this schema or `i + (i >> 5)`.<br/><br/>
+```
+Elements read when stride = 1
+Thread ID  : 0 1 2 ... 15 16 17 18 ... 30 31
+Arr Index  : 0 2 4 ... 30 33 35 37 ... 61 63
+Bank       : 0 2 4 ... 30  1  3  5 ... 29 31
+
+Elements read when stride = 2
+Thread ID  : 0 1 2 ...  7  8  9 ... 15 16 17 18 ...  30  31
+Arr Index  : 1 5 9 ... 29 34 38 ... 62 67 71 75 ... 124 128
+Bank       : 1 5 9 ... 29  2  6 ... 30  3  7 11 ...  28   0
+```
 The Brent-Kung code modified to use memory padding:<br/><br/>
 ```cpp
 #define NUM_BANKS 32
@@ -531,7 +544,8 @@ int main(){
     for (unsigned int i = 0; i < m; i++) flags[i] = 0;
     flags[0] = 1;
 
-    prefix_sum<<<m, BLOCK_WIDTH, (BLOCK_WIDTH*COARSE_FACTOR + BUFFER)*sizeof(float)>>>(A, P, flags, S, n, m);
+    prefix_sum<<<m, BLOCK_WIDTH,
+        (BLOCK_WIDTH*COARSE_FACTOR + BUFFER)*sizeof(float)>>>(A, P, flags, S, n, m);
     cudaDeviceSynchronize();
 }
 ```
