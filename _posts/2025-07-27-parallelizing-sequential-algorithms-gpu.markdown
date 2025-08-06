@@ -272,18 +272,21 @@ void prefix_sum_brent_kung_block(
                 float *XY,
                 unsigned int n) {
 
+    // Load the input array in shared memory
     unsigned int index = blockIdx.x*blockDim.x + threadIdx.x;
     if (index < n) XY[threadIdx.x] = arr[index]; 
     else XY[threadIdx.x] = 0.0f;
 
     __syncthreads();
 
+    // Reduction tree in 1st stage computed using strides
     for (unsigned int stride = 1; stride < blockDim.x; stride *= 2) {
         int i = 2*(threadIdx.x+1)*stride-1;
         if (i < BLOCK_WIDTH && i >= stride) XY[i] += XY[i-stride];
         __syncthreads();
     }
 
+    // Reduction tree in 2nd stage computed using strides
     for (unsigned int stride = BLOCK_WIDTH/4; stride > 0; stride /= 2) {
         int i = 2*(threadIdx.x+1)*stride-1;
         if (i + stride < BLOCK_WIDTH) XY[i + stride] += XY[i];
@@ -319,6 +322,8 @@ void prefix_sum_brent_kung_block_coarsened(
                 float *XY,
                 unsigned int n) {
 
+    // Each thread is responsible for loading COARSE_FACTOR number of input elements
+    // into shared memory
     for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
         unsigned int index = COARSE_FACTOR*blockIdx.x*blockDim.x + i;
         if (index < n) XY[i] = A[index]; 
@@ -327,6 +332,8 @@ void prefix_sum_brent_kung_block_coarsened(
 
     __syncthreads();
 
+    // Reduction tree in 1st stage computed using strides
+    // Each thread is responsible for COARSE_FACTOR number of elements
     for (unsigned int stride = 1; stride < COARSE_FACTOR*blockDim.x; stride *= 2) {
         for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
             int j = 2*(i+1)*stride-1;
@@ -335,6 +342,7 @@ void prefix_sum_brent_kung_block_coarsened(
         __syncthreads();
     }
 
+    // Reduction tree in 2nd stage computed using strides
     for (unsigned int stride = COARSE_FACTOR*BLOCK_WIDTH/4; stride > 0; stride /= 2) {
         for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
             int j = 2*(i+1)*stride-1;
@@ -357,7 +365,10 @@ void prefix_sum_coarsened(
     prefix_sum_brent_kung_block_coarsened(A, XY, n);
 
     if (blockIdx.x + 1 < m && threadIdx.x == 0) {
+        // wait for previous block to update S and pass it on.
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
+
+        // update S and flags and pass to next block
         S[blockIdx.x + 1] = S[blockIdx.x]
             + XY[min(COARSE_FACTOR*blockDim.x-1, n-1-COARSE_FACTOR*blockIdx.x*blockDim.x)];
         __threadfence();
@@ -367,7 +378,7 @@ void prefix_sum_coarsened(
 
     if (blockIdx.x < m && blockIdx.x > 0) {
         while (atomicAdd(&flags[blockIdx.x], 0) == 0) {}
-
+        // update own shared memory array using S sent from previous block
         for (unsigned int i = threadIdx.x; i < COARSE_FACTOR*blockDim.x; i += blockDim.x) {
             XY[i] += S[blockIdx.x];
         }
