@@ -78,10 +78,12 @@ But note that the above function cannot be directly used from PyTorch. For that 
 ```cpp
 namespace extension_cpp {
 	torch::Tensor softmax_cpu(const torch::Tensor &a) {
+		// Input valiidation
         TORCH_CHECK(a.device().is_cpu(), "Input tensor a must be a CPU tensor");
         TORCH_CHECK(a.is_contiguous(), "Input tensor a must be contiguous");
         TORCH_CHECK(a.dtype() == torch::kFloat32, "Input tensor a must be float32");
-    
+
+		// Output Tensor
         torch::Tensor c = torch::empty_like(a);
         unsigned long n = a.size(0);
         unsigned long m = a.size(1);
@@ -97,7 +99,7 @@ namespace extension_cpp {
     }
 }
 ```
-Next we need to export the above C++ function so that it can be called from Python. For that we will use PYBIND11. Our custom softmax function can be called in Python using `extension_cpp.mysoftmax_cpu()`.<br/><br/>
+Next we need to export the above C++ function so that it can be called from Python. For that we will use PYBIND11. Our custom softmax function can be called in Python using `extension_cpp.mysoftmax_cpu(Tensor)`.<br/><br/>
 ```cpp
 namespace extension_cpp {
 	PYBIND11_MODULE(extension_cpp, m) {
@@ -105,6 +107,23 @@ namespace extension_cpp {
     }
 }
 ```
+Notice the 1st three C++ header files included above `Python.h`, `torch/extension.h` and `tbb/tbb.h`. These files may not be automatically included in your path. To include the file `Python.h` requires you to specify your Python installation `include` directory. Also it requires `libpython-dev` to be installed. This path can be found by running the following commands on the Python shell.<br/><br/>
+```python
+import sysconfig
+print(sysconfig.get_paths()['include'])
+```
+If `libpython-dev` is not installed, install them by running the command `apt-get install libpython-dev` (in Ubuntu).<br/><br/>
+For the `torch/extension.h` file, this requires you to include the libtorch installation directory. If torch is automatically installed using `pip install torch` then it must be present in the site-packages folder (virtual environment if you are using one). The torch installation path can be found using:<br/><br/>
+```python
+import torch
+print(torch.__file__)
+```
+You need to include two different include directories for the `torch/extension.h` file to work. For e.g. in Linux Ubuntu, the following two paths are required to be included:
+```
+/opt/python/3.10/lib/python3.10/site-packages/torch/include/torch/csrc/api/include,
+/opt/python/3.10/lib/python3.10/site-packages/torch/include
+```
+To include `tbb/tbb.h`, you need to first install `tbb`. In MacOS it can be installed via `brew install tbb` and in Linux Ubuntu, it can be installed via `apt-get install libtbb-dev`. In MacOS the installation path is in `/opt/homebrew/opt/tbb/include` whereas in Linux Ubuntu, the installation path is `/usr/include`.
 
 
 
