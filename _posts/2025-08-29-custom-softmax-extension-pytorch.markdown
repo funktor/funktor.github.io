@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Writing your own Softmax PyTorch operator"
-date:   2025-09-02 18:50:11 +0530
+date:   2025-08-29 18:50:11 +0530
 categories: software-engineering
 ---
 PyTorch offers convenient ways for writing your own custom operators and extensions in both `C++` and `Python`. One can also leverage `CUDA` to write extensions for GPU devices. In this post I am going to show how to develop your own custom `softmax` operator for both CPU and GPU devices using C++ and Python.<br/><br/>
