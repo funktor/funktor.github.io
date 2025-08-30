@@ -617,7 +617,7 @@ class MySoftmaxFunctionCPU(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input:torch.Tensor):
         output:torch.Tensor = extension_cpp.mysoftmax_cpu(input)
-		# save the output as the output will be used during backward pass as input
+        # save the output as the output will be used during backward pass as input
         ctx.save_for_backward(output)
         return output
 
@@ -638,7 +638,7 @@ class MySoftmaxFunctionGPU(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input:torch.Tensor):
         output:torch.Tensor = extension_cpp.mysoftmax_gpu(input)
-		# save the output as the output will be used during backward pass as input
+        # save the output as the output will be used during backward pass as input
         ctx.save_for_backward(output)
         return output
 
@@ -653,7 +653,6 @@ class MySoftmaxGPU(torch.nn.Module):
 
     def forward(self, input):
         return MySoftmaxFunctionGPU.apply(input)
-    
 ```
 Then we can run and test all the 4 different custom functions as follows. For backward pass we are assuming a simple loss function which is the `sum of the squares` of the softmax outputs. Using just the `sum` is not a good idea because the loss would be a constant and the gradients would be 0. In most practical applications we generally use the categorical crossentropy loss on top of softmax:<br/><br/>
 ```python
