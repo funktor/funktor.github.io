@@ -5,19 +5,20 @@ date:   2025-09-02 18:50:11 +0530
 categories: software-engineering
 ---
 PyTorch offers convenient ways for writing your own custom operators and extensions in both `C++` and `Python`. One can also leverage `CUDA` to write extensions for GPU devices. In this post I am going to show how to develop your own custom `softmax` operator for both CPU and GPU devices using C++ and Python.<br/><br/>
-Softmax is a common operation used in deep learning networks. They are used to turn prediction scores into probabilities in binary classification problems. It is also used in attention mechanism to compute the `attention scores` for a sequence.<br/><br/>
+Softmax is a common operation used in deep neural networks. They are used to turn prediction scores into probabilities in multi-class classification problems. It is also used in attention mechanism to compute the `attention scores` for a sequence apart from other operations. <br/><br/>
 Before beginning to write our own softmax operator, lets see how to use the in-built softmax operator from PyTorch:<br/><br/>
 ```python
 import torch
 a = torch.randn(3, 4, dtype=torch.float32)
-print(torch.nn.functional.softmax(a, dim=-1))
+b = torch.nn.functional.softmax(a, dim=-1)
+assert (b.sum(dim=-1) == torch.ones(3)).sum() == 3
 ```
 We created a 3x4 matrix with random numbers between 0 and 1 and then used softmax operator to turn each row into probabilities. Note the dim=-1 argument which says that the softmax should be computed w.r.t. the last dimension i.e. across columns in this case.<br/><br/> 
 For an input array `[x0, x1, ... xn-1]` , the softmax values are computed as follows:<br/><br/>
 ![softmax1](/docs/assets/softmax1.png)<br/><br/>
 But the problem with the above formulation is that when the values `xi` are high as say 500, `exp(xi)` can cause overflow and return `Infinity` which will cause the softmax calculation to fail. One possible solution is to multiply both numerator and denominator by the constant `exp(-max(x))`. Then the updated formula is:<br/><br/>
 ![softmax2](/docs/assets/softmax2.png)<br/><br/>
-Now since we know how softmax should be computed, assuming our input tensors are 2D in shape, let's write the following C++ function to calculate the softmax. For each row compute the maximum values and then calculate the sum of all the exponentials (denominator) per row. Since each row can be computed in parallel, we will leverage multi-threading for this. One can use either `OpenMP`, or `TBB` (Thread Building Blocks) for this or explicit thread management. Here I am using TBB. <br/><br/>
+Now since we know how softmax should be computed, assuming our input tensors are 2D in shape, let's write the following C++ function to calculate the softmax. For each row, compute the maximum value and then calculate the sum of all the exponentials (i.e. denominator) per row. Since each row can be computed in parallel, we will leverage multi-threading for this. One can use either `OpenMP`, or `TBB` (Thread Building Blocks) for this or explicit thread management. Here I am using TBB. <br/><br/>
 ```cpp
 // File name : pytorch_c_ext.cpp
 
@@ -78,8 +79,10 @@ namespace extension_cpp {
 	}
 }
 ```
-But note that the above function cannot be directly used from PyTorch. For that first we need to define another C++ method that directly works with the PyTorch C++ Frontend. This method calls the above `softmax` method.<br/><br/>
+But note that the above function cannot be directly used from PyTorch as the inputs to the function are `floats` and `ints` which PyTorch does not understand. For that first we need to define another C++ method that directly works with the PyTorch C++ Frontend. This method calls the above `softmax` method.<br/><br/>
 ```cpp
+// File name : pytorch_c_ext.cpp
+
 namespace extension_cpp {
 	torch::Tensor softmax_cpu(const torch::Tensor &a) {
 		// Input valiidation
@@ -91,7 +94,7 @@ namespace extension_cpp {
         torch::Tensor c = torch::empty_like(a);
         unsigned long n = a.size(0);
         unsigned long m = a.size(1);
-    
+
         softmax(
             a.data_ptr<float>(),
             c.data_ptr<float>(),
@@ -103,15 +106,18 @@ namespace extension_cpp {
     }
 }
 ```
-Next we need to export the above C++ function so that it can be called from Python. For that we will use PYBIND11. Our custom softmax function can be called in Python using `extension_cpp.mysoftmax_cpu(Tensor)`.<br/><br/>
+`Tensor.data_ptr<float>()` converts a Tensor into a pointer of floats.<br/><br/>
+Next we need to export the above C++ function so that it can be called from Python. For that we will use PYBIND11. After this, our custom softmax function can be called from Python using `extension_cpp.mysoftmax_cpu(Tensor)`.<br/><br/>
 ```cpp
+// File name : pytorch_c_ext.cpp
+
 namespace extension_cpp {
 	PYBIND11_MODULE(extension_cpp, m) {
         m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
     }
 }
 ```
-Notice the 1st three C++ header files included above `Python.h`, `torch/extension.h` and `tbb/tbb.h`. These files may not be automatically included in your path. To include the file `Python.h` requires you to specify your Python installation `include` directory. Also it requires `libpython-dev` to be installed. This path can be found by running the following commands on the Python shell.<br/><br/>
+Notice the 1st three C++ header files included above `Python.h`, `torch/extension.h` and `tbb/tbb.h`. These files may not be automatically included in your path. To include the file `Python.h` requires you to specify your Python installation's `include` directory. Also it requires `libpython-dev` to be installed. This path can be found by running the following commands on the Python shell.<br/><br/>
 ```python
 import sysconfig
 print(sysconfig.get_paths()['include'])
@@ -148,7 +154,7 @@ setup(
             "extension_cpp",
             ["pytorch_c_ext.cpp"],
             extra_compile_args={
-                "cxx": ["-O3", "-ltbb", "-Wall"]
+                "cxx": ["-O3", "-ltbb"]
             },
             extra_link_args=["-ltbb"],
             include_dirs=[
@@ -165,7 +171,7 @@ setup(
     cmdclass={"build_ext": BuildExtension}
 )
 ```
-Notice the `extra_compile_args` and `extra_link_args` in the above script. Also the `include_dirs` contains the include paths for the above mentioned header files. Note that these paths may vary depending on your OS and distribution. For e.g. in my MacOS, the setup.py script that works with the C++ file is:<br/><br/>
+Notice the `extra_compile_args` and `extra_link_args` in the above script. Also the `include_dirs` contains the include paths for the above mentioned header files. Note that these paths may vary depending on your OS and distribution. For e.g. in my MacOS, the setup.py script that works with the C++ file is as follows:<br/><br/>
 ```python
 # File name : setup_macos.py
 
@@ -186,7 +192,7 @@ setup(
             "extension_cpp",
             ["pytorch_c_ext.cpp"],
             extra_compile_args={
-                "cxx": ["-O3", "-ltbb", "-Wall"]
+                "cxx": ["-O3", "-ltbb"]
             },
             extra_link_args=["-ltbb"],
             include_dirs=[
@@ -204,7 +210,7 @@ setup(
 )
 ```
 To build the C++ files in Ubuntu using setup.py, we can run the following command to build wheel files (similar command for MacOS too): `python3 setup_ubuntu.py bdist_wheel`<br/><br/>
-This will create the wheel file with the package name and version inside the `dist` folder. To install the wheel file run pip install as follows: `python3 -m pip install dist/*.whl`<br/><br/>
+This will create the wheel file with the package name and version inside the `dist` folder. To install the wheel file run pip install command as follows: `python3 -m pip install dist/*.whl`<br/><br/>
 This will install the python package in the site-packages folder. Once installed, you can use it in your Python code by importing `extension_cpp`. Following example shows how to use the above custom softmax operator.<br/><br/>
 ```python
 # File name : mytest.py
@@ -230,6 +236,8 @@ b2 = extension_cpp.mysoftmax_cpu(a_cpu)
 end = time.time()*1000
 print("Custom CPU Forward Pass Duration = ", end-start)
 print("Custom CPU Forward Pass Output\n", b2)
+
+assert torch.allclose(b1, b2), "Results are not same"
 ```
 You can compare the outputs and the run-times with the built-in softmax vs the custom softmax operator. On my MacOS M4 ARM chip, I get the following performance numbers with a random matrix of shape 1000x1024.<br/><br/>
 ```
@@ -254,6 +262,7 @@ So far we have only implemented a custom softmax version for the CPU, let's buil
 
 #define BLOCK_WIDTH_PER_DIM 32
 
+// Custom atomicMax operation for floating point numbers
 __device__ __forceinline__ float atomicMaxF32(float *address, float val) {
     int ret = __float_as_int(*address);
     while(val > __int_as_float(ret))
@@ -317,7 +326,7 @@ void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, 
     }
 }
 ```
-We launch a 2D grid of threads and blocks where each block has 32 threads along x-dim and 32 threads along the y-dim (because maximum number of threads per block can be 1024). We launch only 1 block along the x-dim i.e. columns because we need to compute the maximum value and the summation along columns and having multiple blocks will require block synchronization if we are using shared memory to store the maximum and summation values. In the event we do not use shared memory but global memory for storing the maximum and summations, we can launch multiple blocks along the x-dim too.<br/><br/>
+We launch a CUDA kernel with a 2D grid of threads and blocks where each block has 32 threads along x-dim and 32 threads along the y-dim (because maximum number of threads per block can be 1024). We launch only 1 block along the x-dim i.e. columns because we need to compute the maximum value and the summation along columns and having multiple blocks will require block synchronization if we are using shared memory to store the maximum and summation values. In the event we do not use shared memory but global memory for storing the maximum and summations, we can launch multiple blocks along the x-dim too.<br/><br/>
 Since a block has 32 threads along x-dim, thus for `m` columns in the input matrix, each thread is responsbile for `ceil(m/32)` number of elements. The maximum and summation values are computed in shared memory to avoid global memory latencies. <br/><br/>
 Notice that we are defining `atomicMaxF32` because in CUDA currently there is no `atomicMax` function for float32 data types and we need to explicitly implement it using `atomicCAS`.<br/><br/>
 We update our C++ file to include the function declaration for our function `softmax_cuda_launcher` and as well define the torch C++ frontend for interacting with the CUDA launcher. Another modification needed is to update the PYBIND11 module to include the CUDA version of the softmax.<br/><br/>
@@ -328,6 +337,7 @@ void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, 
 
 namespace extension_cpp {
 	torch::Tensor softmax_gpu(const torch::Tensor &a) {
+		// Input valiidation
         TORCH_CHECK(a.device().is_cuda(), "Input tensor a must be a CUDA tensor");
         TORCH_CHECK(a.is_contiguous(), "Input tensor a must be contiguous");
         TORCH_CHECK(a.dtype() == torch::kFloat32, "Input tensor a must be float32");
@@ -375,7 +385,7 @@ setup(
             ["pytorch_c_ext.cpp", "mysoftmax.cu"],
             extra_compile_args={
                 "nvcc": ["-arch=sm_89", "-Xcompiler=-O3"],
-                "cxx": ["-O3", "-ltbb", "-Wall"]
+                "cxx": ["-O3", "-ltbb"]
             },
             extra_link_args=["-ltbb"],
             include_dirs=[
@@ -392,7 +402,7 @@ setup(
     cmdclass={"build_ext": BuildExtension}
 )
 ```
-Notice the `nvcc` parameters in `extra_compile_args`. The flag `-arch=sm_89` is required when we want the CUDA version and the NVIDIA firmware version are not compatible and we need to compile CUDA using hardware specific architecture. The current GPU architecture for the Ubuntu 22.04 server is `8.9` and thus we need to use the flag `-arch=sm_89`. To get the hardware architecture for the GPU use the command `nvidia-smi`.<br/><br/>
+Notice the `nvcc` parameters in `extra_compile_args`. The flag `-arch=sm_89` is required when the CUDA version and the NVIDIA firmware version are not compatible and we need to compile our CUDA code using hardware specific architecture. The current GPU architecture for my Ubuntu 22.04 server is `8.9` and thus we need to use the flag `-arch=sm_89`. To get the correct hardware architecture for the GPU use the command `nvidia-smi`.<br/><br/>
 To build the wheel and install it, follow the same instructions mentioned above.<br/><br/>
 To test the performance and output of the GPU version of the custom softmax implementation, we update the `mytest.py` script as follows:<br/><br/>
 ```python
@@ -429,6 +439,9 @@ b3 = extension_cpp.mysoftmax_gpu(a_cpu)
 end = time.time()*1000
 print("Custom GPU Forward Pass Duration = ", end-start)
 print("Custom GPU Forward Pass Output\n", b3)
+
+assert torch.allclose(b1, b2), "b1 and b2 are not same"
+assert torch.allclose(b1, b3), "b1 and b3 are not same"
 ```
 The performance numbers looks like the one below:<br/><br/>
 ```
@@ -457,6 +470,8 @@ Note that the above RHS expression can be written as a dot product between 2 vec
 ![grad_dot](/docs/assets/grad_dot.png)<br/><br/>
 The C++ code for computing the gradient of the Loss w.r.t. softmax inputs assuming the gradient of loss w.r.t. to next layer inputs are available as another tensor `grad` is as follows. The tensor `fwd` is the output tensor from softmax forward pass because we saw that the gradient of softmax output w.r.t. softmax input can be expressed solely using softmax output terms:<br/><br/>
 ```cpp
+// File name : pytorch_c_ext.cpp
+
 namespace extension_cpp {
 	void softmax_grad(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
         tbb::parallel_for(
@@ -512,6 +527,8 @@ namespace extension_cpp {
 ```
 We do not need to modify the setup.py script but we can update the version number and do a pip install using the latest version of the package. Similar to the backward pass operation for CPU, we can also write similar backward pass operation for the GPU in the file `mysoftmax.cu` as follows:<br/><br/>
 ```cpp
+// File name : mysoftmax.cu
+
 __global__
 void softmax_cuda_grad(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
     unsigned long row = blockIdx.y*blockDim.y + threadIdx.y;
@@ -543,8 +560,10 @@ void softmax_cuda_grad_launcher(const float *grad, const float *fwd, float *out,
     }
 }
 ```
+Nothing very fancy at this moment, but definitely one can optimze the CUDA kernel above by using `shared memories` or `thread coarsening`.<br/><br/>
 This also requires updating our C++ file to include the declaration of the function `softmax_cuda_grad_launcher` and defining a torch C++ frontend and the corresponding PYBIND11 module as follows:<br/><br/>
 ```cpp
+// File name : pytorch_c_ext.cpp
 
 void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, const unsigned long m);
 void softmax_cuda_grad_launcher(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m);
@@ -587,14 +606,18 @@ namespace extension_cpp {
 ```
 Once we define the C++ and CUDA functions for forward and backward passes and build the python package, we need to wrap the forward and backward passes with `torch.autograd.Function` and `torch.nn.Module` as follows:<br/><br/>
 ```python
+# File name : mytest.py
+
 import torch
 import extension_cpp
 import time
 
+# class definition for custom CPU softmax implementation
 class MySoftmaxFunctionCPU(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input:torch.Tensor):
         output:torch.Tensor = extension_cpp.mysoftmax_cpu(input)
+		# save the output as the output will be used during backward pass as input
         ctx.save_for_backward(output)
         return output
 
@@ -610,11 +633,12 @@ class MySoftmaxCPU(torch.nn.Module):
     def forward(self, input):
         return MySoftmaxFunctionCPU.apply(input)
     
-
+# class definition for custom GPU softmax implementation
 class MySoftmaxFunctionGPU(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input:torch.Tensor):
         output:torch.Tensor = extension_cpp.mysoftmax_gpu(input)
+		# save the output as the output will be used during backward pass as input
         ctx.save_for_backward(output)
         return output
 
@@ -631,8 +655,10 @@ class MySoftmaxGPU(torch.nn.Module):
         return MySoftmaxFunctionGPU.apply(input)
     
 ```
-Then we can run and test all the 4 different custom functions as follows. For backward pass we are assuming a simple loss function which is the `sum of the squares` of the softmax outputs. Using just the `sum` is not a good idea because the loss would be a constant and the gradients would be 0:<br/><br/>
+Then we can run and test all the 4 different custom functions as follows. For backward pass we are assuming a simple loss function which is the `sum of the squares` of the softmax outputs. Using just the `sum` is not a good idea because the loss would be a constant and the gradients would be 0. In most practical applications we generally use the categorical crossentropy loss on top of softmax:<br/><br/>
 ```python
+# File name : mytest.py
+
 a_cpu = torch.randn(1000, 1024, dtype=torch.float32, requires_grad=True, device='cpu')
 
 start = time.time()*1000
@@ -695,4 +721,4 @@ Custom GPU Forward  Pass Duration =  0.44140625
 Custom GPU Backward Pass Duration =  57.375244140625
 ```
 Interestingly the backward pass performance with custom CPU implementation is faster than the in-built torch backward pass implementation. The GPU implementations are faster for both forward and backward passes.<br/><br/>
-Implementing custom operators is useful for situations where expressing some operation as a composition of available operations can be inefficient and writing your own custom fused kernels or composition is much faster. 
+Implementing custom operators is useful for situations where expressing some operation as a composition of available operations can be inefficient and writing your own custom fused kernels or composition is much faster such as fused multiply and add.
