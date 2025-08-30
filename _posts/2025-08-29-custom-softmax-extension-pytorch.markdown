@@ -211,8 +211,10 @@ import torch
 import extension_cpp
 import time
 
+# Create random tensor
 a_cpu = torch.randn(1000, 1024, dtype=torch.float32, requires_grad=False, device='cpu')
 
+# Check results using in-built softmax in PyTorch
 start = time.time()*1000
 b1 = torch.nn.functional.softmax(a_cpu, dim=-1, dtype=torch.float32)
 end = time.time()*1000
@@ -220,6 +222,7 @@ print("Torch CPU Forward Pass Duration = ", end-start)
 print("Torch CPU Forward Pass Output\n", b1)
 print()
 
+# Check results using custom softmax
 start = time.time()*1000
 b2 = extension_cpp.mysoftmax_cpu(a_cpu)
 end = time.time()*1000
@@ -314,16 +317,10 @@ void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, 
 ```
 We launch a 2D grid of threads and blocks where each block has 32 threads along x-dim and 32 threads along the y-dim (because maximum number of threads per block can be 1024). We launch only 1 block along the x-dim i.e. columns because we need to compute the maximum value and the summation along columns and having multiple blocks will require block synchronization if we are using shared memory to store the maximum and summation values. In the event we do not use shared memory but global memory for storing the maximum and summations, we can launch multiple blocks along the x-dim too.<br/><br/>
 Since a block has 32 threads along x-dim, thus for `m` columns in the input matrix, each thread is responsbile for `ceil(m/32)` number of elements. The maximum and summation values are computed in shared memory to avoid global memory latencies. <br/><br/>
+Notice that we are defining `atomicMaxF32` because in CUDA currently there is no `atomicMax` function for float32 data types and we need to explicitly implement it using `atomicCAS`.<br/><br/>
 We update our C++ file to include the function declaration for our function `softmax_cuda_launcher` and as well define the torch C++ frontend for interacting with the CUDA launcher. Another modification needed is to update the PYBIND11 module to include the CUDA version of the softmax.<br/><br/>
 ```cpp
 // File name : pytorch_c_ext.cpp
-
-#include <Python.h>
-#include <torch/extension.h>
-#include <tbb/tbb.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <iostream>
 
 void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, const unsigned long m);
 
@@ -389,9 +386,54 @@ setup(
         )
     ],
     install_requires=["torch"],
-    description="Custom CUDA softmax extension",
+    description="Custom C++ and CUDA softmax extension",
     cmdclass={"build_ext": BuildExtension}
 )
 ```
+Notice the `nvcc` parameters in `extra_compile_args`. The flag `-arch=sm_89` is required when we want the CUDA version and the NVIDIA firmware version are not compatible and we need to compile CUDA using hardware specific architecture. The current GPU architecture for the Ubuntu 22.04 server is `8.9` and thus we need to use the flag `-arch=sm_89`. To get the hardware architecture for the GPU use the command `nvidia-smi`.<br/><br/>
+To build the wheel and install it, follow the same instructions mentioned above.<br/><br/>
+To test the performance and output of the GPU version of the custom softmax implementation, we update the `mytest.py` script as follows:<br/><br/>
+```python
+# File name : mytest.py
 
+import torch
+import extension_cpp
+import time
+
+# Create random tensor
+a_cpu = torch.randn(1000, 1024, dtype=torch.float32, requires_grad=False, device='cpu')
+
+# Check results using in-built softmax in PyTorch
+start = time.time()*1000
+b1 = torch.nn.functional.softmax(a_cpu, dim=-1, dtype=torch.float32)
+end = time.time()*1000
+print("Torch CPU Forward Pass Duration = ", end-start)
+print("Torch CPU Forward Pass Output\n", b1)
+print()
+
+# Check results using custom softmax
+start = time.time()*1000
+b2 = extension_cpp.mysoftmax_cpu(a_cpu)
+end = time.time()*1000
+print("Custom CPU Forward Pass Duration = ", end-start)
+print("Custom CPU Forward Pass Output\n", b2)
+
+# Copy the tensor to GPU
+a_gpu = a_cpu.to(device='cuda:0')
+
+# Check results using custom softmax on GPU
+start = time.time()*1000
+b3 = extension_cpp.mysoftmax_gpu(a_cpu)
+end = time.time()*1000
+print("Custom GPU Forward Pass Duration = ", end-start)
+print("Custom GPU Forward Pass Output\n", b3)
+```
+The performance numbers looks like the one below:<br/><br/>
+```
+Torch  CPU Forward Pass Duration =  1.87451171875
+Custom CPU Forward Pass Duration =  6.12963867187
+Custom GPU Forward Pass Duration =  0.44140625
+```
+Clearly the GPU version of our softmax outperforms the CPU versions for both in-built and custom CPU implementations.<br/><br/>
+So far what we have implemented are the custom versions for the softmax function for both CPU and GPU. But this will not be sufficient to use the functions in an actual deep learning model because the implementations above are for forward pass only and to train a neural network we also need the backward pass because the loss functions are calculated on top of the softmax outputs and thus the gradient needs to flow through it.<br/><br/>
 
