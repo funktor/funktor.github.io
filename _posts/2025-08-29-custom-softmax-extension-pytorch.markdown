@@ -14,7 +14,9 @@ print(torch.nn.functional.softmax(a, dim=-1))
 ```
 We created a 3x4 matrix with random numbers between 0 and 1 and then used softmax operator to turn each row into probabilities. Note the dim=-1 argument which says that the softmax should be computed w.r.t. the last dimension i.e. across columns in this case.<br/><br/> 
 For an input array `[x0, x1, ... xn-1]` , the softmax values are computed as follows:<br/><br/>
+![softmax1](/docs/assets/softmax1.png)<br/><br/>
 But the problem with the above formulation is that when the values `xi` are high as say 500, `exp(xi)` can cause overflow and return `Infinity` which will cause the softmax calculation to fail. One possible solution is to multiply both numerator and denominator by the constant `exp(-max(x))`. Then the updated formula is:<br/><br/>
+![softmax2](/docs/assets/softmax2.png)<br/><br/>
 Now since we know how softmax should be computed, assuming our input tensors are 2D in shape, let's write the following C++ function to calculate the softmax. For each row compute the maximum values and then calculate the sum of all the exponentials (denominator) per row. Since each row can be computed in parallel, we will leverage multi-threading for this. One can use either `OpenMP`, or `TBB` (Thread Building Blocks) for this or explicit thread management. Here I am using TBB. <br/><br/>
 ```cpp
 // File name : pytorch_c_ext.cpp
@@ -441,9 +443,18 @@ Implementing a custom backward pass for the softmax is not difficult if you unde
 	2. How gradient flows backwards in PyTorch.<br/><br/>
 In short the way `autograd` works is as follows:<br/><br/>
 During the forward pass through any layer or function `H(k)` with inputs `H(k)_I` and outputs `H(k)_O`, one can cache either the inputs or outputs or both for re-using during the backward pass. During backward pass through layer `H(k)`, we need to compute the derivative of the loss L w.r.t. the inputs `H(k)_I`. But note that the input to the next layer of `H(k)` i.e. `H(k+1)` is the output `H(k)_O` i.e. `H(k+1)_I = H(k)_O`<br/><br/>
+![grad1](/docs/assets/grad1.png)<br/><br/>
 Thus to compute the derivative `dL/dH(k)_I` we only need to compute the derivatives `dH(k)_O/dH(k)_I` because the other derivative `dL/dH(k+1)_I` is already computed since we are computing the gradients backwards from layer H(k+1) to layer H(k) and so on.<br/><br/>
 In Pytorch, while writing the backward pass for an operator, it is assumed that the derivative `dL/dH(k+1)_I` is available as input and is called the `grad` in the inputs. The only task is to compute `dH(k)_O/dH(k)_I`.<br/><br/>
 Coming to the softmax operator, each output `yi` is expressed in terms of `[x0, x1, ..., xn-1]` as shown below:<br/><br/>
+![softmax2](/docs/assets/softmax2.png)<br/><br/>
+The derivatives `dyi/dxj` are computed as follows:<br/><br/>
+![derivative1](/docs/assets/derivative1.png)<br/><br/>
+![derivative2](/docs/assets/derivative2.png)<br/><br/>
+Once we obtain the derivatives, computing the derivative of loss w.r.t. `xj` works as follows:<br/><br/>
+![grad2](/docs/assets/grad2.png)<br/><br/>
+Note that the above RHS expression can be written as a dot product between 2 vectors as follows:<br/><br/>
+![grad_dot](/docs/assets/grad_dot.png)<br/><br/>
 The C++ code for computing the gradient of the Loss w.r.t. softmax inputs assuming the gradient of loss w.r.t. to next layer inputs are available as another tensor `grad` is as follows. The tensor `fwd` is the output tensor from softmax forward pass because we saw that the gradient of softmax output w.r.t. softmax input can be expressed solely using softmax output terms:<br/><br/>
 ```cpp
 namespace extension_cpp {
