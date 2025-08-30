@@ -437,7 +437,11 @@ Custom GPU Forward Pass Duration =  0.44140625
 Clearly the GPU version of our softmax outperforms the CPU versions for both in-built and custom CPU implementations.<br/><br/>
 So far what we have implemented are the custom versions for the softmax function for both CPU and GPU. But this will not be sufficient to use the functions in an actual deep learning model because the implementations above are for forward pass only and to train a neural network we also need the backward pass because the loss functions are calculated on top of the softmax outputs and thus the gradient needs to flow through it.<br/><br/>
 Implementing a custom backward pass for the softmax is not difficult if you understand two things:<br/><br/>
-1. How the derivatives of the softmax outputs looks like w.r.t. the inputs.
-2. How gradient flows backwards in PyTorch.
+	1. How the derivatives of the softmax outputs looks like w.r.t. the inputs.<br/>
+	2. How gradient flows backwards in PyTorch.<br/><br/>
+In short the way `autograd` works is as follows:<br/><br/>
+During the forward pass through any layer or function `H(k)` with inputs `H(k)_I` and outputs `H(k)_O`, one can cache either the inputs or outputs or both for re-using during the backward pass. During backward pass through layer `H(k)`, we need to compute the derivative of the loss L w.r.t. the inputs `H(k)_I`. But note that the input to the next layer of H i.e. `H(k+1)` is the output `H(k)_O` i.e. `H(k+1)_I = H(k)_O`<br/><br/>
+Thus to compute the derivative `dL/dH(k)_I` we only need to compute the derivatives `dH(k)_O/dH(k)_I` because the other derivative `dL/dH(k+1)_I` is already computed since we are computing the gradients backwards from layer H(k+1) to layer H(k) and so on.<br/><br/>
+In Pytorch, while writing the backward pass for an operator, it is assumed that the derivative `dL/dH(k+1)_I` is available as input and is called the `grad` in the inputs. The only task is to compute `dH(k)_O/dH(k)_I`.<br/><br/>
 
 
