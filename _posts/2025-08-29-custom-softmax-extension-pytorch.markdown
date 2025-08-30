@@ -440,8 +440,248 @@ Implementing a custom backward pass for the softmax is not difficult if you unde
 	1. How the derivatives of the softmax outputs looks like w.r.t. the inputs.<br/>
 	2. How gradient flows backwards in PyTorch.<br/><br/>
 In short the way `autograd` works is as follows:<br/><br/>
-During the forward pass through any layer or function `H(k)` with inputs `H(k)_I` and outputs `H(k)_O`, one can cache either the inputs or outputs or both for re-using during the backward pass. During backward pass through layer `H(k)`, we need to compute the derivative of the loss L w.r.t. the inputs `H(k)_I`. But note that the input to the next layer of H i.e. `H(k+1)` is the output `H(k)_O` i.e. `H(k+1)_I = H(k)_O`<br/><br/>
+During the forward pass through any layer or function `H(k)` with inputs `H(k)_I` and outputs `H(k)_O`, one can cache either the inputs or outputs or both for re-using during the backward pass. During backward pass through layer `H(k)`, we need to compute the derivative of the loss L w.r.t. the inputs `H(k)_I`. But note that the input to the next layer of `H(k)` i.e. `H(k+1)` is the output `H(k)_O` i.e. `H(k+1)_I = H(k)_O`<br/><br/>
 Thus to compute the derivative `dL/dH(k)_I` we only need to compute the derivatives `dH(k)_O/dH(k)_I` because the other derivative `dL/dH(k+1)_I` is already computed since we are computing the gradients backwards from layer H(k+1) to layer H(k) and so on.<br/><br/>
 In Pytorch, while writing the backward pass for an operator, it is assumed that the derivative `dL/dH(k+1)_I` is available as input and is called the `grad` in the inputs. The only task is to compute `dH(k)_O/dH(k)_I`.<br/><br/>
+Coming to the softmax operator, each output `yi` is expressed in terms of `[x0, x1, ..., xn-1]` as shown below:<br/><br/>
+The C++ code for computing the gradient of the Loss w.r.t. softmax inputs assuming the gradient of loss w.r.t. to next layer inputs are available as another tensor `grad` is as follows. The tensor `fwd` is the output tensor from softmax forward pass because we saw that the gradient of softmax output w.r.t. softmax input can be expressed solely using softmax output terms:<br/><br/>
+```cpp
+namespace extension_cpp {
+	void softmax_grad(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, n), 
+            [&fwd, &out, &grad, m](tbb::blocked_range<size_t> r) {
+                for (auto i = r.begin(); i < r.end(); i++) {
+                    for (unsigned int j = 0; j < m; j++) {
+                        float s = 0.0;
+                        for (unsigned int k = 0; k < m; k++) {
+                            if (j == k) s += grad[i*m + k]*fwd[i*m + j]*(1.0 - fwd[i*m + j]);
+                            else s += -grad[i*m + k]*fwd[i*m + k]*fwd[i*m + j];
+                        }
+                        out[i*m + j] = s;
+                    }
+                }
+            }
+        );
+    }
 
+	torch::Tensor softmax_cpu_grad(const torch::Tensor &grad, const torch::Tensor &fwd_out) {
+        TORCH_CHECK(fwd_out.device().is_cpu(), "Input tensor fwd_out must be a CPU tensor");
+        TORCH_CHECK(grad.device().is_cpu(), "Input tensor grad must be a CPU tensor");
 
+        TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
+        TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
+
+        TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
+        TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
+
+        TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
+    
+        torch::Tensor c = torch::empty_like(grad);
+        unsigned long n = grad.size(0);
+        unsigned long m = grad.size(1);
+    
+        softmax_grad(
+            grad.data_ptr<float>(),
+            fwd_out.data_ptr<float>(),
+            c.data_ptr<float>(),
+            n, 
+            m
+        );
+    
+        return c;
+    }
+
+	PYBIND11_MODULE(extension_cpp, m) {
+        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+        m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
+        m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
+    }
+}
+```
+We do not need to modify the setup.py script but we can update the version number and do a pip install using the latest version of the package. Similar to the backward pass operation for CPU, we can also write similar backward pass operation for the GPU in the file `mysoftmax.cu` as follows:<br/><br/>
+```cpp
+__global__
+void softmax_cuda_grad(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
+    unsigned long row = blockIdx.y*blockDim.y + threadIdx.y;
+    unsigned long col = blockIdx.x*blockDim.x + threadIdx.x;
+
+    if (row < n && col < m) {
+        float p = fwd[row*m + col];
+        float s = 0.0f;
+
+        for (unsigned long j = 0; j < m; j++) {
+            if (j == col) s += grad[row*m + j]*p*(1.0-p);
+            else s += -grad[row*m + j]*fwd[row*m + j]*p;
+        }
+
+        out[row*m + col] = s;
+    }
+}
+
+void softmax_cuda_grad_launcher(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
+    dim3 bd(BLOCK_WIDTH_PER_DIM, BLOCK_WIDTH_PER_DIM, 1);
+    dim3 gd((m+BLOCK_WIDTH_PER_DIM-1)/BLOCK_WIDTH_PER_DIM, (n+BLOCK_WIDTH_PER_DIM-1)/BLOCK_WIDTH_PER_DIM, 1);
+
+    softmax_cuda_grad<<<gd, bd>>>(grad, fwd, out, n, m);
+    cudaDeviceSynchronize();
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(err));
+    }
+}
+```
+This also requires updating our C++ file to include the declaration of the function `softmax_cuda_grad_launcher` and defining a torch C++ frontend and the corresponding PYBIND11 module as follows:<br/><br/>
+```cpp
+
+void softmax_cuda_launcher(const float *inp, float *out, const unsigned long n, const unsigned long m);
+void softmax_cuda_grad_launcher(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m);
+
+namespace extension_cpp {
+	torch::Tensor softmax_gpu_grad(const torch::Tensor &grad, const torch::Tensor &fwd_out) {
+        TORCH_CHECK(fwd_out.device().is_cuda(), "Input tensor fwd_out must be a CUDA tensor");
+        TORCH_CHECK(grad.device().is_cuda(), "Input tensor grad must be a CUDA tensor");
+
+        TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
+        TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
+
+        TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
+        TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
+
+        TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
+    
+        torch::Tensor c = torch::empty_like(grad);
+        unsigned long n = grad.size(0);
+        unsigned long m = grad.size(1);
+    
+        softmax_cuda_grad_launcher(
+            grad.data_ptr<float>(),
+            fwd_out.data_ptr<float>(),
+            c.data_ptr<float>(),
+            n, 
+            m
+        );
+    
+        return c;
+    }
+
+    PYBIND11_MODULE(extension_cpp, m) {
+        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+        m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
+        m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
+        m.def("mysoftmax_gpu_grad", &softmax_gpu_grad, "Softmax GPU Backward");
+    }
+}
+```
+Once we define the C++ and CUDA functions for forward and backward passes and build the python package, we need to wrap the forward and backward passes with `torch.autograd.Function` and `torch.nn.Module` as follows:<br/><br/>
+```python
+import torch
+import extension_cpp
+import time
+
+class MySoftmaxFunctionCPU(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input:torch.Tensor):
+        output:torch.Tensor = extension_cpp.mysoftmax_cpu(input)
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad:torch.Tensor):
+        output = extension_cpp.mysoftmax_cpu_grad(grad.contiguous(), *ctx.saved_tensors)
+        return output
+    
+class MySoftmaxCPU(torch.nn.Module):
+    def __init__(self):
+        super(MySoftmaxCPU, self).__init__()
+
+    def forward(self, input):
+        return MySoftmaxFunctionCPU.apply(input)
+    
+
+class MySoftmaxFunctionGPU(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input:torch.Tensor):
+        output:torch.Tensor = extension_cpp.mysoftmax_gpu(input)
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad:torch.Tensor):
+        output = extension_cpp.mysoftmax_gpu_grad(grad.contiguous(), *ctx.saved_tensors)    
+        return output
+    
+class MySoftmaxGPU(torch.nn.Module):
+    def __init__(self):
+        super(MySoftmaxGPU, self).__init__()
+
+    def forward(self, input):
+        return MySoftmaxFunctionGPU.apply(input)
+    
+```
+Then we can run and test all the 4 different custom functions as follows. For backward pass we are assuming a simple loss function which is the `sum of the squares` of the softmax outputs. Using just the `sum` is not a good idea because the loss would be a constant and the gradients would be 0:<br/><br/>
+```python
+a_cpu = torch.randn(1000, 1024, dtype=torch.float32, requires_grad=True, device='cpu')
+
+start = time.time()*1000
+b1 = torch.nn.functional.softmax(a_cpu, dim=-1, dtype=torch.float32)
+end = time.time()*1000
+print("Torch CPU Forward Pass Duration = ", end-start)
+print("Torch CPU Forward Pass Output\n", b1)
+print()
+
+start = time.time()*1000
+(b1**2).sum().backward()
+end = time.time()*1000
+print("Torch CPU Backward Pass Duration = ", end-start)
+print("Torch CPU Backward Pass Output\n", a_cpu.grad)
+print()
+
+b_cpu = a_cpu.clone()
+b_cpu.retain_grad()
+
+start = time.time()*1000
+h = MySoftmaxCPU()
+b2 = h(b_cpu)
+end = time.time()*1000
+print("Custom CPU Forward Pass Duration = ", end-start)
+print("Custom CPU Forward Pass Output\n", b2)
+print()
+
+start = time.time()*1000
+(b2**2).sum().backward()
+end = time.time()*1000
+print("Custom CPU Backward Pass Duration = ", end-start)
+print("Custom CPU Backward Pass Output\n", b_cpu.grad)
+print()
+
+a_gpu = a_cpu.to(device='cuda:0')
+a_gpu.retain_grad()
+
+start = time.time()*1000
+h = MySoftmaxGPU()
+b3 = h(a_gpu)
+end = time.time()*1000
+print("Custom GPU Forward Pass Duration = ", end-start)
+print("Custom GPU Forward Pass Output\n", b3)
+print()
+
+start = time.time()*1000
+(b3**2).sum().backward()
+end = time.time()*1000
+print("Custom GPU Backward Pass Duration = ", end-start)
+print("Custom GPU Backward Pass Output\n", a_gpu.grad)
+print()
+```
+The performance numbers are as follows:
+```
+Torch  CPU Forward  Pass Duration =  1.87451171875
+Torch  CPU Backward Pass Duration =  101.746826171875
+Custom CPU Forward  Pass Duration =  6.12963867187
+Custom CPU Backward Pass Duration =  86.082763671875
+Custom GPU Forward  Pass Duration =  0.44140625
+Custom GPU Backward Pass Duration =  57.375244140625
+```
+Interestingly the backward pass performance with custom CPU implementation is faster than the in-built torch backward pass implementation. The GPU implementations are faster for both forward and backward passes.<br/><br/>
+Implementing custom operators is useful for situations where expressing some operation as a composition of available operations can be inefficient and writing your own custom fused kernels or composition is much faster. 
