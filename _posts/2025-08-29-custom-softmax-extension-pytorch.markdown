@@ -33,7 +33,7 @@ namespace extension_cpp {
 	void softmax(const float *inp, float *out, const unsigned long n, const unsigned long m) {
 		float *max_per_row = new float[n];
 		float *sum_per_row = new float[n];
-	
+		
 		// Initialize max_per_row and sum_per_row
 		tbb::parallel_for(
 			tbb::blocked_range<size_t>(0, n), 
@@ -43,7 +43,7 @@ namespace extension_cpp {
 				sum_per_row[i] = 0.0;
 			}
 		});
-	
+		
 		// Calculate max_per_row
 		tbb::parallel_for(
 			tbb::blocked_range<size_t>(0, n), 
@@ -54,7 +54,7 @@ namespace extension_cpp {
 				}
 			}
 		});
-	
+		
 		// Calculate sum_per_row
 		tbb::parallel_for(
 			tbb::blocked_range<size_t>(0, n), 
@@ -65,7 +65,7 @@ namespace extension_cpp {
 				}
 			}
 		});
-	
+		
 		// Calculate softmax per row
 		tbb::parallel_for(
 			tbb::blocked_range<size_t>(0, n), 
@@ -86,24 +86,24 @@ But note that the above function cannot be directly used from PyTorch as the inp
 namespace extension_cpp {
 	torch::Tensor softmax_cpu(const torch::Tensor &a) {
 		// Input valiidation
-        TORCH_CHECK(a.device().is_cpu(), "Input tensor a must be a CPU tensor");
-        TORCH_CHECK(a.is_contiguous(), "Input tensor a must be contiguous");
-        TORCH_CHECK(a.dtype() == torch::kFloat32, "Input tensor a must be float32");
-
+		TORCH_CHECK(a.device().is_cpu(), "Input tensor a must be a CPU tensor");
+		TORCH_CHECK(a.is_contiguous(), "Input tensor a must be contiguous");
+		TORCH_CHECK(a.dtype() == torch::kFloat32, "Input tensor a must be float32");
+		
 		// Output Tensor
-        torch::Tensor c = torch::empty_like(a);
-        unsigned long n = a.size(0);
-        unsigned long m = a.size(1);
-
-        softmax(
-            a.data_ptr<float>(),
-            c.data_ptr<float>(),
-            n, 
-            m
-        );
-    
-        return c;
-    }
+		torch::Tensor c = torch::empty_like(a);
+		unsigned long n = a.size(0);
+		unsigned long m = a.size(1);
+		
+		softmax(
+			a.data_ptr<float>(),
+			c.data_ptr<float>(),
+			n, 
+			m
+		);
+		
+		return c;
+	}
 }
 ```
 `Tensor.data_ptr<float>()` converts a Tensor into a pointer of floats.<br/><br/>
@@ -113,8 +113,8 @@ Next we need to export the above C++ function so that it can be called from Pyth
 
 namespace extension_cpp {
 	PYBIND11_MODULE(extension_cpp, m) {
-        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
-    }
+		m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+	}
 }
 ```
 Notice the 1st three C++ header files included above `Python.h`, `torch/extension.h` and `tbb/tbb.h`. These files may not be automatically included in your path. To include the file `Python.h` requires you to specify your Python installation's `include` directory. Also it requires `libpython-dev` to be installed. This path can be found by running the following commands on the Python shell.<br/><br/>
