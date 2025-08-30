@@ -436,4 +436,8 @@ Custom GPU Forward Pass Duration =  0.44140625
 ```
 Clearly the GPU version of our softmax outperforms the CPU versions for both in-built and custom CPU implementations.<br/><br/>
 So far what we have implemented are the custom versions for the softmax function for both CPU and GPU. But this will not be sufficient to use the functions in an actual deep learning model because the implementations above are for forward pass only and to train a neural network we also need the backward pass because the loss functions are calculated on top of the softmax outputs and thus the gradient needs to flow through it.<br/><br/>
+Implementing a custom backward pass for the softmax is not difficult if you understand two things:<br/><br/>
+1. How the derivatives of the softmax outputs looks like w.r.t. the inputs.
+2. How gradient flows backwards in PyTorch.
+
 
