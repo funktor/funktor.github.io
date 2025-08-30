@@ -118,12 +118,84 @@ For the `torch/extension.h` file, this requires you to include the libtorch inst
 import torch
 print(torch.__file__)
 ```
-You need to include two different include directories for the `torch/extension.h` file to work. For e.g. in Linux Ubuntu, the following two paths are required to be included:
+You need to include two different include directories for the `torch/extension.h` file to work. For e.g. in Linux Ubuntu running Python 3.10, the following two paths are required to be included:<br/><br/>
 ```
 /opt/python/3.10/lib/python3.10/site-packages/torch/include/torch/csrc/api/include,
 /opt/python/3.10/lib/python3.10/site-packages/torch/include
 ```
-To include `tbb/tbb.h`, you need to first install `tbb`. In MacOS it can be installed via `brew install tbb` and in Linux Ubuntu, it can be installed via `apt-get install libtbb-dev`. In MacOS the installation path is in `/opt/homebrew/opt/tbb/include` whereas in Linux Ubuntu, the installation path is `/usr/include`.
+To include `tbb/tbb.h` (for using multi-threading with TBB), you need to first install `tbb`. In MacOS it can be installed via `brew install tbb` and in Linux Ubuntu, it can be installed via `apt-get install libtbb-dev`. To build the C++ file into binary file and make our softmax functions callable from Python, we need to run setup.py script. Below is an example of setup.py script I am using for running in Linux/Ubuntu:<br/><br/>
+```python
+import torch
+from setuptools import find_packages, setup
+
+from torch.utils.cpp_extension import (
+    CppExtension,
+    BuildExtension,
+)
+
+setup(
+    name="extension_cpp",
+    version="0.0.1",
+    packages=find_packages(),
+    ext_modules=[
+        CppExtension(
+            "extension_cpp",
+            ["pytorch_c_ext.cpp"],
+            extra_compile_args={
+                "cxx": ["-O3", "-ltbb", "-Wall"]
+            },
+            extra_link_args=["-ltbb"],
+            include_dirs=[
+                "/opt/python/3.10/include/python3.10", # for Python.h
+                "/opt/python/3.10/lib/python3.10/site-packages/torch/include/torch/csrc/api/include", # for torch/extension.h
+                "/opt/python/3.10/lib/python3.10/site-packages/torch/include", # for torch/extension.h
+                "/usr/include" # for tbb/tbb.h
+            ],
+            library_dirs=["/usr/lib/x86_64-linux-gnu"]
+        )
+    ],
+    install_requires=["torch"],
+    description="Custom softmax implementation",
+    cmdclass={"build_ext": BuildExtension}
+)
+```
+Notice the `extra_compile_args` and `extra_link_args` in the above script. Also the `include_dirs` contains the include paths for the above mentioned header files. Note that these paths may vary depending on your OS and distribution. For e.g. in my MacOS, the setup.py script that works with the C++ file is:<br/><br/>
+```python
+import torch
+from setuptools import find_packages, setup
+
+from torch.utils.cpp_extension import (
+    CppExtension,
+    BuildExtension,
+)
+
+setup(
+    name="extension_cpp",
+    version="0.0.1",
+    packages=find_packages(),
+    ext_modules=[
+        CppExtension(
+            "extension_cpp",
+            ["pytorch_c_ext.cpp"],
+            extra_compile_args={
+                "cxx": ["-O3", "-ltbb", "-Wall"]
+            },
+            extra_link_args=["-ltbb"],
+            include_dirs=[
+                "/opt/homebrew/opt/python@3.13/Frameworks/Python.framework/Versions/3.13/include/python3.13", # for Python.h
+                "/Users/amondal/recsys/.venv/lib/python3.13/site-packages/torch/include/torch/csrc/api/include", # for torch/extension.h
+                "/Users/amondal/recsys/.venv/lib/python3.13/site-packages/torch/include", # for torch/extension.h
+                "/opt/homebrew/opt/tbb/include" # for tbb/tbb.h
+            ],
+            library_dirs=["/opt/homebrew/opt/tbb/lib"]
+        )
+    ],
+    install_requires=["torch"],
+    description="Custom softmax implementation",
+    cmdclass={"build_ext": BuildExtension}
+)
+```
+
 
 
 
