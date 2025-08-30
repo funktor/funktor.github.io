@@ -357,9 +357,9 @@ namespace extension_cpp {
     }
 
 	PYBIND11_MODULE(extension_cpp, m) {
-        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
-        m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
-    }
+		m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+		m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
+	}
 }
 ```
 Next we also need to modify the `setup.py` script to include CUDA specific configurations. The following is the updated `setup_ubuntu.py` script from above.<br/><br/>
@@ -474,55 +474,55 @@ The C++ code for computing the gradient of the Loss w.r.t. softmax inputs assumi
 
 namespace extension_cpp {
 	void softmax_grad(const float *grad, const float *fwd, float *out, const unsigned long n, const unsigned long m) {
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, n), 
-            [&fwd, &out, &grad, m](tbb::blocked_range<size_t> r) {
-                for (auto i = r.begin(); i < r.end(); i++) {
-                    for (unsigned int j = 0; j < m; j++) {
-                        float s = 0.0;
-                        for (unsigned int k = 0; k < m; k++) {
-                            if (j == k) s += grad[i*m + k]*fwd[i*m + j]*(1.0 - fwd[i*m + j]);
-                            else s += -grad[i*m + k]*fwd[i*m + k]*fwd[i*m + j];
-                        }
-                        out[i*m + j] = s;
-                    }
-                }
-            }
-        );
-    }
+		tbb::parallel_for(
+			tbb::blocked_range<size_t>(0, n), 
+			[&fwd, &out, &grad, m](tbb::blocked_range<size_t> r) {
+				for (auto i = r.begin(); i < r.end(); i++) {
+					for (unsigned int j = 0; j < m; j++) {
+						float s = 0.0;
+						for (unsigned int k = 0; k < m; k++) {
+							if (j == k) s += grad[i*m + k]*fwd[i*m + j]*(1.0 - fwd[i*m + j]);
+							else s += -grad[i*m + k]*fwd[i*m + k]*fwd[i*m + j];
+						}
+						out[i*m + j] = s;
+					}
+				}
+			}
+		);
+	}
 
 	torch::Tensor softmax_cpu_grad(const torch::Tensor &grad, const torch::Tensor &fwd_out) {
-        TORCH_CHECK(fwd_out.device().is_cpu(), "Input tensor fwd_out must be a CPU tensor");
-        TORCH_CHECK(grad.device().is_cpu(), "Input tensor grad must be a CPU tensor");
-
-        TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
-        TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
-
-        TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
-        TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
-
-        TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
-    
-        torch::Tensor c = torch::empty_like(grad);
-        unsigned long n = grad.size(0);
-        unsigned long m = grad.size(1);
-    
-        softmax_grad(
-            grad.data_ptr<float>(),
-            fwd_out.data_ptr<float>(),
-            c.data_ptr<float>(),
-            n, 
-            m
-        );
-    
-        return c;
-    }
+		TORCH_CHECK(fwd_out.device().is_cpu(), "Input tensor fwd_out must be a CPU tensor");
+		TORCH_CHECK(grad.device().is_cpu(), "Input tensor grad must be a CPU tensor");
+	
+		TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
+		TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
+	
+		TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
+		TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
+	
+		TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
+	
+		torch::Tensor c = torch::empty_like(grad);
+		unsigned long n = grad.size(0);
+		unsigned long m = grad.size(1);
+	
+		softmax_grad(
+			grad.data_ptr<float>(),
+			fwd_out.data_ptr<float>(),
+			c.data_ptr<float>(),
+			n, 
+			m
+		);
+	
+		return c;
+	}
 
 	PYBIND11_MODULE(extension_cpp, m) {
-        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
-        m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
-        m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
-    }
+		m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+		m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
+		m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
+	}
 }
 ```
 We do not need to modify the setup.py script but we can update the version number and do a pip install using the latest version of the package. Similar to the backward pass operation for CPU, we can also write similar backward pass operation for the GPU in the file `mysoftmax.cu` as follows:<br/><br/>
@@ -570,38 +570,38 @@ void softmax_cuda_grad_launcher(const float *grad, const float *fwd, float *out,
 
 namespace extension_cpp {
 	torch::Tensor softmax_gpu_grad(const torch::Tensor &grad, const torch::Tensor &fwd_out) {
-        TORCH_CHECK(fwd_out.device().is_cuda(), "Input tensor fwd_out must be a CUDA tensor");
-        TORCH_CHECK(grad.device().is_cuda(), "Input tensor grad must be a CUDA tensor");
+		TORCH_CHECK(fwd_out.device().is_cuda(), "Input tensor fwd_out must be a CUDA tensor");
+		TORCH_CHECK(grad.device().is_cuda(), "Input tensor grad must be a CUDA tensor");
+	
+		TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
+		TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
+	
+		TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
+		TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
+	
+		TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
+	
+		torch::Tensor c = torch::empty_like(grad);
+		unsigned long n = grad.size(0);
+		unsigned long m = grad.size(1);
+	
+		softmax_cuda_grad_launcher(
+			grad.data_ptr<float>(),
+			fwd_out.data_ptr<float>(),
+			c.data_ptr<float>(),
+			n, 
+			m
+		);
+	
+		return c;
+	}
 
-        TORCH_CHECK(fwd_out.is_contiguous(), "Input tensor fwd_out must be contiguous");
-        TORCH_CHECK(grad.is_contiguous(), "Input tensor grad must be contiguous");
-
-        TORCH_CHECK(fwd_out.dtype() == torch::kFloat32, "Input tensor fwd_out must be float32");
-        TORCH_CHECK(grad.dtype() == torch::kFloat32, "Input tensor grad must be float32");
-
-        TORCH_CHECK(grad.size(0) == fwd_out.size(0) && grad.size(1) == fwd_out.size(1), "Mismatched shapes");
-    
-        torch::Tensor c = torch::empty_like(grad);
-        unsigned long n = grad.size(0);
-        unsigned long m = grad.size(1);
-    
-        softmax_cuda_grad_launcher(
-            grad.data_ptr<float>(),
-            fwd_out.data_ptr<float>(),
-            c.data_ptr<float>(),
-            n, 
-            m
-        );
-    
-        return c;
-    }
-
-    PYBIND11_MODULE(extension_cpp, m) {
-        m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
-        m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
-        m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
-        m.def("mysoftmax_gpu_grad", &softmax_gpu_grad, "Softmax GPU Backward");
-    }
+	PYBIND11_MODULE(extension_cpp, m) {
+		m.def("mysoftmax_cpu", &softmax_cpu, "Softmax CPU Forward");
+		m.def("mysoftmax_gpu", &softmax_gpu, "Softmax GPU Forward");
+		m.def("mysoftmax_cpu_grad", &softmax_cpu_grad, "Softmax CPU Backward");
+		m.def("mysoftmax_gpu_grad", &softmax_gpu_grad, "Softmax GPU Backward");
+	}
 }
 ```
 Once we define the C++ and CUDA functions for forward and backward passes and build the python package, we need to wrap the forward and backward passes with `torch.autograd.Function` and `torch.nn.Module` as follows:<br/><br/>
