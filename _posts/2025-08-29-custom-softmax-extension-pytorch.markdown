@@ -77,8 +77,8 @@ namespace extension_cpp {
             }
         });
 
-		delete[] max_per_row;
-		delete[] sum_per_row;
+        delete[] max_per_row;
+        delete[] sum_per_row;
     }
 }
 ```
