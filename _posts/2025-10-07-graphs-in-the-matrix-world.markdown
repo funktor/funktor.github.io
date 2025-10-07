@@ -51,7 +51,7 @@ for i, j in graph:
 
 **Graph Search**<br/>
 Search if there is a path from a source node to a destination node.<br/><br/>
-This can be solved easily using breadth first search approach as shown below. Time complexity of the approach shown below is O(n) where n is the total number of nodes:<br/><br/>
+This can be solved easily using breadth first search approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the total number of edges because we are exploring each node once and then all edges out of that node to get the adjacent nodes:<br/><br/>
 ```python
 import collections
 
@@ -93,7 +93,47 @@ Note that we need to run the exponentiation from `k=0 to n-1` because the path l
 The time complexity of the above code is O(n^3) in the worst case because the dot product is O(n^2) in the worst case (dense adjacency matrix). Note that realistically we might never hit the worst case because if the graph is linear like a linked list then the dot product using sparse matrix operations is O(1) and total time complexity is O(n).<br/><br/> 
 On the other hand if the graph is fully connected `src` and `dst` are directly connected and thus we exit before any dot product. For cases somewhere in between e.g. `src` and `dst` are length k apart and each node is connected to m nodes on average where m << n, time complexity would be O(k*m^2). Note that k and m are orthogonal i.e. higher m implies lower k and vice versa.<br/><br/>
 This is also verified experimentally where we saw that for n=1000 and p=0.3, `search_matrix` was about 10x faster on average than `search_graph`. The gap reduces when p is smaller implying that the path length between `src` and `dst` increases and vice versa.<br/><br/>
+Note that instead of exponentiation as we are doing above, another approach exists. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
+```python
+def search_eig(a, n, src, dst):
+    b = np.copy(a)
+    d, p = np.linalg.eig(b)
+    p_inv = np.linalg.inv(p)
 
+    d = np.diag(d)
+    f = d
+    for _ in range(n):
+        if b[src,dst] != 0:
+            return True
+        
+        f *= d
+        b = np.abs(p @ f @ p_inv)
+        b[b < 1e-10] = 0
 
+    return False
+```
+<br/><br/>
+**Connected Components in Undirected Graph**<br/>
+Given an undirected graph, calculate the number of connected components.<br/><br/>
+This can be solved using breadth first search and union find approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
+```python
+def num_components_graph(adj, n):
+    visited = [0]*n
+    ncomp = 0
+    for i in range(n):
+        if visited[i] == 0:
+            ncomp += 1
+            queue = collections.deque([i])
+            while len(queue) > 0:
+                node = queue.popleft()
+                for j in adj[node]:
+                    if visited[j] == 0:
+                        queue.append(j)
+                        visited[j] = 1
+    
+    return ncomp
+```
+<br/><br/>
+The same problem can be solved 
 
 
