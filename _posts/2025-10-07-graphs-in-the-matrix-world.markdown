@@ -88,8 +88,9 @@ def search_matrix(a, n, src, dst):
 <br/><br/>
 The algorithm works as follows. The matrix `a` is the adjacency matrix in csr_matrix format. Thus the entry `a[i,j]` represents presence (`a[i,j]` = 1) or absence (`a[i,j]` = 0) of an edge for our problems since we have assumed that it is an unweighted graph. If it was a weighted graph then `a[i,j]` would have represented the weight of the edge `i->j`.<br/><br/>
 If we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` then `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` represents the number of paths of length k from i to j.<br/><br/>
-
-The operation `b = b.dot(a)` represents exponentiation of b i.e. `b^2`, `b^3` and so on.<br/><br/>
+In the above code, instead of exponentiating `a` again and again we are only multiplying the row vector corresponding to the `src` node with the `a` matrix since we are only concerned about the path from `src` to `dst`. The operation `b = b.dot(a)` represents exponentiation of b i.e. `b^2`, `b^3` and so on where `u=b^k` represents whether there is a path of length k from `src` to all other nodes.<br/><br/>
+Note that we need to run the exponentiation from `k=0 to n-1` because the path lengths in a graph can range from 0 to n-1 (Imagine a linked list like graph where the distance from one end to the other end is n-1).<br/><br/>
+The time complexity of the above code is O(n^3) in the worst case because the dot product is O(n^2) in the worst case (dense adjacency matrix). Note that realistically we might never hit the worst case because if the graph is linear like a linked list then the dot product using sparse matrix operations is O(1) and total time complexity is O(n). On the other hand if the graph is fully connected `src` and `dst` are directly connected and thus we exit before any dot product. For cases somewhere in between e.g.
 
 
 
