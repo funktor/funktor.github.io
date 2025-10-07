@@ -86,7 +86,9 @@ def search_matrix(a, n, src, dst):
     return False
 ```
 <br/><br/>
-The algorithm works as follows. The matrix `b` is a copy of the original adjacency matrix `a` in csr_matrix format. Thus the entry `b[i,j]` represents presence (`b[i,j] = 1`) or absence (`b[i,j] = 0`) of an edge for our problems since we have assumed that it is an unweighted graph. If it was a weighted graph then `b[i,j]` would have represented the weight of the edge `a->b`.<br/><br/>
+The algorithm works as follows. The matrix `a` is the adjacency matrix in csr_matrix format. Thus the entry `a[i,j]` represents presence (`a[i,j]` = 1) or absence (`a[i,j]` = 0) of an edge for our problems since we have assumed that it is an unweighted graph. If it was a weighted graph then `a[i,j]` would have represented the weight of the edge `i->j`.<br/><br/>
+If we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` then `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` represents the number of paths of length k from i to j.<br/><br/>
+
 The operation `b = b.dot(a)` represents exponentiation of b i.e. `b^2`, `b^3` and so on.<br/><br/>
 
 
