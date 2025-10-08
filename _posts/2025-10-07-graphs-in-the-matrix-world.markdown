@@ -174,6 +174,63 @@ def num_comps(a, n):
 But this is not a very `matrix` way of doing things and is very specific to csr_format. Also it looks very similar to the union find algorithm described above.<br/><br/>
 Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
+**Number of Paths from Source to Destination In DAG**<br/>
+Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
+This can be solved using recursion as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
+```python
+def num_paths_graph_recurse(adj, n, src, dst, dp):
+    if src == dst:
+        return 1
+    
+    if dp[src] != -1:
+        return dp[src]
+    
+    paths = 0
+    for j in adj[src]:
+        paths += num_paths_graph_recurse(adj, n, j, dst, dp)
+    
+    dp[src] = paths
+    return dp[src]
 
+def num_paths_graph(adj, n, src, dst):
+    dp = [-1]*n
+    return num_paths_graph_recurse(adj, n, src, dst, dp)
+```
+<br/><br/>
+Non-recursive algorithm using BFS:<br/><br/>
+```python
+def num_paths_graph(adj, n, src, dst):
+    queue = collections.deque([src])
+    dp = [0]*n
 
+    while len(queue) > 0:
+        node = queue.popleft()
+        dp[node] += 1
+
+        for b in adj[node]:
+            queue.append(b)
+    
+    return dp[dst]
+```
+<br/><br/>
+The same problem can be solved using matrix operations as we have seen earlier in the following manner:<br/><br/>
+```python
+def num_paths_matrix(a, n, src, dst):
+    np.fill_diagonal(a, 0)
+
+    a = csr_matrix(a)
+    b = csr_matrix(a[src:src+1])
+    out = csr_matrix(b)
+
+    for _ in range(n):
+        b = b.dot(a)
+        out += b
+
+    return out[0,dst]
+```
+<br/><br/>
+In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.
+**Single Source Shortest Path in DAG**<br/>
+Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
+This can be solved using recursion as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
 
