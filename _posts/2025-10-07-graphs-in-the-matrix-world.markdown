@@ -173,6 +173,7 @@ def num_comps(a, n):
 <br/><br/>
 But this is not a very `matrix` way of doing things and is very specific to csr_format. Also it looks very similar to the union find algorithm described above.<br/><br/>
 Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
+Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
 
 
 
