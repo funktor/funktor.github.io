@@ -229,8 +229,111 @@ def num_paths_matrix(a, n, src, dst):
     return out[0,dst]
 ```
 <br/><br/>
-In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.
-**Single Source Shortest Path in DAG**<br/>
-Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
-This can be solved using recursion as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
+In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.<br/><br/>
+**Single Source Shortest Path in Unweighted DAG**<br/>
+Given a directed acyclic graph (DAG), calculate the distance in terms of number of edges from source node to all other nodes.<br/><br/>
+This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement something similar:<br/><br/>
+```python
+def single_source_shortest_dist_unweighted(a, n, src):
+    a[a == 0] = n+1
+    np.fill_diagonal(a, 0)
 
+    a = csr_matrix(a)
+    b = csr_matrix(a[src:src+1])
+
+    for _ in range(n):
+        c = dist_mat_mul(b, a, 1, n, n)
+        b = b.minimum(c)
+
+    return b.toarray()
+```
+<br/><br/>
+Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length we find the 'distance product' from source to all other nodes. Here the 'distance product' is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:
+```python
+def dist_mat_mul(a, b, n, m, p):
+    c = np.zeros((n,p), dtype=np.uint64)
+
+    for i in range(n):
+        for j in range(p):
+            s = m+1
+            for k in range(m):
+                # In standard matrix dot product it would have been s += a[i,k]*b[k,j]
+                s = minimum(s, a[i,k] + b[k,j])
+            c[i,j] = s
+
+    return c
+```
+<br/><br/>
+For sparse matrices, a correct memory efficient sparse implementation is a bit involved and can be implemented as shown below:
+```python
+def dist_mat_mul(a, b, n, m, p):
+    cdata = []
+    cindices = []
+    cindptr = [0]
+
+    res = []
+    for a_i in range(len(a.indptr)-1):
+        i = a_i
+        s_a = a.indptr[i]
+        e_a = a.indptr[i+1] if i+1 < len(a.indptr) else n
+
+        for f in range(s_a, e_a):
+            k = a.indices[f]
+            u = a.data[f]
+
+            s_b = b.indptr[k]
+            e_b = b.indptr[k+1] if k+1 < len(b.indptr) else m
+
+            for q in range(s_b, e_b):
+                j = b.indices[q]
+                v = b.data[q]
+
+                if u > 0 and v > 0:
+                    res += [(int(i), int(j), int(u + v))]
+    
+    res = sorted(res, key=lambda k: (k[0], k[1]))
+
+    curr = (-1, -1)
+    curr_i = -1
+    curr_j = -1
+    curr_v = 1e300
+    h = 0
+
+    for i, j, v in res:
+        if (i, j) != curr:
+            if i > curr_i and curr_i != -1:
+                if curr_j != -1:
+                    cindices += [curr_j]
+                    cdata += [curr_v]
+                    h += 1
+                    
+                cindptr += [h]
+
+            if j > curr_j and curr_j != -1:
+                cindices += [curr_j]
+                cdata += [curr_v]
+                h += 1
+
+            curr = (i, j)
+            curr_i = i
+            curr_j = j
+            curr_v = v
+        else:
+            curr_v = min(curr_v, v)
+        
+    if curr_j != -1:
+        cindices += [curr_j]
+        cdata += [curr_v]
+        h += 1
+    
+    cindptr += [h]
+    cindptr += [h]*(n+1-len(cindptr))
+    
+    return csr_matrix((cdata, cindices, cindptr), shape=(n,p), dtype=np.uint64)
+
+```
+<br/><br/>
+Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
+**Detect presence of cycle in a directed graph**<br/>
+Given a directed graph, return True if there is a cycle present.<br/><br/>
+This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement something similar:<br/><br/>
