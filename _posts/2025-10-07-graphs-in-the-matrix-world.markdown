@@ -134,6 +134,45 @@ def num_components_graph(adj, n):
     return ncomp
 ```
 <br/><br/>
-The same problem can be solved 
+The same problem can be solved using matrix operations as follows:
+```python
+def num_components_matrix(a, n):
+    b = csr_matrix(a, dtype=np.uint64)
+    c = csr_matrix(b, dtype=np.uint64)
+
+    for _ in range(n):
+        b = b.dot(a)
+        c += b
+    
+    c[c > 0] = 1
+    return np.linalg.matrix_rank(c.toarray())
+```
+<br/><br/>
+As before, the input matrix a is in sparse format (csr). Note that we are using another matrix `c` to sum the results of b. This is because `b = b.dot(a)` in the k-th iteration of the loop finds whether there is a path of length k between any two nodes. Which implies that if there is a path between 2 nodes i and j of length k-1 but there is no path between them of length k, then `b[i,j] = 0` in the k-th iteration. Thus to aggergate the presence of path across all path lengths, we are using the matrix `c`. `c[i,j] > 0` implies that there is at-least one path from i to j of any length.<br/><br/>
+To get the number of connected components using matrix `c` one can use various strategies. If you observe the final matrix `c` then for a connected component with m nodes `[n1, n2, ... nm]`, `c[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `c[ri,rj] = 1` but `c[ni,rj] = 0` and `c[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `c`. With a csr_format one can find the number of components from this observation as follows:
+```python
+def num_comps(a, n):
+    visited = [0]*n
+    c = 0
+    for i in range(len(a.indptr)-1):
+        s = a.indptr[i]
+        e = a.indptr[i+1] if i+1 < len(a.indptr) else n
+        flag = False
+        for k in range(s, e):
+            j = a.indices[k]
+            if visited[j] == 0:
+                flag = True
+                visited[j] = 1
+            else:
+                break
+        if flag:
+            c += 1
+    
+    return c
+```
+<br/><br/>
+But this is not a very `matrix` way of doing things and is very specific to csr_format. Also it looks very similar to the union find algorithm described above.<br/><br/>
+Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
+
 
 
