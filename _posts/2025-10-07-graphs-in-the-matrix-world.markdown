@@ -19,7 +19,7 @@ graph = graph.edges()
 ```
 <br/><br/>
 For all problems shown below, we will assume an unweighted graph i.e. all edge weights are 1.<br/><br/>
-To work with matrices we will assume sparse matrix format especially `csr_matrix` from scipy. The reason for using sparse matrices is that most often graphs can be represented using adjacency matrix which is a sparse matrix i.e. each node has only a few edges to other nodes. There would be exceptions to this but most practical graph problems will have similar sparsity structures. To create a sparse matrix from the list of edges created above:<br/><br/>
+To work with matrices we will mostly use the sparse matrix format especially `csr_matrix` from scipy. The reason for using sparse matrices is that graphs can be represented using adjacency matrix which is a sparse matrix i.e. each node has only a few edges to other nodes. There would be exceptions to this but most real world graph problems will have similar sparsity. To create a sparse matrix from the list of edges created above:<br/><br/>
 ```python
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -32,7 +32,7 @@ for i, j in graph:
     # mat[j][i] = 1
 
 # full dense matrix
-a = np.array(mat)
+a = np.array(mat, dtype=np.uint64)
 
 # sparse csr_matrix
 a = csr_matrix(a, dtype=np.uint64)
@@ -48,10 +48,9 @@ for i, j in graph:
     # adj[j] += [i]
 ```
 <br/><br/>
-
-**Graph Search**<br/>
+## Graph Search
 Search if there is a path from a source node to a destination node.<br/><br/>
-This can be solved easily using breadth first search approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the total number of edges because we are exploring each node once and then all edges out of that node to get the adjacent nodes:<br/><br/>
+This can be solved easily using breadth first search approach as shown below. Time complexity of the approach is O(n + e) where n is the total number of nodes and e is the total number of edges because we are exploring each node once and then all edges out of that node to get the adjacent nodes:<br/><br/>
 ```python
 import collections
 
@@ -62,10 +61,12 @@ def search_graph(adj, n, src, dst):
 
     while len(queue) > 0:
         node = queue.popleft()
+        # found destination
         if node == dst:
             return True
 
         for b in adj[node]:
+            # visit each node once
             if visited[b] == 0:
                 queue.append(b)
                 visited[b] = 1
@@ -73,47 +74,57 @@ def search_graph(adj, n, src, dst):
     return False
 ```
 <br/><br/>
-To solve the same problem but using only matrices and matrix operations can be done in one way shown below. Remember that the input matrix `a` is a sparse matrix in csr format:<br/><br/>
+To solve the same problem but using only matrices and matrix operations can be done in one way shown below. Note that the methods shown here may not be unique and possibly different approaches can be used to solve the same problem:<br/><br/>
 ```python
 def search_matrix(a, n, src, dst):
+    # a is a dense numpy array
+    a = csr_matrix(a)
     b = csr_matrix(a[src:src+1])
 
     for _ in range(n):
         if b[0,dst] != 0:
             return True
+        # b[i,j] > 0 implies that there is a path of length k from i to j
         b = b.dot(a)
 
     return False
 ```
 <br/><br/>
 The algorithm works as follows. The matrix `a` is the adjacency matrix in csr_matrix format. Thus the entry `a[i,j]` represents presence (`a[i,j]` = 1) or absence (`a[i,j]` = 0) of an edge for our problems since we have assumed that it is an unweighted graph. If it was a weighted graph then `a[i,j]` would have represented the weight of the edge `i->j`.<br/><br/>
-If we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` then `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` represents the number of paths of length k from i to j.<br/><br/>
+If we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` and `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` equals the number of paths of length k from i to j.<br/><br/>
 In the above code, instead of exponentiating `a` again and again we are only multiplying the row vector corresponding to the `src` node with the `a` matrix since we are only concerned about the path from `src` to `dst`. The operation `b = b.dot(a)` represents exponentiation of b i.e. `b^2`, `b^3` and so on where `u=b^k` represents whether there is a path of length k from `src` to all other nodes.<br/><br/>
 Note that we need to run the exponentiation from `k=0 to n-1` because the path lengths in a graph can range from 0 to n-1 (Imagine a linked list like graph where the distance from one end to the other end is n-1).<br/><br/>
-The time complexity of the above code is O(n^3) in the worst case because the dot product is O(n^2) in the worst case (dense adjacency matrix). Note that realistically we might never hit the worst case because if the graph is linear like a linked list then the dot product using sparse matrix operations is O(1) and total time complexity is O(n).<br/><br/> 
-On the other hand if the graph is fully connected `src` and `dst` are directly connected and thus we exit before any dot product. For cases somewhere in between e.g. `src` and `dst` are length k apart and each node is connected to m nodes on average where m << n, time complexity would be O(k*m^2). Note that k and m are orthogonal i.e. higher m implies lower k and vice versa.<br/><br/>
+The time complexity of the above code is `O(n^3)` in the worst case because the dot product is `O(n^2)` in the worst case (dense adjacency matrix). Note that realistically we might never hit the worst case because if the graph is linear like a linked list then the dot product using sparse matrix operations is O(1) and total time complexity is O(n).<br/><br/> 
+On the other hand if the graph is fully connected `src` and `dst` are directly connected and thus we exit before any dot product. For cases somewhere in between e.g. `src` and `dst` are length k apart and each node is connected to m nodes on average where m << n, time complexity would be `O(k*m^2)`. Note that k and m are orthogonal i.e. higher m implies lower k and vice versa.<br/><br/>
 This is also verified experimentally where we saw that for n=1000 and p=0.3, `search_matrix` was about 10x faster on average than `search_graph`. The gap reduces when p is smaller implying that the path length between `src` and `dst` increases and vice versa.<br/><br/>
 Note that instead of exponentiation as we are doing above, another approach exists. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
 ```python
 def search_eig(a, n, src, dst):
     b = np.copy(a)
-    d, p = np.linalg.eig(b)
-    p_inv = np.linalg.inv(p)
 
+    d, p = np.linalg.eig(b)
     d = np.diag(d)
+    p_inv = np.linalg.inv(p)
+    # b = p @ d @ p_inv
     f = d
+
     for _ in range(n):
         if b[src,dst] != 0:
             return True
-        
+
+        # f = d^k
         f *= d
+        # To handle complex numbers we can either take absolute value or take real part
         b = np.abs(p @ f @ p_inv)
+
+        # Truncate very small values to 0 as these are mostly precision errors
         b[b < 1e-10] = 0
 
     return False
 ```
 <br/><br/>
-**Connected Components in Undirected Graph**<br/>
+Note that diagonalization is only possible when the matrix is full rank i.e. rank = n. In many real world graphs, the adjacency matrix is low rank as there could be nodes with no edges or cliques or multiple connected components which can reduce the rank of the matrix. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+## Connected Components in Undirected Graph
 Given an undirected graph, calculate the number of connected components.<br/><br/>
 This can be solved using breadth first search and union find approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
 ```python
@@ -174,7 +185,7 @@ def num_comps(a, n):
 But this is not a very `matrix` way of doing things and is very specific to csr_format. Also it looks very similar to the union find algorithm described above.<br/><br/>
 Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
-**Number of Paths from Source to Destination In DAG**<br/>
+## Number of Paths from Source to Destination In DAG
 Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
 This can be solved using recursion as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
 ```python
@@ -230,7 +241,7 @@ def num_paths_matrix(a, n, src, dst):
 ```
 <br/><br/>
 In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.<br/><br/>
-**Single Source Shortest Path in Unweighted DAG**<br/>
+## Single Source Shortest Path in Unweighted DAG
 Given a directed acyclic graph (DAG), calculate the distance in terms of number of edges from a source node to all other nodes.<br/><br/>
 This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement as shown below:<br/><br/>
 ```python
@@ -337,7 +348,8 @@ def dist_mat_mul(a, b, n, m, p):
 <br/><br/>
 Time complexity of the sparse distance implementation is `O(G*H*log(GH)` where G is the total number of non-zero elements in input sparse matrix a and H is the average number of non-zero elements in each row of input sparse matrix b. In the worst case when it is a dense matrix, time complexity is `O(n^3*log(n))` which is worse than dense matrix multiplication. For high sparsity, the time complexity is usually much smaller of the order of `O(n^2*log(n))`.<br/><br/>
 Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
-**Detect presence of cycle in a directed graph**<br/>
+<br/><br/>
+## Detect presence of cycle in a directed graph
 Given a directed graph, return True if there is a cycle present else return False.<br/><br/>
 This can be solved using DFS or recursion as shown below. with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
 ```python
@@ -406,7 +418,8 @@ def has_cycle(a, n):
 ```
 <br/><br/>
 In each iteration we are exponentiating the diagonal matrix. With an optimized implementation `p @ f @ p_inv` should be `O(n^2)` since f is a diagonal matrix. The overall time complexity thus would be `O(n^3)`.<br/><br/>
-**Toplogical Sorting**<br/>
+<br/><br/>
+## Toplogical Sorting
 Given a directed graph, return toplogical sorting of the nodes else return empty list if a cycle exists.<br/><br/>
 Standard approach for solving toplogical sorting problems with an adjacency list. Time complexity of the below algorithm is O(n + e):<br/><br/>
 ```python
