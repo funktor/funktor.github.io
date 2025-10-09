@@ -124,6 +124,7 @@ def search_eig(a, n, src, dst):
 ```
 <br/><br/>
 Note that diagonalization is only possible when the matrix is full rank i.e. rank = n. In many real world graphs, the adjacency matrix is low rank as there could be nodes with no edges or cliques or multiple connected components which can reduce the rank of the matrix. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+The eigenvalue approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrices p, d and p_inv only once and also run the for loop only once and compute b and use it for any pair of source and destination.<br/><br/>
 ## Connected Components in Undirected Graph
 Given an undirected graph, calculate the number of connected components.<br/><br/>
 This can be solved using breadth first search and union find approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
