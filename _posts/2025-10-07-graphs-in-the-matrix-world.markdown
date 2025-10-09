@@ -336,4 +336,158 @@ def dist_mat_mul(a, b, n, m, p):
 Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
 **Detect presence of cycle in a directed graph**<br/>
 Given a directed graph, return True if there is a cycle present.<br/><br/>
-This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement something similar:<br/><br/>
+This can be solved using DFS or recursion as shown below. with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
+```python
+def dfs_cycle(adj, n, i, visited):
+    for j in adj[i]:
+        if visited[j] == 0:
+            visited[j] = 1
+            h = dfs_cycle(adj, n, j, visited)
+            visited[j] = 0
+            if h:
+                return True
+        else:
+            return True
+        
+    return False
+
+def has_cycle_graph(adj, n):
+    visited = [0]*n
+    for i in range(n):
+        visited[i] = 1
+        h = dfs_cycle(adj, n, i, visited)
+        visited[i] = 0
+        if h:
+            return True
+        
+    return False
+```
+<br/><br/>
+The corresponding matrix solution is again a very much similar operation as seen above:
+```python
+def has_cycle(a, n):
+    a = csr_matrix(a)
+    b = csr_matrix(a)
+    out = csr_matrix(b)
+
+    for _ in range(n):
+        b = b.dot(a)
+        out += b
+
+    return out.diagonal().max() > 0
+```
+<br/><br/>
+If there is a cycle in the graph, at-least one diagonal element will have a non-zero value i.e. number of paths to self is non-zero in case cycle is present.<br/><br/>
+**Toplogical Sorting**<br/>
+Given a directed graph, return toplogical sorting of the nodes else return empty list if a cycle exists.<br/><br/>
+Standard approach for solving toplogical sorting problems with an adjacency list:<br/><br/>
+```python
+def topological_sort_graph(adj, n):
+    in_degs = [0]*n
+    for i in range(n):
+        for j in adj[i]:
+            in_degs[j] += 1
+    
+    arr = [x for x in range(n) if in_degs[x] == 0]
+    res = arr
+
+    while len(arr) > 0:
+        new_arr = []
+        for i in arr:
+            for j in adj[i]:
+                in_degs[j] -= 1
+                if in_degs[j] == 0:
+                    new_arr += [j]
+
+        arr = new_arr[:]
+        res += arr
+    
+    if sum([in_degs[i] > 0 for i in range(n)]) > 0:
+        return []
+
+    return res
+```
+<br/><br/>
+We can solve the same problem using sparse matrix and matrix operations as shown below:<br/><br/>
+```python
+def topological_sort_matrix(a, n):
+    a = csr_matrix(a)
+    b = csr_matrix(a)
+
+    for _ in range(n):
+        c = dist_mat_mul_max(b, a, n, n, n)
+        b = b.maximum(c)
+
+    max_d = b.max(axis=0).toarray()[0]
+    return np.argsort(max_d).tolist()
+```
+<br/><br/>
+So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort. The implementation of sparse `dist_mat_mul_max` is similar to the one above only the operators are different.<br/><br/>
+```python
+def dist_mat_mul_max(a, b, n, m, p):
+    cdata = []
+    cindices = []
+    cindptr = [0]
+
+    res = []
+    for a_i in range(len(a.indptr)-1):
+        i = a_i
+        s_a = a.indptr[i]
+        e_a = a.indptr[i+1] if i+1 < len(a.indptr) else n
+
+        for f in range(s_a, e_a):
+            k = a.indices[f]
+            u = a.data[f]
+
+            s_b = b.indptr[k]
+            e_b = b.indptr[k+1] if k+1 < len(b.indptr) else m
+
+            for q in range(s_b, e_b):
+                j = b.indices[q]
+                v = b.data[q]
+
+                if u > 0 and v > 0:
+                    res += [(int(i), int(j), int(u + v))]
+    
+    res = sorted(res, key=lambda k: (k[0], k[1]))
+
+    curr = (-1, -1)
+    curr_i = -1
+    curr_j = -1
+    curr_v = 0
+    h = 0
+
+    for i, j, v in res:
+        if (i, j) != curr:
+            if i > curr_i and curr_i != -1:
+                if curr_j != -1:
+                    cindices += [curr_j]
+                    cdata += [curr_v]
+                    h += 1
+                    
+                cindptr += [h]
+
+            if j > curr_j and curr_j != -1:
+                cindices += [curr_j]
+                cdata += [curr_v]
+                h += 1
+
+            curr = (i, j)
+            curr_i = i
+            curr_j = j
+            curr_v = v
+        else:
+            curr_v = max(curr_v, v)
+        
+    if curr_j != -1:
+        cindices += [curr_j]
+        cdata += [curr_v]
+        h += 1
+    
+    cindptr += [h]
+    cindptr += [h]*(n+1-len(cindptr))
+    
+    return csr_matrix((cdata, cindices, cindptr), shape=(n,p), dtype=np.uint32)
+```
+<br/><br/>
+Time complexity of the `dist_mat_mul_max` is `O(n^3)` and the overall time complexity of the matrix based topological sorting is `O(n^4)`.
