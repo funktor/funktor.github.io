@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Graphs in the Matrix world"
-date:   2025-08-29 18:50:11 +0530
+date:   2025-10-10 18:50:11 +0530
 categories: software-engineering
 ---
 Working with both graphs and matrices made me realize that a lot of problems in graphs can also be solved using matrices (and a bit of linear algebra).<br/><br/>
