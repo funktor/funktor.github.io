@@ -231,8 +231,8 @@ def num_paths_matrix(a, n, src, dst):
 <br/><br/>
 In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.<br/><br/>
 **Single Source Shortest Path in Unweighted DAG**<br/>
-Given a directed acyclic graph (DAG), calculate the distance in terms of number of edges from source node to all other nodes.<br/><br/>
-This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement something similar:<br/><br/>
+Given a directed acyclic graph (DAG), calculate the distance in terms of number of edges from a source node to all other nodes.<br/><br/>
+This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement as shown below:<br/><br/>
 ```python
 def single_source_shortest_dist_unweighted(a, n, src):
     a[a == 0] = n+1
@@ -242,13 +242,15 @@ def single_source_shortest_dist_unweighted(a, n, src):
     b = csr_matrix(a[src:src+1])
 
     for _ in range(n):
+        # c[i,j] is the minimum distance from node i to node j for all nodes j within a distance k from node i  
         c = dist_mat_mul(b, a, 1, n, n)
+        # b[i,j] is the minimum distance from node i to node j
         b = b.minimum(c)
 
     return b.toarray()
 ```
 <br/><br/>
-Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length we find the 'distance product' from source to all other nodes. Here the 'distance product' is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:
+Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length k we find the distance from source to all other nodes. Here the distance is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:
 ```python
 def dist_mat_mul(a, b, n, m, p):
     c = np.zeros((n,p), dtype=np.uint64)
@@ -264,7 +266,7 @@ def dist_mat_mul(a, b, n, m, p):
     return c
 ```
 <br/><br/>
-For sparse matrices, a correct memory efficient sparse implementation is a bit involved and can be implemented as shown below:
+For sparse matrices, a memory efficient sparse implementation is a bit involved and can be implemented as shown below:
 ```python
 def dist_mat_mul(a, b, n, m, p):
     cdata = []
@@ -333,6 +335,7 @@ def dist_mat_mul(a, b, n, m, p):
 
 ```
 <br/><br/>
+Time complexity of the sparse distance implementation is `O(G*H*log(GH)` where G is the total number of non-zero elements in input sparse matrix a and H is the average number of non-zero elements in each row of input sparse matrix b. In the worst case when it is a dense matrix, time complexity is `O(n^3*log(n))` which is worse than dense matrix multiplication. For high sparsity, the time complexity is usually much smaller of the order of `O(n^2*log(n))`.<br/><br/>
 Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
 **Detect presence of cycle in a directed graph**<br/>
 Given a directed graph, return True if there is a cycle present else return False.<br/><br/>
@@ -385,11 +388,16 @@ def has_cycle(a, n):
     d, p = np.linalg.eig(a)
     d = np.diag(d)
     p_inv = np.linalg.inv(p)
+    # a = p @ d @ p_inv
     f = d
 
     for _ in range(n):
+        # f = d^k
         f *= d
+        # Convert complex values to real values either by taking real part or taking the absolute value
         g = np.abs(p @ f @ p_inv)
+
+        # Truncate very small values to 0
         g[g < 1e-10] = 0
         if g.diagonal().max() > 0:
             return True
