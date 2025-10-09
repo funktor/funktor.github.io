@@ -408,86 +408,24 @@ def topological_sort_graph(adj, n):
     return res
 ```
 <br/><br/>
-We can solve the same problem using sparse matrix and matrix operations as shown below:<br/><br/>
+We can solve the same problem using matrix operations as shown below:<br/><br/>
 ```python
 def topological_sort_matrix(a, n):
-    a = csr_matrix(a)
-    b = csr_matrix(a)
+    b = np.copy(a)
+    b[b == 0] = -(n+1)
+    np.fill_diagonal(b, 0)
 
-    for _ in range(n):
-        c = dist_mat_mul_max(b, a, n, n, n)
-        b = b.maximum(c)
-
-    max_d = b.max(axis=0).toarray()[0]
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                b[i,j] = max(b[i,j], b[i,k] + b[k,j])
+                # cycle detected
+                if i == j and b[i,j] > 0:
+                    return []
+        
+    max_d = np.max(b, axis=0)
     return np.argsort(max_d).tolist()
 ```
 <br/><br/>
-So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort. The implementation of sparse `dist_mat_mul_max` is similar to the one above only the operators are different.<br/><br/>
-```python
-def dist_mat_mul_max(a, b, n, m, p):
-    cdata = []
-    cindices = []
-    cindptr = [0]
-
-    res = []
-    for a_i in range(len(a.indptr)-1):
-        i = a_i
-        s_a = a.indptr[i]
-        e_a = a.indptr[i+1] if i+1 < len(a.indptr) else n
-
-        for f in range(s_a, e_a):
-            k = a.indices[f]
-            u = a.data[f]
-
-            s_b = b.indptr[k]
-            e_b = b.indptr[k+1] if k+1 < len(b.indptr) else m
-
-            for q in range(s_b, e_b):
-                j = b.indices[q]
-                v = b.data[q]
-
-                if u > 0 and v > 0:
-                    res += [(int(i), int(j), int(u + v))]
-    
-    res = sorted(res, key=lambda k: (k[0], k[1]))
-
-    curr = (-1, -1)
-    curr_i = -1
-    curr_j = -1
-    curr_v = 0
-    h = 0
-
-    for i, j, v in res:
-        if (i, j) != curr:
-            if i > curr_i and curr_i != -1:
-                if curr_j != -1:
-                    cindices += [curr_j]
-                    cdata += [curr_v]
-                    h += 1
-                    
-                cindptr += [h]
-
-            if j > curr_j and curr_j != -1:
-                cindices += [curr_j]
-                cdata += [curr_v]
-                h += 1
-
-            curr = (i, j)
-            curr_i = i
-            curr_j = j
-            curr_v = v
-        else:
-            curr_v = max(curr_v, v)
-        
-    if curr_j != -1:
-        cindices += [curr_j]
-        cdata += [curr_v]
-        h += 1
-    
-    cindptr += [h]
-    cindptr += [h]*(n+1-len(cindptr))
-    
-    return csr_matrix((cdata, cindices, cindptr), shape=(n,p), dtype=np.uint32)
-```
-<br/><br/>
-Time complexity of the `dist_mat_mul_max` is `O(n^3)` and the overall time complexity of the matrix based topological sorting is `O(n^4)`.
+So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort.<br/><br/>
+Time complexity of the `topological_sort_matrix` is `O(n^3)`.
