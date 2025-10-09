@@ -428,4 +428,6 @@ def topological_sort_matrix(a, n):
 ```
 <br/><br/>
 So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort.<br/><br/>
-Time complexity of the `topological_sort_matrix` is `O(n^3)`.
+Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
+The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
+As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But matrix operations can be parallelized using either SIMD on CPU or CUDA on GPU. Even without SIMD or CUDA one can also use multi-threading in C++ using either TBB or OpenMP libraries. Moreover a lot of matrix algebra operations are optimized in the BLAS library available for C (cblas) and CUDA (cuBLAS) both.<br/><br/>
