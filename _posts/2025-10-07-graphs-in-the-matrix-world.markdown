@@ -335,7 +335,7 @@ def dist_mat_mul(a, b, n, m, p):
 <br/><br/>
 Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
 **Detect presence of cycle in a directed graph**<br/>
-Given a directed graph, return True if there is a cycle present.<br/><br/>
+Given a directed graph, return True if there is a cycle present else return False.<br/><br/>
 This can be solved using DFS or recursion as shown below. with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
 ```python
 def dfs_cycle(adj, n, i, visited):
@@ -363,34 +363,57 @@ def has_cycle_graph(adj, n):
     return False
 ```
 <br/><br/>
-The corresponding matrix solution is again a very much similar operation as seen above:
+The corresponding matrix solution is again a very much similar operation as seen above for some other problems:<br/><br/>
 ```python
 def has_cycle(a, n):
     a = csr_matrix(a)
     b = csr_matrix(a)
-    out = csr_matrix(b)
 
     for _ in range(n):
         b = b.dot(a)
-        out += b
+        # There is a path of length k from a node to itself
+        if b.diagonal().max() > 0:
+            return True
 
-    return out.diagonal().max() > 0
+    return False
 ```
 <br/><br/>
-If there is a cycle in the graph, at-least one diagonal element will have a non-zero value i.e. number of paths to self is non-zero in case cycle is present.<br/><br/>
+If there is a cycle in the graph, at-least one diagonal element will have a non-zero value i.e. number of paths to self is non-zero in case a cycle is present. Time complexity of this approach is `O(n^4)`. The time complexity can be brought down to `O(n^3)` using an approach which is a variant of the all pairs shortest path algorithm is shown in the next problem.<br/><br/>
+One can also use the matrix diagonalization technique introduced above. But one needs to be careful while using this technique as it only works when the matrix is full rank i.e rank=n. Most real world matrices representing graphs will be low rank because there can multiple components or nodes with no edges etc. In case matrix diagonalization is possible time complexity can be brought down to `O(n^3)`.<br/><br/>
+```python
+def has_cycle(a, n):
+    d, p = np.linalg.eig(a)
+    d = np.diag(d)
+    p_inv = np.linalg.inv(p)
+    f = d
+
+    for _ in range(n):
+        f *= d
+        g = np.abs(p @ f @ p_inv)
+        g[g < 1e-10] = 0
+        if g.diagonal().max() > 0:
+            return True
+
+    return False
+```
+<br/><br/>
+In each iteration we are exponentiating the diagonal matrix. With an optimized implementation `p @ f @ p_inv` should be `O(n^2)` since f is a diagonal matrix. The overall time complexity thus would be `O(n^3)`.<br/><br/>
 **Toplogical Sorting**<br/>
 Given a directed graph, return toplogical sorting of the nodes else return empty list if a cycle exists.<br/><br/>
-Standard approach for solving toplogical sorting problems with an adjacency list:<br/><br/>
+Standard approach for solving toplogical sorting problems with an adjacency list. Time complexity of the below algorithm is O(n + e):<br/><br/>
 ```python
 def topological_sort_graph(adj, n):
+    # calculate in degrees of nodes
     in_degs = [0]*n
     for i in range(n):
         for j in adj[i]:
             in_degs[j] += 1
-    
+
+    # the initial nodes in toplogical sorting are the ones where in_deg is 0
     arr = [x for x in range(n) if in_degs[x] == 0]
     res = arr
 
+    # iterate for each level and update in degrees
     while len(arr) > 0:
         new_arr = []
         for i in arr:
@@ -401,7 +424,8 @@ def topological_sort_graph(adj, n):
 
         arr = new_arr[:]
         res += arr
-    
+
+    # detect cycle, if cycle is present in degrees of some nodes will never be 0
     if sum([in_degs[i] > 0 for i in range(n)]) > 0:
         return []
 
@@ -429,5 +453,6 @@ def topological_sort_matrix(a, n):
 <br/><br/>
 So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort.<br/><br/>
 Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
+The cycle detection technique used here can also be used to detect cycles in general as described above.<br/><br/>
 The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
 As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But matrix operations can be parallelized using either SIMD on CPU or CUDA on GPU. Even without SIMD or CUDA one can also use multi-threading in C++ using either TBB or OpenMP libraries. Moreover a lot of matrix algebra operations are optimized in the BLAS library available for C (cblas) and CUDA (cuBLAS) both.<br/><br/>
