@@ -476,8 +476,54 @@ Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
 The cycle detection technique used here can also be used to detect cycles in general in the previous problem.<br/><br/>
 The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
 As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But the advantage of matrix operations is that they can be parallelized using either SIMD or CUDA. For e.g. in the above toplogical sort implementation for each k, `b[i,j]` can be computed in parallel.<br/><br/>
+<br/><br/>
 
 ## Connections at degree D
+Given a directed graph of followers on a social network, find all followers of degree D from a given source user (node).<br/><br/>
+In practice this problem can be solved using BFS upto level D in the graph w.r.t. the source node and has a time complexity of O(n + e) similar as above problems. Using matrix we can solve the same problem as following:
+```python
+def connections_at_degree(a, n, src, D):
+    b = np.copy(a)
+
+    for k in range(D):
+        # b[i,j] > 0 implies there is a path of length k from i to j 
+        b = b @ a
+
+    return np.where(b[src] > 0)
+```
+<br/><br/>
+The algorithm works as follows. The matrix `a` is the adjacency matrix. Thus the entry `a[i,j]` represents presence (`a[i,j]` = 1) or absence (`a[i,j]` = 0) of an edge for our problems since we have assumed that it is an unweighted graph. If it was a weighted graph then `a[i,j]` would have represented the weight of the edge `i->j`.<br/><br/>
+If we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` and `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` equals the number of paths of length k from i to j.<br/><br/>
+The time complexity of the above code is `O(D*n^3)` because the dot product is `O(n^3)`.<br/><br/>
+Although this approach has a higher time complexity than BFS but it is reusable i.e. once we have computed `b` and if the graph is not updated then we can answer the query for followers at a fixed degree D from any source user in `O(1)` time complexity whereas in the BFS approach, each query will take O(n + e) time complexity. So if we have many reads but few writes the matrix approach makes more sense.<br/><br/>
+Instead of exponentiation as we are doing above, another approach is diagonalization. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
+```python
+def connections_at_degree(a, n, src, D):
+    b = np.copy(a)
+
+    d, p = np.linalg.eig(b)
+    d = np.diag(d)
+    p_inv = np.linalg.inv(p)
+    # b = p @ d @ p_inv
+    f = d
+
+    for k in range(D):
+        # f = d^k
+        f *= d
+
+    # To handle complex numbers we can either take absolute value or take real part
+    b = np.abs(p @ f @ p_inv)
+
+    # Truncate very small values to 0 as these are mostly precision errors
+    b[b < 1e-10] = 0
+
+    return np.where(b[src] > 0)
+```
+<br/><br/>
+Note that diagonalization is only possible when the matrix has all n distinct eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+The for-loop works with diagonal matrix and multiplying two diagonal matrices is `O(n)` (multiple corresponding diagonal elements). Thus the time complexity of the for-loop is O(D*n). Overall time complexity is `O(n^3 + D*n)` which is better than `O(D*n^3)` of the exponentiating approach above.<br/><br/>
+Again this approach is useful when we have many queries for different source nodes as each query can be served in `O(1)` time complexity.<br/><br/>
+<br/><br/>
 
 ## PageRank
 
