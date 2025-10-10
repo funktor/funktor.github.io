@@ -140,7 +140,7 @@ def num_components_graph(adj, n):
     return ncomp
 ```
 <br/><br/>
-The same problem can be solved using matrix operations as follows (from previous problem following Floyd-Warshall variant):
+The same problem can be solved using matrix operations as follows (from previous problem following Floyd-Warshall variant):<br/><br/>
 ```python
 def num_components_matrix(a, n):
     b = np.copy(a)
@@ -155,10 +155,29 @@ def num_components_matrix(a, n):
 <br/><br/>
 Let's prove that `b[i,j] > 0` implies that there is a path from node i to j in the above algorithm:<br/><br/>
 Let's suppose there is a path from i to j as follows: i -> k1 -> k2 -> j. Thus we will already have `b[i,k1] = 1`, `b[k1,k2] = 1` and `b[k2,j] = 1`.
-If k1 is numbered lower than k2 then in the 1st iteration we will find the path `b[i,k2]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k2] & b[k2,j])`.<br/><br/>
+If k1 is numbered lower than k2, then in the 1st iteration we will find the path `b[i,k2]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k2] & b[k2,j])`.<br/><br/>
 On the other hand if k2 is numbered lower than k1, then in 1st iteration we will find the path `b[k1,j]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k1] & b[k1,j])`.<br/><br/>
-Thus, when k=0, we discover all paths of the form `i->0->j`. In the next iteration, when k=1, we discover all paths of the form `i->1->j`, `i->0->1->j` (because we have already found `i->0->1` when k=0), `i->1->0->j` (because we have already found `1->0->j` when k=0). When k=2, we discover all paths of the form `i->2->j`, `i->0->1->2->j` (because we have already found `i->0->1->2` when k=1), `i->0->2->1->j` (because we have already found `i->0->2` when k=0 and `2->1->j` when k=1) and so on.<br/><br/> 
-Thus, for k we discover all paths i->(permutation of 0,1,2...k)->j which is basically all paths between 2 nodes separated by k+2 edges.<br/><br/>
+Thus, when k=0, we discover all paths of the form `i->0->j`. In the next iteration, when k=1, we discover all paths of the form `i->1->j`, `i->0->1->j` (because we have already found `i->0->1` when k=0), `i->1->0->j` (because we have already found `1->0->j` when k=0). When k=2, we discover all paths of the form:<br/><br/>
+```
+i -> 2 -> j (because i -> 2 and 2 -> j has already been found)
+
+i -> 0 -> 2 -> j (because i -> 0 -> 2 has already been found when k=0)
+i -> 2 -> 0 -> j (because 2 -> 0 -> j has already been found when k=0)
+i -> 1 -> 2 -> j (because i -> 1 -> 2 has already been found when k=1)
+i -> 2 -> 1 -> j (because 2 -> 1 -> j has already been found when k=1)
+
+i -> 0 -> 1 -> 2 -> j (because i -> 0 -> 1 -> 2 has already been found when k=1)
+i -> 0 -> 2 -> 1 -> j (because i -> 0 -> 2 has already been found when k=0 and 2 -> 1 -> j has already been found when k=1)
+i -> 1 -> 0 -> 2 -> j (because i -> 1 -> 0 -> 2 has already been found when k=1)
+i -> 1 -> 2 -> 0 -> j (because i -> 1 -> 2 has already been found when k=1 and 2 -> 0 -> j has already been found when k=0)
+i -> 2 -> 0 -> 1 -> j (because 2 -> 0 -> 1 -> j has already been found when k=1)
+i -> 2 -> 1 -> 0 -> j (because 2 -> 1 -> 0 -> j has already been found when k=1)
+...
+and so on.
+```
+<br/><br/>
+Thus for k we discover all paths of the form i -> {G} -> j where G is all possible ordered subsets of {0,1,2,...k} having at-least one k in each ordered subset. Or in other words we have discovered all paths between nodes i and j of length k+2.<br/><br/>
+For k+1, we insert k+1 in each ordered subset at each position. Let the path before k+1 be `i -> p0 -> p1 ... -> pi -> k+1` and after k+1 be `k+1 -> q0 -> q1 -> ... -> j`. But {p0, p1, ... pi} and {q0, q1, ..., qj} are both ordered subsets of {0, 1, ... k} which implies that we have already found those paths in the previous iteration.<br/><br/> 
 To get the number of connected components using matrix `b` one can use various strategies. If you observe the final matrix `b` then for a connected component with m nodes `[n1, n2, ... nm]`, `b[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `b[ri,rj] = 1` but `b[ni,rj] = 0` and `b[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `b`.<br/><br/>
 Thus if we can calculate the number of linearly independent rows in the matrix `b` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
