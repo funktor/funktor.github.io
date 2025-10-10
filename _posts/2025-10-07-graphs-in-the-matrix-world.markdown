@@ -174,14 +174,15 @@ def num_components_matrix(a, n):
             for j in range(n):
                 b[i,j] |= (b[i,k] & b[k,j)
 
-    return np.linalg.matrix_rank(b.toarray())
+    return np.linalg.matrix_rank(b)
 ```
 <br/><br/>
 Let's prove that `b[i,j] > 0` implies that there is a path from node i to j in the above algorithm:<br/><br/>
 Let's suppose there is a path from i to j as follows: i -> k1 -> k2 -> j. Thus we will already have `b[i,k1] = 1`, `b[k1,k2] = 1` and `b[k2,j] = 1`.
 If k1 is numbered lower than k2 then in the 1st iteration we will find the path `b[i,k2]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k2] & b[k2,j])`.<br/><br/>
 On the other hand if k2 is numbered lower than k1, then in 1st iteration we will find the path `b[k1,j]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k1] & b[k1,j])`.<br/><br/>
-Thus, when k=0, we discover all paths of the form `i->0->j`. In the next iteration, when k=1, we discover all paths of the form `i->1->j`, `i->0->1->j` (because we have already found `i->0->1` when k=0), `i->1->0->j` (because we have already found `1->0->j` when k=0). When k=2, we discover all paths of the form `i->2->j`, `i->0->1->2->j` (because we have already found `i->0->1->2` when k=1), `i->0->2->1->j` (because we have already found `i->0->2` when k=0 and `2->1->j` when k=1) and so on. Thus, for k we discover all paths i->(permutation of 0,1,2...k)->j which is basically all paths between 2 nodes separated by k edges.<br/><br/>
+Thus, when k=0, we discover all paths of the form `i->0->j`. In the next iteration, when k=1, we discover all paths of the form `i->1->j`, `i->0->1->j` (because we have already found `i->0->1` when k=0), `i->1->0->j` (because we have already found `1->0->j` when k=0). When k=2, we discover all paths of the form `i->2->j`, `i->0->1->2->j` (because we have already found `i->0->1->2` when k=1), `i->0->2->1->j` (because we have already found `i->0->2` when k=0 and `2->1->j` when k=1) and so on.<br/><br/> 
+Thus, for k we discover all paths i->(permutation of 0,1,2...k)->j which is basically all paths between 2 nodes separated by k+2 edges.<br/><br/>
 To get the number of connected components using matrix `b` one can use various strategies. If you observe the final matrix `b` then for a connected component with m nodes `[n1, n2, ... nm]`, `b[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `b[ri,rj] = 1` but `b[ni,rj] = 0` and `b[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `b`.<br/><br/>
 Thus if we can calculate the number of linearly independent rows in the matrix `b` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
@@ -227,17 +228,15 @@ def num_paths_graph(adj, n, src, dst):
 The same problem can be solved using matrix operations as we have seen earlier in the following manner:<br/><br/>
 ```python
 def num_paths_matrix(a, n, src, dst):
-    np.fill_diagonal(a, 0)
+    b = np.copy(a)
 
-    a = csr_matrix(a)
-    b = csr_matrix(a[src:src+1])
-    out = csr_matrix(b)
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                # number of paths from i to j is summation of product of num paths from i to k and k to j
+                b[i,j] += b[i,k] * b[k,j]
 
-    for _ in range(n):
-        b = b.dot(a)
-        out += b
-
-    return out[0,dst]
+    return b[src,dst]
 ```
 <br/><br/>
 In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.<br/><br/>
