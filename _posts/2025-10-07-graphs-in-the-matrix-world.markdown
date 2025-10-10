@@ -203,7 +203,7 @@ def num_paths_matrix(a, n, src, dst):
 ```
 <br/><br/>
 Time complexity of the above approach is `O(n^3)`.<br/><br/>
-Although the time complexity is higher than recursion approach, observe that the function `num_paths_matrix` is reusable implying that once we compute the matrix b and if it does not change, we can answer queries for number of paths between any pair of source and destination nodes in `O(1)` time complexity whereas the recursion approach requires `O(n + e)` for each query.
+Although the time complexity is higher than recursion approach, observe that the function `num_paths_matrix` is reusable implying that once we compute the matrix b and if it does not change, we can answer queries for number of paths between any pair of source and destination nodes in `O(1)` time complexity whereas the recursion approach requires `O(n + e)` for each query.<br/><br/>
 <br/><br/>
 
 ## Single Source Shortest Path in Unweighted DAG
