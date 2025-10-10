@@ -6,6 +6,8 @@ categories: software-engineering
 ---
 Working with both graphs and matrices made me realize that a lot of problems in graphs can also be solved using matrices (and a bit of linear algebra).<br/><br/>
 Although I have not explored all possible graph problems but few commonly used such as searching, connected components, shortest path, detect cycles, number of paths, topological sorting etc. This post is meant to be a fun exercise and not meant for replacing graph algorithms with matrix based algorithms as it will be evident later that most matrix based approaches are less efficient than existing graph algorithms which we will also explore and understand why.<br/><br/>
+But matrix operations can be parallelized using either `SIMD` on CPU or `CUDA` on GPU. Even without SIMD or CUDA one can also use multi-threading in C++ using either `TBB` or `OpenMP` libraries. Moreover a lot of matrix algebra operations are optimized in the BLAS library available for C (`cblas`) and CUDA (`cuBLAS`) both.<br/><br/>
+Another advantage of matrix based approaches is that they are useful for `single write multiple reads` i.e. if you are updating the graph less often or only once but reading several times, then the matrix based approaches is expensive only during writes but reads are highly optimized `O(1)`.<br/><br/>
 To work with matrix based algorithms one can create random graphs using the `networkx` package in python as shown below:<br/><br/>
 ```python
 import networkx as nx
@@ -124,7 +126,7 @@ def search_eig(a, n, src, dst):
 ```
 <br/><br/>
 Note that diagonalization is only possible when the matrix is full rank i.e. rank = n. In many real world graphs, the adjacency matrix is low rank as there could be nodes with no edges or cliques or multiple connected components which can reduce the rank of the matrix. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
-The eigenvalue approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrices p, d and p_inv only once and also run the for loop only once and compute b and use it for any pair of source and destination.<br/><br/>
+The eigenvalue approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrices p, d and p_inv only once and also run the for loop only once and compute b and use it for any pair of source and destination in `O(1)` time complexity. On the other hand the BFS or DFS based approach is not useful for repeated queries as it will take same O(n + e) time complexity for any pair of source and destination nodes.<br/><br/>
 ## Connected Components in Undirected Graph
 Given an undirected graph, calculate the number of connected components.<br/><br/>
 This can be solved using breadth first search and union find approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
@@ -135,6 +137,7 @@ def num_components_graph(adj, n):
     for i in range(n):
         if visited[i] == 0:
             ncomp += 1
+            # BFS or Union Find
             queue = collections.deque([i])
             while len(queue) > 0:
                 node = queue.popleft()
@@ -149,19 +152,23 @@ def num_components_graph(adj, n):
 The same problem can be solved using matrix operations as follows:
 ```python
 def num_components_matrix(a, n):
+    a = csr_matrix(a, dtype=np.uint64)
     b = csr_matrix(a, dtype=np.uint64)
     c = csr_matrix(b, dtype=np.uint64)
 
     for _ in range(n):
+        # b[i,j] > 0 implies a path of length k exists from i to j
         b = b.dot(a)
+
+        # c[i,j] > 0 implies a path exists from i to j
         c += b
     
     c[c > 0] = 1
     return np.linalg.matrix_rank(c.toarray())
 ```
 <br/><br/>
-As before, the input matrix a is in sparse format (csr). Note that we are using another matrix `c` to sum the results of b. This is because `b = b.dot(a)` in the k-th iteration of the loop finds whether there is a path of length k between any two nodes. Which implies that if there is a path between 2 nodes i and j of length k-1 but there is no path between them of length k, then `b[i,j] = 0` in the k-th iteration. Thus to aggergate the presence of path across all path lengths, we are using the matrix `c`. `c[i,j] > 0` implies that there is at-least one path from i to j of any length.<br/><br/>
-To get the number of connected components using matrix `c` one can use various strategies. If you observe the final matrix `c` then for a connected component with m nodes `[n1, n2, ... nm]`, `c[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `c[ri,rj] = 1` but `c[ni,rj] = 0` and `c[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `c`. With a csr_format one can find the number of components from this observation as follows:
+Note that we are using another matrix `c` to sum the results of b. This is because `b = b.dot(a)` in the k-th iteration of the loop finds whether there is a path of length k between any two nodes. Which implies that if there is a path between 2 nodes i and j of length k-1 but there is no path between them of length k, then `b[i,j] = 0` in the k-th iteration. Thus to aggergate the presence of path across all path lengths, we are using the matrix `c`. `c[i,j] > 0` implies that there is at-least one path from i to j of any length.<br/><br/>
+To get the number of connected components using matrix `c` one can use various strategies. If you observe the final matrix `c` then for a connected component with m nodes `[n1, n2, ... nm]`, `c[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `c[ri,rj] = 1` but `c[ni,rj] = 0` and `c[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `c`. With a csr_matrix format one can find the number of components from this observation as follows:
 ```python
 def num_comps(a, n):
     visited = [0]*n
@@ -183,8 +190,9 @@ def num_comps(a, n):
     return c
 ```
 <br/><br/>
-But this is not a very `matrix` way of doing things and is very specific to csr_format. Also it looks very similar to the union find algorithm described above.<br/><br/>
-Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
+Time complexity is total number of non-zero entries in the matrix a which is usually << n for sparse matrices. But note that matrix c above will be much less sparse as compared to the input matrix because in the input matrix only non-zero entries are the direct edges but in matrix c the non-zero entries are almost all cells for a single connected component.<br/><br/>
+A more `matrix` way of doing things which is not specific to sparse format is using matrix rank.<br/><br/>
+Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
 ## Number of Paths from Source to Destination In DAG
 Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
@@ -477,4 +485,4 @@ So what we are doing here is that we are finding the maximum distance between ea
 Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
 The cycle detection technique used here can also be used to detect cycles in general as described above.<br/><br/>
 The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
-As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But matrix operations can be parallelized using either SIMD on CPU or CUDA on GPU. Even without SIMD or CUDA one can also use multi-threading in C++ using either TBB or OpenMP libraries. Moreover a lot of matrix algebra operations are optimized in the BLAS library available for C (cblas) and CUDA (cuBLAS) both.<br/><br/>
+As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But the advantage of matrix operations is that they can be parallelized using either SIMD or CUDA.<br/><br/>
