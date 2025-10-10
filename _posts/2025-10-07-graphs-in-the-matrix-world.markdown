@@ -99,6 +99,21 @@ Note that we need to run the exponentiation from `k=0 to n-1` because the path l
 The time complexity of the above code is `O(n^3)` in the worst case because the dot product is `O(n^2)` in the worst case (dense adjacency matrix). Note that realistically we might never hit the worst case because if the graph is linear like a linked list then the dot product using sparse matrix operations is O(1) and total time complexity is O(n).<br/><br/> 
 On the other hand if the graph is fully connected `src` and `dst` are directly connected and thus we exit before any dot product. For cases somewhere in between e.g. `src` and `dst` are length k apart and each node is connected to m nodes on average where m << n, time complexity would be `O(k*m^2)`. Note that k and m are orthogonal i.e. higher m implies lower k and vice versa.<br/><br/>
 This is also verified experimentally where we saw that for n=1000 and p=0.3, `search_matrix` was about 10x faster on average than `search_graph`. The gap reduces when p is smaller implying that the path length between `src` and `dst` increases and vice versa.<br/><br/>
+Another strategy is to use a variant of the Floyd-Warshall all pairs shortest path algorithm as follows:<br/><br/>
+```python
+def search_matrix(a, n, src, dst):
+    # a and b both are a dense numpy arrays
+    b = np.copy(a)
+
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                b[i,j] |= (b[i,k] & b[k,j)
+
+    return b[src,dst]
+```
+<br/><br/>
+Time complexity of the above algorithm is again `O(n^3)`. But it finds a path between every pair of nodes and thus can be re-used for multiple queries over the same graph.<br/><br/>
 Note that instead of exponentiation as we are doing above, another approach exists. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
 ```python
 def search_eig(a, n, src, dst):
@@ -125,7 +140,7 @@ def search_eig(a, n, src, dst):
     return False
 ```
 <br/><br/>
-Note that diagonalization is only possible when the matrix is full rank i.e. rank = n. In many real world graphs, the adjacency matrix is low rank as there could be nodes with no edges or cliques or multiple connected components which can reduce the rank of the matrix. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+Note that diagonalization is only possible when the matrix has all n distinct eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
 The eigenvalue approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrices p, d and p_inv only once and also run the for loop only once and compute b and use it for any pair of source and destination in `O(1)` time complexity. On the other hand the BFS or DFS based approach is not useful for repeated queries as it will take same O(n + e) time complexity for any pair of source and destination nodes.<br/><br/>
 ## Connected Components in Undirected Graph
 Given an undirected graph, calculate the number of connected components.<br/><br/>
@@ -149,50 +164,26 @@ def num_components_graph(adj, n):
     return ncomp
 ```
 <br/><br/>
-The same problem can be solved using matrix operations as follows:
+The same problem can be solved using matrix operations as follows (from previous problem following Floyd-Warshall variant):
 ```python
 def num_components_matrix(a, n):
-    a = csr_matrix(a, dtype=np.uint64)
-    b = csr_matrix(a, dtype=np.uint64)
-    c = csr_matrix(b, dtype=np.uint64)
+    b = np.copy(a)
 
-    for _ in range(n):
-        # b[i,j] > 0 implies a path of length k exists from i to j
-        b = b.dot(a)
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                b[i,j] |= (b[i,k] & b[k,j)
 
-        # c[i,j] > 0 implies a path exists from i to j
-        c += b
-    
-    c[c > 0] = 1
-    return np.linalg.matrix_rank(c.toarray())
+    return np.linalg.matrix_rank(b.toarray())
 ```
 <br/><br/>
-Note that we are using another matrix `c` to sum the results of b. This is because `b = b.dot(a)` in the k-th iteration of the loop finds whether there is a path of length k between any two nodes. Which implies that if there is a path between 2 nodes i and j of length k-1 but there is no path between them of length k, then `b[i,j] = 0` in the k-th iteration. Thus to aggergate the presence of path across all path lengths, we are using the matrix `c`. `c[i,j] > 0` implies that there is at-least one path from i to j of any length.<br/><br/>
-To get the number of connected components using matrix `c` one can use various strategies. If you observe the final matrix `c` then for a connected component with m nodes `[n1, n2, ... nm]`, `c[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `c[ri,rj] = 1` but `c[ni,rj] = 0` and `c[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `c`. With a csr_matrix format one can find the number of components from this observation as follows:
-```python
-def num_comps(a, n):
-    visited = [0]*n
-    c = 0
-    for i in range(len(a.indptr)-1):
-        s = a.indptr[i]
-        e = a.indptr[i+1] if i+1 < len(a.indptr) else n
-        flag = False
-        for k in range(s, e):
-            j = a.indices[k]
-            if visited[j] == 0:
-                flag = True
-                visited[j] = 1
-            else:
-                break
-        if flag:
-            c += 1
-    
-    return c
-```
-<br/><br/>
-Time complexity is total number of non-zero entries in the matrix a which is usually << n for sparse matrices. But note that matrix c above will be much less sparse as compared to the input matrix because in the input matrix only non-zero entries are the direct edges but in matrix c the non-zero entries are almost all cells for a single connected component.<br/><br/>
-A more `matrix` way of doing things which is not specific to sparse format is using matrix rank.<br/><br/>
-Since we have seen above that for nodes in the same component have the same row values in the matrix `c` (after setting all non-zero values to 1) and nodes from different components are disjoint or orthogonal, thus if we can calculate the number of linearly independent rows in the matrix `c` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
+Let's prove that `b[i,j] > 0` implies that there is a path from node i to j in the above algorithm:<br/><br/>
+Let's suppose there is a path from i to j as follows: i -> k1 -> k2 -> j. Thus we will already have `b[i,k1] = 1`, `b[k1,k2] = 1` and `b[k2,j] = 1`.
+If k1 is numbered lower than k2 then in the 1st iteration we will find the path `b[i,k2]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k2] & b[k2,j])`.<br/><br/>
+On the other hand if k2 is numbered lower than k1, then in 1st iteration we will find the path `b[k1,j]=1` and in the next iteration `b[i,j]=1` because we have `b[i,j] |= (b[i,k1] & b[k1,j])`.<br/><br/>
+Thus, when k=0, we discover all paths of the form `i->0->j`. In the next iteration, when k=1, we discover all paths of the form `i->1->j`, `i->0->1->j` (because we have already found `i->0->1` when k=0), `i->1->0->j` (because we have already found `1->0->j` when k=0). When k=2, we discover all paths of the form `i->2->j`, `i->0->1->2->j` (because we have already found `i->0->1->2` when k=1), `i->0->2->1->j` (because we have already found `i->0->2` when k=0 and `2->1->j` when k=1) and so on. Thus, for k we discover all paths i->(permutation of 0,1,2...k)->j which is basically all paths between 2 nodes separated by k edges.<br/><br/>
+To get the number of connected components using matrix `b` one can use various strategies. If you observe the final matrix `b` then for a connected component with m nodes `[n1, n2, ... nm]`, `b[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `b[ri,rj] = 1` but `b[ni,rj] = 0` and `b[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `b`.<br/><br/>
+Thus if we can calculate the number of linearly independent rows in the matrix `b` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
 ## Number of Paths from Source to Destination In DAG
 Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
