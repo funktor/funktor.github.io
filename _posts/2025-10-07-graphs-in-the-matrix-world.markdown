@@ -50,6 +50,7 @@ for i, j in graph:
     # adj[j] += [i]
 ```
 <br/><br/>
+
 ## Graph Search
 Search if there is a path from a source node to a destination node.<br/><br/>
 This can be solved easily using breadth first search approach as shown below. Time complexity of the approach is O(n + e) where n is the total number of nodes and e is the total number of edges because we are exploring each node once and then all edges out of that node to get the adjacent nodes:<br/><br/>
@@ -114,34 +115,9 @@ def search_matrix(a, n, src, dst):
 ```
 <br/><br/>
 Time complexity of the above algorithm is again `O(n^3)`. But it finds a path between every pair of nodes and thus can be re-used for multiple queries over the same graph.<br/><br/>
-Note that instead of exponentiation as we are doing above, another approach exists. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
-```python
-def search_eig(a, n, src, dst):
-    b = np.copy(a)
-
-    d, p = np.linalg.eig(b)
-    d = np.diag(d)
-    p_inv = np.linalg.inv(p)
-    # b = p @ d @ p_inv
-    f = d
-
-    for _ in range(n):
-        if b[src,dst] != 0:
-            return True
-
-        # f = d^k
-        f *= d
-        # To handle complex numbers we can either take absolute value or take real part
-        b = np.abs(p @ f @ p_inv)
-
-        # Truncate very small values to 0 as these are mostly precision errors
-        b[b < 1e-10] = 0
-
-    return False
-```
+The matrix approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrix `b` only once and use it for any pair of source and destination in `O(1)` time complexity. On the other hand the BFS or DFS based approach is not useful for repeated queries as it will take same O(n + e) time complexity for any pair of source and destination nodes.<br/><br/>
 <br/><br/>
-Note that diagonalization is only possible when the matrix has all n distinct eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
-The eigenvalue approach is useful when we want to run the search for multiple pairs of source and destination nodes on the same graph. We need to compute the matrices p, d and p_inv only once and also run the for loop only once and compute b and use it for any pair of source and destination in `O(1)` time complexity. On the other hand the BFS or DFS based approach is not useful for repeated queries as it will take same O(n + e) time complexity for any pair of source and destination nodes.<br/><br/>
+
 ## Connected Components in Undirected Graph
 Given an undirected graph, calculate the number of connected components.<br/><br/>
 This can be solved using breadth first search and union find approach as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
@@ -186,6 +162,8 @@ Thus, for k we discover all paths i->(permutation of 0,1,2...k)->j which is basi
 To get the number of connected components using matrix `b` one can use various strategies. If you observe the final matrix `b` then for a connected component with m nodes `[n1, n2, ... nm]`, `b[ni,nj] = 1` where ni and nj corresponds to the nodes in the component and if there is another component of p nodes `[r1, r2, ... rp]` then `b[ri,rj] = 1` but `b[ni,rj] = 0` and `b[ri,nj] = 0` i.e. between any two nodes across components the value is 0 in the matrix `b`.<br/><br/>
 Thus if we can calculate the number of linearly independent rows in the matrix `b` we will get the number of connected components and the number of linearly independent rows in the matrix can be computed from the `rank` of the matrix.<br/><br/>
 Time complexity of the above `num_components_matrix` code is `O(n^3)`. Unlike search where it was unlikely to observe the worst case time complexity, for number of components problem this is not the case as for most cases we are going to observe `O(n^3)` running times which makes this approach computationally much more expensive than a standard union find operation.<br/><br/>
+<br/><br/>
+
 ## Number of Paths from Source to Destination In DAG
 Given a directed acyclic graph (DAG), calculate the number of paths from source node to destination node.<br/><br/>
 This can be solved using recursion as shown below. Time complexity of the approach shown below is O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
@@ -209,22 +187,6 @@ def num_paths_graph(adj, n, src, dst):
     return num_paths_graph_recurse(adj, n, src, dst, dp)
 ```
 <br/><br/>
-Non-recursive algorithm using BFS:<br/><br/>
-```python
-def num_paths_graph(adj, n, src, dst):
-    queue = collections.deque([src])
-    dp = [0]*n
-
-    while len(queue) > 0:
-        node = queue.popleft()
-        dp[node] += 1
-
-        for b in adj[node]:
-            queue.append(b)
-    
-    return dp[dst]
-```
-<br/><br/>
 The same problem can be solved using matrix operations as we have seen earlier in the following manner:<br/><br/>
 ```python
 def num_paths_matrix(a, n, src, dst):
@@ -233,16 +195,20 @@ def num_paths_matrix(a, n, src, dst):
     for k in range(n):
         for i in range(n):
             for j in range(n):
-                # number of paths from i to j is summation of product of num paths from i to k and k to j
+                # number of paths from i to j is summation of product of num paths from i to k and k to j for all k
+                # each (i,j) pair can be computed in parallel for a k
                 b[i,j] += b[i,k] * b[k,j]
 
     return b[src,dst]
 ```
 <br/><br/>
-In the above code input `a` is a dense matrix but transformed into sparse format but before that we set the diagonal elements to 0 since we are assuming that it is a DAG and there are no cycles. Non-zero diagonal element indicates there is path to self. Time complexity of the above code is `O(n^3)` as seen before also.<br/><br/>
+Time complexity of the above approach is `O(n^3)`.<br/><br/>
+Although the time complexity is higher than recursion approach, observe that the function `num_paths_matrix` is reusable implying that once we compute the matrix b and if it does not change, we can answer queries for number of paths between any pair of source and destination nodes in `O(1)` time complexity whereas the recursion approach requires `O(n + e)` for each query.
+<br/><br/>
+
 ## Single Source Shortest Path in Unweighted DAG
 Given a directed acyclic graph (DAG), calculate the distance in terms of number of edges from a source node to all other nodes.<br/><br/>
-This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using matrix operations, we can implement as shown below:<br/><br/>
+This can be solved simply using BFS with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges. Not showing the code here as it is similar to BFS traversal shown above. For solving the shortest path problem using sparse matrix operations, we can implement as shown below:<br/><br/>
 ```python
 def single_source_shortest_dist_unweighted(a, n, src):
     a[a == 0] = n+1
@@ -346,78 +312,9 @@ def dist_mat_mul(a, b, n, m, p):
 ```
 <br/><br/>
 Time complexity of the sparse distance implementation is `O(G*H*log(GH)` where G is the total number of non-zero elements in input sparse matrix a and H is the average number of non-zero elements in each row of input sparse matrix b. In the worst case when it is a dense matrix, time complexity is `O(n^3*log(n))` which is worse than dense matrix multiplication. For high sparsity, the time complexity is usually much smaller of the order of `O(n^2*log(n))`.<br/><br/>
-Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the standard graph algorithm we have to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
+Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the  graph algorithm we need to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
 <br/><br/>
-## Detect presence of cycle in a directed graph
-Given a directed graph, return True if there is a cycle present else return False.<br/><br/>
-This can be solved using DFS or recursion as shown below. with a time complexity of O(n + e) where n is the total number of nodes and e is the number of edges:<br/><br/>
-```python
-def dfs_cycle(adj, n, i, visited):
-    for j in adj[i]:
-        if visited[j] == 0:
-            visited[j] = 1
-            h = dfs_cycle(adj, n, j, visited)
-            visited[j] = 0
-            if h:
-                return True
-        else:
-            return True
-        
-    return False
 
-def has_cycle_graph(adj, n):
-    visited = [0]*n
-    for i in range(n):
-        visited[i] = 1
-        h = dfs_cycle(adj, n, i, visited)
-        visited[i] = 0
-        if h:
-            return True
-        
-    return False
-```
-<br/><br/>
-The corresponding matrix solution is again a very much similar operation as seen above for some other problems:<br/><br/>
-```python
-def has_cycle(a, n):
-    a = csr_matrix(a)
-    b = csr_matrix(a)
-
-    for _ in range(n):
-        b = b.dot(a)
-        # There is a path of length k from a node to itself
-        if b.diagonal().max() > 0:
-            return True
-
-    return False
-```
-<br/><br/>
-If there is a cycle in the graph, at-least one diagonal element will have a non-zero value i.e. number of paths to self is non-zero in case a cycle is present. Time complexity of this approach is `O(n^4)`. The time complexity can be brought down to `O(n^3)` using an approach which is a variant of the all pairs shortest path algorithm is shown in the next problem.<br/><br/>
-One can also use the matrix diagonalization technique introduced above. But one needs to be careful while using this technique as it only works when the matrix is full rank i.e rank=n. Most real world matrices representing graphs will be low rank because there can multiple components or nodes with no edges etc. In case matrix diagonalization is possible time complexity can be brought down to `O(n^3)`.<br/><br/>
-```python
-def has_cycle(a, n):
-    d, p = np.linalg.eig(a)
-    d = np.diag(d)
-    p_inv = np.linalg.inv(p)
-    # a = p @ d @ p_inv
-    f = d
-
-    for _ in range(n):
-        # f = d^k
-        f *= d
-        # Convert complex values to real values either by taking real part or taking the absolute value
-        g = np.abs(p @ f @ p_inv)
-
-        # Truncate very small values to 0
-        g[g < 1e-10] = 0
-        if g.diagonal().max() > 0:
-            return True
-
-    return False
-```
-<br/><br/>
-In each iteration we are exponentiating the diagonal matrix. With an optimized implementation `p @ f @ p_inv` should be `O(n^2)` since f is a diagonal matrix. The overall time complexity thus would be `O(n^3)`.<br/><br/>
-<br/><br/>
 ## Toplogical Sorting
 Given a directed graph, return toplogical sorting of the nodes else return empty list if a cycle exists.<br/><br/>
 Standard approach for solving toplogical sorting problems with an adjacency list. Time complexity of the below algorithm is O(n + e):<br/><br/>
@@ -473,7 +370,7 @@ def topological_sort_matrix(a, n):
 <br/><br/>
 So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort.<br/><br/>
 Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
-The cycle detection technique used here can also be used to detect cycles in general in the previous problem.<br/><br/>
+The cycle detection technique used here can also be used to detect cycles in general.<br/><br/>
 The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
 As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But the advantage of matrix operations is that they can be parallelized using either SIMD or CUDA. For e.g. in the above toplogical sort implementation for each k, `b[i,j]` can be computed in parallel.<br/><br/>
 <br/><br/>
@@ -520,11 +417,7 @@ def connections_at_degree(a, n, src, D):
     return np.where(b[src] > 0)
 ```
 <br/><br/>
-Note that diagonalization is only possible when the matrix has all n distinct eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+Note that diagonalization is only possible when the matrix has all n distinct real eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
 The for-loop works with diagonal matrix and multiplying two diagonal matrices is `O(n)` (multiple corresponding diagonal elements). Thus the time complexity of the for-loop is O(D*n). Overall time complexity is `O(n^3 + D*n)` which is better than `O(D*n^3)` of the exponentiating approach above.<br/><br/>
-Again this approach is useful when we have many queries for different source nodes as each query can be served in `O(1)` time complexity.<br/><br/>
+Again this approach is useful when we have many queries for different source nodes for same degree D as each query can be served in `O(1)` time complexity.<br/><br/>
 <br/><br/>
-
-## PageRank
-
-## Graph Partitioning
