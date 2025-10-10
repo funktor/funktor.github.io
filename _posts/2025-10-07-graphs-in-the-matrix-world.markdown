@@ -5,7 +5,7 @@ date:   2025-10-10 18:50:11 +0530
 categories: software-engineering
 ---
 Working with both graphs and matrices made me realize that a lot of problems in graphs can also be solved using matrices (and a bit of linear algebra).<br/><br/>
-Although I have not explored all possible graph problems but few commonly used such as searching, connected components, shortest path, detect cycles, number of paths, topological sorting etc. This post is meant to be a fun exercise and not meant for replacing graph algorithms with matrix based algorithms as it will be evident later that most matrix based approaches are less efficient than existing graph algorithms which we will also explore and understand why.<br/><br/>
+Although I have not explored all possible graph problems but few commonly used such as searching, connected components, shortest path, detect cycles, number of paths, topological sorting etc. This post is meant to be a fun exercise and not meant for replacing graph algorithms with matrix based algorithms as it will be evident later that many matrix based approaches are less efficient than existing graph algorithms which we will also explore and understand why.<br/><br/>
 But matrix operations can be parallelized using either `SIMD` on CPU or `CUDA` on GPU. Even without SIMD or CUDA one can also use multi-threading in C++ using either `TBB` or `OpenMP` libraries. Moreover a lot of matrix algebra operations are optimized in the BLAS library available for C (`cblas`) and CUDA (`cuBLAS`) both.<br/><br/>
 Another advantage of matrix based approaches is that they are useful for `single write multiple reads` i.e. if you are updating the graph less often or only once but reading several times, then the matrix based approaches is expensive only during writes but reads are highly optimized `O(1)`.<br/><br/>
 To work with matrix based algorithms one can create random graphs using the `networkx` package in python as shown below:<br/><br/>
@@ -457,11 +457,11 @@ We can solve the same problem using matrix operations as shown below:<br/><br/>
 def topological_sort_matrix(a, n):
     b = np.copy(a)
     b[b == 0] = -(n+1)
-    np.fill_diagonal(b, 0)
 
     for k in range(n):
         for i in range(n):
             for j in range(n):
+                # each (i,j) pair can be computed in parallel for a k
                 b[i,j] = max(b[i,j], b[i,k] + b[k,j])
                 # cycle detected
                 if i == j and b[i,j] > 0:
@@ -473,6 +473,12 @@ def topological_sort_matrix(a, n):
 <br/><br/>
 So what we are doing here is that we are finding the maximum distance between each pair of nodes and then the nodes are sorted based on maximum distance from any other node in increasing order. The node which is at a maximum distance from any node should come at the end of the topological sort.<br/><br/>
 Time complexity of the `topological_sort_matrix` is `O(n^3)`.<br/><br/>
-The cycle detection technique used here can also be used to detect cycles in general as described above.<br/><br/>
+The cycle detection technique used here can also be used to detect cycles in general in the previous problem.<br/><br/>
 The above algorithm is a variant of the `Floyd-Warshall` all pairs shortest path algorithm.<br/><br/>
-As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But the advantage of matrix operations is that they can be parallelized using either SIMD or CUDA.<br/><br/>
+As seen above, for most problems matrix operations to solve graph problems has higher time complexity as compared to graph algorithms like BFS or DFS and recursion based approaches. But the advantage of matrix operations is that they can be parallelized using either SIMD or CUDA. For e.g. in the above toplogical sort implementation for each k, `b[i,j]` can be computed in parallel.<br/><br/>
+
+## Connections at degree D
+
+## PageRank
+
+## Graph Partitioning
