@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Graphs in the Matrix world"
-date:   2025-10-10 18:50:11 +0530
+date:   2025-10-07 18:50:11 +0530
 categories: software-engineering
 ---
 Working with both graphs and matrices made me realize that a lot of problems in graphs can also be solved using matrices (and a bit of linear algebra).<br/><br/>
@@ -226,7 +226,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
     return b.toarray()
 ```
 <br/><br/>
-Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length k we find the distance from source to all other nodes. Here the distance is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:
+Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length k we find the distance from source to all other nodes. Here the distance is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:<br/><br/>
 ```python
 def dist_mat_mul(a, b, n, m, p):
     c = np.zeros((n,p), dtype=np.uint64)
@@ -242,7 +242,7 @@ def dist_mat_mul(a, b, n, m, p):
     return c
 ```
 <br/><br/>
-For sparse matrices, a memory efficient sparse implementation is a bit involved and can be implemented as shown below:
+For sparse matrices, a memory efficient sparse implementation is a bit involved and can be implemented as shown below:<br/><br/>
 ```python
 def dist_mat_mul(a, b, n, m, p):
     cdata = []
@@ -377,7 +377,7 @@ As seen above, for most problems matrix operations to solve graph problems has h
 
 ## Connections at degree D
 Given a directed graph of followers on a social network, find all followers of degree D from a given source user (node).<br/><br/>
-In practice this problem can be solved using BFS upto level D in the graph w.r.t. the source node and has a time complexity of O(n + e) similar as above problems. Using matrix we can solve the same problem as following:
+In practice this problem can be solved using BFS upto level D in the graph w.r.t. the source node and has a time complexity of O(n + e) similar as above problems. Using matrix we can solve the same problem as following:<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
     b = np.copy(a)
