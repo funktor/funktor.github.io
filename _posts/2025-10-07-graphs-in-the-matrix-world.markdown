@@ -109,7 +109,7 @@ def search_matrix(a, n, src, dst):
     for k in range(n):
         for i in range(n):
             for j in range(n):
-                b[i,j] |= (b[i,k] & b[k,j)
+                b[i,j] |= (b[i,k] & b[k,j])
 
     return b[src,dst]
 ```
