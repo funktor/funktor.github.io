@@ -105,6 +105,8 @@ Another strategy is to use a variant of the Floyd-Warshall all pairs shortest pa
 def search_matrix(a, n, src, dst):
     # a and b both are a dense numpy arrays
     b = np.copy(a)
+    # src and dst could be same
+    np.fill_diagonal(b, 1)
 
     for k in range(n):
         for i in range(n):
@@ -144,11 +146,13 @@ The same problem can be solved using matrix operations as follows (from previous
 ```python
 def num_components_matrix(a, n):
     b = np.copy(a)
+    # each node is also in its own component
+    np.fill_diagonal(b, 1)
 
     for k in range(n):
         for i in range(n):
             for j in range(n):
-                b[i,j] |= (b[i,k] & b[k,j)
+                b[i,j] |= (b[i,k] & b[k,j])
 
     return np.linalg.matrix_rank(b)
 ```
@@ -223,6 +227,20 @@ def num_paths_matrix(a, n, src, dst):
 <br/><br/>
 Time complexity of the above approach is `O(n^3)`.<br/><br/>
 Although the time complexity is higher than recursion approach, observe that the function `num_paths_matrix` is reusable implying that once we compute the matrix b and if it does not change, we can answer queries for number of paths between any pair of source and destination nodes in `O(1)` time complexity whereas the recursion approach requires `O(n + e)` for each query.<br/><br/>
+A similar approach but using sparse matrix format is shown below:<br/><br/>
+```python
+def num_paths_matrix(a, n, src, dst):
+    b = csr_matrix(a[src:src+1])
+    c = csr_matrix(b)
+
+    for _ in range(n):
+        b = b.dot(a)
+        c += b
+
+    return c[0,dst]
+```
+<br/><br/>
+The sparse matrix approach above also has a worst case time complexity of `O(n^3)` but it cannot be used for all pairs of source and destination but only single source and multiple destinations. Although due to the sparse nature of the adjacency matrix `a`, the dot product is much more efficient and the overall run time is faster than the approach shown above. Thus if your problem requires finding number of paths from the same source but different destinations, the sparse matrix approach is usually beneficial.<br/><br/>
 <br/><br/>
 
 ## Single Source Shortest Path in Unweighted DAG
@@ -245,6 +263,22 @@ def single_source_shortest_dist_unweighted(a, n, src):
     return b.toarray()
 ```
 <br/><br/>
+And using dense matrix operations as shown above for other problems:
+```python
+def single_source_shortest_dist_unweighted(a, n, src):
+    b = np.copy(a)
+    np.fill_diagonal(b, 0)
+
+    for k in range(n):
+        for i in range(n):
+            for j in range(n):
+                # each (i,j) pair can be computed in parallel for a k
+                b[i,j] = min(b[i,j], b[i,k] + b[k,j])
+
+    return b[src,dst]
+```
+<br/><br/>
+Both the above approach has a time complexity of `O(n^3)` but as seen above the dense matrix approach is advantageous when we have to find the shortest path from any source whereas the sparse matrix approach requires fewer operations and is usually faster than the dense matrix approach but it cannot be reused for all source nodes.<br/><br/>
 Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length k we find the distance from source to all other nodes. Here the distance is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:<br/><br/>
 ```python
 def dist_mat_mul(a, b, n, m, p):
@@ -255,7 +289,7 @@ def dist_mat_mul(a, b, n, m, p):
             s = m+1
             for k in range(m):
                 # In standard matrix dot product it would have been s += a[i,k]*b[k,j]
-                s = minimum(s, a[i,k] + b[k,j])
+                s = min(s, a[i,k] + b[k,j])
             c[i,j] = s
 
     return c
