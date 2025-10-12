@@ -263,7 +263,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
     return b.toarray()
 ```
 <br/><br/>
-And using dense matrix operations as shown above for other problems:
+And using dense matrix operations as shown above for other problems:<br/><br/>
 ```python
 def single_source_shortest_dist_unweighted(a, n, src):
     b = np.copy(a)
@@ -275,7 +275,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
                 # each (i,j) pair can be computed in parallel for a k
                 b[i,j] = min(b[i,j], b[i,k] + b[k,j])
 
-    return b[src,dst]
+    return b[src]
 ```
 <br/><br/>
 Both the above approach has a time complexity of `O(n^3)` but as seen above the dense matrix approach is advantageous when we have to find the shortest path from any source whereas the sparse matrix approach requires fewer operations and is usually faster than the dense matrix approach but it cannot be reused for all source nodes.<br/><br/>
@@ -368,7 +368,7 @@ Time complexity of the sparse distance implementation is `O(G*H*log(GH)` where G
 Time complexity of the `single_source_shortest_dist_unweighted` method is O(n^3). For weighted graphs there won't be any changes to the above code although for the  graph algorithm we need to use either djikstra or bellman-ford rather than simple BFS. The time complexity of which is greater than O(n + e).<br/><br/>
 <br/><br/>
 
-## Toplogical Sorting
+## Topological Sorting
 Given a directed graph, return toplogical sorting of the nodes else return empty list if a cycle exists.<br/><br/>
 Standard approach for solving toplogical sorting problems with an adjacency list. Time complexity of the below algorithm is O(n + e):<br/><br/>
 ```python
