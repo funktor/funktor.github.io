@@ -260,7 +260,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
         # b[i,j] is the minimum distance from node i to node j
         b = b.minimum(c)
 
-    return b.toarray()
+    return b.toarray()[0].tolist()
 ```
 <br/><br/>
 And using dense matrix operations as shown above for other problems:<br/><br/>
@@ -275,7 +275,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
                 # each (i,j) pair can be computed in parallel for a k
                 b[i,j] = min(b[i,j], b[i,k] + b[k,j])
 
-    return b[src]
+    return b[src].tolist()
 ```
 <br/><br/>
 Both the above approach has a time complexity of `O(n^3)` but as seen above the dense matrix approach is advantageous when we have to find the shortest path from any source whereas the sparse matrix approach requires fewer operations and is usually faster than the dense matrix approach but it cannot be reused for all source nodes.<br/><br/>
@@ -445,6 +445,29 @@ def connections_at_degree(a, n, src, D):
 As seen above in Graph Search problem, if we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` and `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` equals the number of paths of length k from i to j.<br/><br/>
 The time complexity of the above code is `O(D*n^3)` because the dot product is `O(n^3)`.<br/><br/>
 Although this approach has a higher time complexity than BFS but it is reusable i.e. once we have computed `b` and if the graph is not updated then we can answer the query for followers at a fixed degree D from any source user in `O(1)` time complexity whereas in the BFS approach, each query will take O(n + e) time complexity. So if we have many reads but few writes the matrix approach makes more sense.<br/><br/>
+The following variation which only considers the `src` node row in the matrix has time complexity of `O(D*n^2)` but is not reusable.<br/><br/>
+```python
+def connections_at_degree(a, n, src, D):
+    b = np.copy(a[src:src+1])
+
+    for k in range(D):
+        # b[i,j] > 0 implies there is a path of length k from i to j 
+        b = b @ a
+
+    return np.where(b[0] > 0)
+```
+<br/><br/>
+which can be further improved using sparse matrix as follows:<br/><br/>
+```python
+def num_paths_matrix(a, n, src, D):
+    b = csr_matrix(a[src:src+1])
+
+    for k in range(D):
+        b = b.dot(a)
+
+    return np.where(b.toarray()[0] > 0)
+```
+<br/><br/>
 Instead of exponentiation as we are doing above, another approach is diagonalization. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
