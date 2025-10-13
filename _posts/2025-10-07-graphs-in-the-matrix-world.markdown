@@ -459,7 +459,7 @@ def connections_at_degree(a, n, src, D):
 <br/><br/>
 which can be further improved using sparse matrix as follows:<br/><br/>
 ```python
-def num_paths_matrix(a, n, src, D):
+def connections_at_degree(a, n, src, D):
     b = csr_matrix(a[src:src+1])
 
     for k in range(D):
@@ -496,3 +496,4 @@ Note that diagonalization is only possible when the matrix has all n distinct re
 The for-loop works with diagonal matrix and multiplying two diagonal matrices is `O(n)` (multiple corresponding diagonal elements). Thus the time complexity of the for-loop is O(D*n). Overall time complexity is `O(n^3 + D*n)` which is better than `O(D*n^3)` of the exponentiating approach above.<br/><br/>
 Again this approach is useful when we have many queries for different source nodes for same degree D as each query can be served in `O(1)` time complexity.<br/><br/>
 <br/><br/>
+The codes in Python and some of the methods are compiled with cython/C++ at the following repository: [matgraph](https://github.com/funktor/matgraph)
