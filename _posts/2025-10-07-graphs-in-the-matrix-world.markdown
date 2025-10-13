@@ -430,17 +430,43 @@ As seen above, for most problems matrix operations to solve graph problems has h
 <br/><br/>
 
 ## Connections at degree D
-Given a directed graph of followers on a social network, find all followers of degree D from a given source user (node).<br/><br/>
-In practice this problem can be solved using BFS upto level D in the graph w.r.t. the source node and has a time complexity of O(n + e) similar as above problems. Using matrix we can solve the same problem as following:<br/><br/>
+Given a directed graph of followers on a social network, find all followers of degree D from a given source user (node). The graph may contain cycles.<br/><br/>
+In practice this problem can be solved using BFS upto level D in the graph w.r.t. the source node and has a time complexity of O(D*n + e).<br/><br/>
+```python
+def connections_graph(adj, n, src, D):
+    queue = collections.deque([(src, 0)])
+    out = []
+    depths = [-1]*n
+    depths[src] = 0
+
+    while len(queue) > 0:
+        node, depth = queue.popleft()
+
+        if depth == D:
+            out += [node]
+        else:
+            for b in adj[node]:
+                if depth+1 > depths[b]:
+                    queue.append((b, depth+1))
+                    depths[b] = depth+1
+                    
+    return out
+```
+<br/><br/>
+Since a node can occur at multiple distances from a given source node thus we have to explore each possible node at all possible depths or degree upto D from source thus incurring a time complexity of O(D*n + e). Each edge is explored only once.<br/><br/>
+Using matrix we can solve the same problem as following:<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
+    if D == 0:
+        return [src]
+
     b = np.copy(a)
 
-    for k in range(D):
+    for k in range(D-1):
         # b[i,j] > 0 implies there is a path of length k from i to j 
         b = b @ a
 
-    return np.where(b[src] > 0)
+    return np.where(b[src] > 0)[0].tolist()
 ```
 <br/><br/>
 As seen above in Graph Search problem, if we compute the square of matrix a i.e. `a^2`, it represents the 2nd degree edges i.e. if `u=a^2` then `u[i,j] > 0` implies that there is a path of length 2 from i to j. In general if `u=a^k` and `u[i,j] > 0` implies that there is a path of length k from i to j. When `a` is a binary matrix then we will see that `u[i,j]` equals the number of paths of length k from i to j.<br/><br/>
@@ -449,29 +475,38 @@ Although this approach has a higher time complexity than BFS but it is reusable 
 The following variation which only considers the `src` node row in the matrix has time complexity of `O(D*n^2)` but is not reusable.<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
+    if D == 0:
+        return [src]
+    
     b = np.copy(a[src:src+1])
 
-    for k in range(D):
-        # b[i,j] > 0 implies there is a path of length k from i to j 
+    for _ in range(D-1):
+        # b[0,j] > 0 implies there is a path of length k from src to j
         b = b @ a
 
-    return np.where(b[0] > 0)
+    return np.where(b[0] > 0)[0].tolist()
 ```
 <br/><br/>
 which can be further improved using sparse matrix as follows:<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
+    if D == 0:
+        return [src]
+    
     b = csr_matrix(a[src:src+1])
 
-    for k in range(D):
+    for _ in range(D-1):
         b = b.dot(a)
 
-    return np.where(b.toarray()[0] > 0)
+    return np.where(b.toarray()[0] > 0)[0].tolist()
 ```
 <br/><br/>
 Instead of exponentiation as we are doing above, another approach is diagonalization. The adjacency matrix `a` can be diagonalized as `a=P.D.P^-1` where columns of P are the eigenvectors of `a` and D is a diagonal matrix with the eigenvalues of `a` along the diagonal and `P^-1` is the inverse of P. Thus `a^2=P.D.P^-1.P.D.P^-1=P.D^2.P^-1`. In general we can write `a^k=P.D^k.P^-1`.<br/><br/>
 ```python
 def connections_at_degree(a, n, src, D):
+    if D == 0:
+        return [src]
+
     b = np.copy(a)
 
     d, p = np.linalg.eig(b)
@@ -490,10 +525,10 @@ def connections_at_degree(a, n, src, D):
     # Truncate very small values to 0 as these are mostly precision errors
     b[b < 1e-10] = 0
 
-    return np.where(b[src] > 0)
+    return np.where(b[src] > 0)[0].tolist()
 ```
 <br/><br/>
-Note that diagonalization is only possible when the matrix has all n distinct real eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
+Note that diagonalization is only possible when it has n linearly independent eigenvectors. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
 The for-loop works with diagonal matrix and multiplying two diagonal matrices is `O(n)` (multiple corresponding diagonal elements). Thus the time complexity of the for-loop is O(D*n). Overall time complexity is `O(n^3 + D*n)` which is better than `O(D*n^3)` of the exponentiating approach above.<br/><br/>
 Again this approach is useful when we have many queries for different source nodes for same degree D as each query can be served in `O(1)` time complexity.<br/><br/>
 The codes in Python with some of the methods compiled with cython/C++ at the following repository: [matgraph](https://github.com/funktor/matgraph)
