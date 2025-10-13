@@ -279,6 +279,7 @@ def single_source_shortest_dist_unweighted(a, n, src):
 ```
 <br/><br/>
 Both the above approach has a time complexity of `O(n^3)` but as seen above the dense matrix approach is advantageous when we have to find the shortest path from any source whereas the sparse matrix approach requires fewer operations and is usually faster than the dense matrix approach but it cannot be reused for all source nodes.<br/><br/>
+The sparse matrix approach also suffers from low sparsity because we are setting all 0s except for the diagonal elements to n+1 i.e. the sparsity ratio is only 1/n whcih makes the sparse matrix approach less favorable.<br/><br/>
 Again since this is a DAG we set the diagonal elements in the adjacency matrix to 0. Also since we are interested in minimum distance we set all non-zero values in the adjacency matrix to n+1 (indicating no path yet). For each path length k we find the distance from source to all other nodes. Here the distance is implemented using the function `dist_mat_mul` which is nothing but matrix product where the multiplication is replaced with addition and addition with minimum operator. For dense matrices `a` and `b` the `dist_mat_mul` method would look something like below:<br/><br/>
 ```python
 def dist_mat_mul(a, b, n, m, p):
@@ -495,5 +496,4 @@ def connections_at_degree(a, n, src, D):
 Note that diagonalization is only possible when the matrix has all n distinct real eigenvalues. Time complexity of eigenvalue computation as well as inverse computation is `O(n^3)` thus the overall time complexity remains unchanged.<br/><br/>
 The for-loop works with diagonal matrix and multiplying two diagonal matrices is `O(n)` (multiple corresponding diagonal elements). Thus the time complexity of the for-loop is O(D*n). Overall time complexity is `O(n^3 + D*n)` which is better than `O(D*n^3)` of the exponentiating approach above.<br/><br/>
 Again this approach is useful when we have many queries for different source nodes for same degree D as each query can be served in `O(1)` time complexity.<br/><br/>
-<br/><br/>
-The codes in Python and some of the methods are compiled with cython/C++ at the following repository: [matgraph](https://github.com/funktor/matgraph)
+The codes in Python with some of the methods compiled with cython/C++ at the following repository: [matgraph](https://github.com/funktor/matgraph)
