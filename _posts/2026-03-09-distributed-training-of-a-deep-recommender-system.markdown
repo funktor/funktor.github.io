@@ -4,10 +4,10 @@ title:  "Distributed Training of a Deep Recommender System"
 date:   2026-03-09 18:50:11 +0530
 categories: ml
 ---
-Designing a recommender system is not a trivial problem to solve and big tech companies have invested hundreds of millions into building the best recommender systems platform. While I will not go through the details of designing a full recommender system in this post and I would like to keep that for a future post. In this post I would be walking through the steps I followed train a deep recommender system (a recommender system implemented using deep neural networks) in a distributed environment i.e. where we have a cluster of nodes/pods each with a limited memory and limited number of CPUs/GPUs.<br/><br/>
+Designing a recommender system is not a trivial problem to solve and big tech companies have invested hundreds of millions into building the best recommender systems platform. While I will not go through the details of designing a full recommender system in this post and I would like to keep that for a future post. In this post I would be walking through the steps I followed to train a deep recommender system (a recommender system implemented using deep neural networks) in a distributed environment i.e. where we have a cluster of nodes/pods each with a limited memory and limited number of CPUs/GPUs.<br/><br/>
 Please note that this was a weekly side project that I felt would be fun to do. Many of the codes or design that are shown here may not be fully optimized for production. Athough I will try to point out scopes for improvements wherever possible to the best of my knowledge. Also, I leveraged some of my team's reserved and not in use GPU kubernetes pods to run the model so to keep the post short I will not go through the setup of the distributed environment such as provisioning nodes in GCP or writing kebernetes YAML to spin up multiple GPU pods etc.<br/><br/>
 The dataset used for training the deep recommender system is MovieLens-32M (~32 million movie ratings).<br/><br/>
-The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp),  movies metadata such as title, genre etc. and movie tags. We will be using all of these data as features to train a regression model to predict the rating given the user and movie input features and any other features. To be more precise we are going to use the following features for the model.<br/><br/>
+The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp),  movies metadata such as title, genre etc. and movie tags. I will be using all of these data as features to train a regression model to predict the rating given the user and movie input features and any other features. To be more precise I am going to use the following features for the model.<br/><br/>
 ```
 User Features
 1. user_id
@@ -23,7 +23,7 @@ Movie Features
 Ratings - Normalized Rating corresponding to user_id and movie_id
 ```
 <br/><br/>
-The 1st step would be to read the dataset files. Since the dataset size is approximately 1 GB, we can comfortably read the dataset into pandas dataframes and do the processing on top of pandas dataframes. Although it is highly recommended to use either Spark to read and process the dataset on low memory systems or use Polars instead of Pandas due to Polars being significantly faster than Pandas for data processing. We can write a simple Python function as below to read the dataset into dataframes as follows:<br/><br/>
+The 1st step would be to read the dataset files. Since the dataset size is approximately 1 GB, I can comfortably read the dataset into Pandas dataframes and do the processing on top of pandas. Although it is highly recommended to use either Spark to read and process the dataset on low memory systems or use Polars instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
 ```python
 def get_ml_32m_dataframe(path:str):
     """
@@ -85,14 +85,19 @@ def get_ml_32m_dataframe(path:str):
     # Extract movie genres
     df_movies['genres'] = df_movies['genres'].apply(lambda x: x.lower().split('|'))
 
+    # Extract movie year
     df_movies['movie_year'] = \
         df_movies['title'].str.extract(r'\((\d{4})\)').fillna("2025").astype('int')
 
+    # Extract movie title, replace non alpha-numeric characters with blanks,
+    # lowercase and remove stopwords
     df_movies['title'] = df_movies['title'].str.replace(r'\((\d{4})\)', '', regex=True)
     df_movies['title'] = df_movies['title'].str.replace(r'[^a-zA-Z0-9\s]+', '', regex=True)
     df_movies['title'] = df_movies['title'].apply(lambda x: x.strip().lower().split(" "))
     df_movies['title'] = df_movies['title'].apply(lambda x: remove_stop(x))
 
+    # Extract movie tags, replace non alpha-numeric characters with blanks,
+    # lowercase and remove stopwords. Group tags per movie.
     df_tags['tag'] = df_tags['tag'].str.replace(r'[^a-zA-Z0-9\s]+', '', regex=True)
     df_tags['tag'] = df_tags['tag'].apply(lambda x: x.strip().lower())
     df_tags = df_tags.groupby("movieId").agg(set).reset_index()
@@ -113,9 +118,9 @@ print("Reading datasets from path...")
 df_ratings, df_movies = get_ml_32m_dataframe(dataset_path)
 ```
 <br/><br/>
-The above function uses additional UDFs to preprocess data. The entire codes can be found [here](https://github.com/funktor/recsys/blob/main/data_generator.py).<br/><br/>
-The next steps in data processing pipeline would be as follows:<br/><br/>
-1. Normalize the ratings - We normalize each rating to N(0.0, 1.0) by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users.<br/><br/>
+The above function uses UDFs to preprocess data. The entire codes can be found [here](https://github.com/funktor/recsys/blob/main/data_generator.py).<br/><br/>
+The next few steps in data processing pipeline would be as follows:<br/><br/>
+1. Normalize the ratings - Normalize each rating to N(0.0, 1.0) by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users.<br/><br/>
     ```python
     def normalize_ratings(df:pd.DataFrame):
         """
@@ -174,7 +179,7 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
     print("Splitting into train test and validation...")
     df_ratings_train, df_ratings_val, df_ratings_test = split_train_test(df_ratings, min_rated=10)
     ```
-    <br/><br/>
+    Before splitting, I filter ratings by users who have given at-least min-rated number of ratings so as to reduce noise in the training dataset due to long tail users.<br/><br/>
 3. Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
     ```python
     def categorical_encoding(
@@ -284,8 +289,9 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
     print("Vocabulary on full data...")
     df_ratings_full = score_vocabulary(df_ratings, vocabulary)
     ```
-    <br/><br/>
-4. Compute the historical user features such as previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas computing the historical features were too much time consuming so I wrote the Cython modules for the same which improved the run time from 1 hour to 1.5 mins only.<br/><br/>
+    To limit vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models.
+   <br/><br/>
+5. Compute the historical user features such as the previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas, computing the historical features becomes too much time consuming task so I wrote the Cython modules for the same which improved the run time from 1 hour to 1.5 mins only.<br/><br/>
     ```python
     def get_historical_user_features_cpp(
         df:pd.DataFrame,
@@ -324,7 +330,6 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
     print("Prepare historical features full data...")
     get_historical_user_features_cpp(df_ratings_full)
     ```
-    <br/><br/>
     The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
     In order to build the Cython module, follow the steps:<br/><br/>
     ```
