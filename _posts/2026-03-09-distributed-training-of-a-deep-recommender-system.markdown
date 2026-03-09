@@ -174,18 +174,18 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
     ```
     <br/><br/>
     The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
-5. Convert the pandas dataframes into parquet files as parquet format is quite generic and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
+5. Convert the pandas dataframes into parquet files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
     ```python
     def save_dfs_parquet(
-            out_dir:str, 
-            vocabulary:dict, 
-            df_ratings_train:pd.DataFrame, 
-            df_ratings_val:pd.DataFrame, 
-            df_ratings_test:pd.DataFrame, 
-            df_ratings_full:pd.DataFrame, 
-            df_movies:pd.DataFrame, 
-            num_partitions:int=32
-        ):
+        out_dir:str, 
+        vocabulary:dict, 
+        df_ratings_train:pd.DataFrame, 
+        df_ratings_val:pd.DataFrame, 
+        df_ratings_test:pd.DataFrame, 
+        df_ratings_full:pd.DataFrame, 
+        df_movies:pd.DataFrame, 
+        num_partitions:int=32
+    ):
         """
         Save dataframe into parquet files
         """
@@ -212,6 +212,94 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
         df_ratings_test.to_parquet(out_dir + "/test/", partition_cols=["partition"])
         df_ratings_full.to_parquet(out_dir + "/full_data/", partition_cols=["partition"])
         df_movies.to_parquet(out_dir + "/movies.parquet")
+
+    def upload_directory_with_transfer_manager(
+        bucket_name:str,
+        source_path:str,
+        destination_path:str,
+        workers=8
+    ):
+        """
+        Upload local folder to GCS bucket
+        """
+        try:
+            storage_client = Client()
+            bucket = storage_client.bucket(bucket_name)
+    
+            directory_as_path_obj = Path(source_path)
+            paths = directory_as_path_obj.rglob("*")
+    
+            file_paths = [path for path in paths if path.is_file()]
+            relative_paths = [path.relative_to(source_path) for path in file_paths]
+    
+            string_paths = [str(path) for path in relative_paths]
+    
+            print("Found {} files.".format(len(string_paths)))
+    
+            if destination_path.endswith("/") is False:
+                destination_path += "/"
+    
+            results = transfer_manager.upload_many_from_filenames(
+                bucket, 
+                string_paths, 
+                blob_name_prefix=destination_path,
+                source_directory=source_path, 
+                max_workers=workers
+            )
+    
+            for name, result in zip(string_paths, results):
+                if isinstance(result, Exception):
+                    print("Failed to upload {} due to exception: {}".format(name, result))
+                else:
+                    print("Uploaded {} to {}.".format(name, bucket.name))
+        
+        except Exception as e:
+            print(e)
+    
+    
+    def delete_gcp_folder(bucket_name:str, folder_path:str):
+        """
+        Delete GCS folder
+        """
+        try:
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket_name)
+            prefix = folder_path if folder_path.endswith('/') else f"{folder_path}/"
+            blobs = list(bucket.list_blobs(prefix=prefix))
+            
+            if blobs:
+                bucket.delete_blobs(blobs)
+                print(f"Deleted {len(blobs)} objects from {folder_path}")
+            else:
+                print("No objects found to delete.")
+    
+        except Exception as e:
+            print(e)
+
+    print("Saving parquet files...")
+    save_dfs_parquet(
+        "parquet_dataset_ml_32m",
+        vocabulary,
+        df_ratings_train,
+        df_ratings_val,
+        df_ratings_test,
+        df_ratings_full,
+        df_movies,
+        num_partitions=32
+    )
+
+    print("Deleting existing folder in cloud...")
+    delete_gcp_folder(
+        "bucket_name",
+        "parquet_dataset_ml_32m"
+    )
+
+    print("Uploading to cloud...")
+    upload_directory_with_transfer_manager(
+        "bucket_name",
+        "parquet_dataset_ml_32m",
+        "parquet_dataset_ml_32m/"
+    )
     ```
     <br/><br/>
     
