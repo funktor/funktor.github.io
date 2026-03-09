@@ -37,9 +37,45 @@ def get_ml_32m_dataframe(path:str):
     movies_column_names = ['movieId', 'title', 'genres']
     tags_column_names = ['userId', 'movieId', 'tag', 'timestamp']
 
-    df_ratings = pd.read_csv(ratings_path, sep=',', names=rating_column_names, dtype={'userId':'int32', 'movieId':'int32', 'rating':float, 'timestamp':'int64'}, header=0)
-    df_movies = pd.read_csv(movies_path, sep=',', names=movies_column_names, dtype={'movieId':'int32', 'title':'object', 'genres':'object'}, header=0)
-    df_tags = pd.read_csv(tags_path, sep=',', names=tags_column_names, dtype={'userId':'int32', 'movieId':'int32', 'tag':'object', 'timestamp':'int64'}, header=0)
+    df_ratings = \
+        pd.read_csv(
+            ratings_path,
+            sep=',',
+            names=rating_column_names,
+            dtype={
+                'userId':'int32',
+                'movieId':'int32',
+                'rating':float,
+                'timestamp':'int64'
+            },
+            header=0
+        )
+
+    df_movies = \
+        pd.read_csv(
+            movies_path,
+            sep=',',
+            names=movies_column_names,
+            dtype={
+                'movieId':'int32',
+                'title':'object',
+                'genres':'object'
+            },
+            header=0)
+
+    df_tags = \
+        pd.read_csv(
+            tags_path,
+            sep=',',
+            names=tags_column_names,
+            dtype={
+                'userId':'int32',
+                'movieId':'int32',
+                'tag':'object',
+                'timestamp':'int64'
+            },
+            header=0
+        )
 
     df_ratings.dropna(inplace=True, subset=['userId', 'movieId', 'rating'])
     df_movies.dropna(inplace=True, subset=['movieId', 'title', 'genres'])
@@ -49,7 +85,8 @@ def get_ml_32m_dataframe(path:str):
     # Extract movie genres
     df_movies['genres'] = df_movies['genres'].apply(lambda x: x.lower().split('|'))
 
-    df_movies['movie_year'] = df_movies['title'].str.extract(r'\((\d{4})\)').fillna("2025").astype('int')
+    df_movies['movie_year'] = \
+        df_movies['title'].str.extract(r'\((\d{4})\)').fillna("2025").astype('int')
 
     df_movies['title'] = df_movies['title'].str.replace(r'\((\d{4})\)', '', regex=True)
     df_movies['title'] = df_movies['title'].str.replace(r'[^a-zA-Z0-9\s]+', '', regex=True)
@@ -71,6 +108,9 @@ def get_ml_32m_dataframe(path:str):
     df_movies.drop(columns=["title"], inplace=True)
 
     return df_ratings, df_movies
+
+print("Reading datasets from path...")
+df_ratings, df_movies = get_ml_32m_dataframe(dataset_path)
 ```
 <br/><br/>
 The above function uses additional UDFs to preprocess data. The entire codes can be found [here](https://github.com/funktor/recsys/blob/main/data_generator.py).<br/><br/>
@@ -81,17 +121,31 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
         """
         Normalize ratings
         """
-        df2 = df[["userId", "rating"]].groupby(by=["userId"]).agg(mean_user_rating=('rating', 'mean'), std_user_rating=('rating', 'std'))
+        df2 = \
+            df[["userId", "rating"]]\
+                .groupby(by=["userId"])\
+                .agg(
+                    mean_user_rating=('rating', 'mean'),
+                    std_user_rating=('rating', 'std')
+                )
         df = df.merge(df2, on=["userId"], how="inner")
         df["normalized_rating"] = (df["rating"] - df["mean_user_rating"])/df["std_user_rating"]
         df["normalized_rating"] = df["normalized_rating"].fillna(df["rating"])
         df.drop(columns=["rating"], inplace=True)
         return df
+
+    print("Normalizing ratings...")
+    df_ratings = normalize_ratings(df_ratings)
     ```
     <br/><br/>
 2. Split the dataset of ratings into train, test and validation. We choose to do time based split by first sorting on timestamp. In this way we ensure that historical features such as previously rated movies and ratings do not leak from training into testing or validation. We chose to use 80% of the ratings for training and 20% for testing. Out of 80% in training 20% is used for validation after each epoch of training. The movies metadata dataset is not splitted.<br/><br/>
     ```python
-    def split_train_test(df:pd.DataFrame, min_rated=10, test_ratio=0.8, val_ratio=0.8):
+    def split_train_test(
+        df:pd.DataFrame,
+        min_rated=10,
+        test_ratio=0.8,
+        val_ratio=0.8
+    ):
         """
         Split dataset into train, test and validation
         """
@@ -116,35 +170,98 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
         df_val = df_train_val[k:]
     
         return df_train, df_val, df_test
+
+    print("Splitting into train test and validation...")
+    df_ratings_train, df_ratings_val, df_ratings_test = split_train_test(df_ratings, min_rated=10)
     ```
     <br/><br/>
 3. Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
     ```python
-    def fit_vocabulary(df_ratings:pd.DataFrame, df_movies:pd.DataFrame):
+    def categorical_encoding(
+        df:pd.DataFrame,
+        col:str, '
+        max_vocab_size=1000
+    ):
+        """
+        Encode categorical features
+        """
+        all_vals = df[col].tolist()
+        unique_vals = {}
+    
+        if len(all_vals) > 0 and isinstance(all_vals[0], list):
+            for v in all_vals:
+                for x in v:
+                    if x not in unique_vals:
+                        unique_vals[x] = 0
+                    unique_vals[x] += 1
+        else:
+            for x in all_vals:
+                if x not in unique_vals:
+                    unique_vals[x] = 0
+                unique_vals[x] += 1
+        
+        unique_vals = \
+            sorted(
+                unique_vals.items(),
+                key=lambda item: item[1], reverse=True
+            )
+        unique_vals = dict(unique_vals[:min(max_vocab_size, len(unique_vals))])
+        unique_vals = sorted(unique_vals.keys())
+        vocab = {unique_vals[i] : i+1 for i in range(len(unique_vals))}
+        df[col] = df[col].apply(lambda x: transform(x, vocab))
+        return df[col], vocab
+    
+    def fit_vocabulary(
+        df_ratings:pd.DataFrame,
+        df_movies:pd.DataFrame
+    ):
         """
         Fit vocabulary
         """
         vocabulary = {}
-        max_vocab_size = {'userId':1e100, 'movieId':1e100, 'description':1e5, 'genres':100, 'movie_year':1e100}
+        max_vocab_size = \
+            {
+                'userId':1e100,
+                'movieId':1e100,
+                'description':1e5,
+                'genres':100,
+                'movie_year':1e100
+            }
     
         for col in ['userId', 'movieId']:
             print(col)
-            df_ratings[col], v = categorical_encoding(df_ratings, col, max_vocab_size[col])
+            df_ratings[col], v = \
+                categorical_encoding(
+                    df_ratings,
+                    col,
+                    max_vocab_size[col]
+                )
             vocabulary[col] = v
     
         for col in ['description', 'genres', 'movie_year']:
             print(col)
-            df_movies[col], v = categorical_encoding(df_movies, col, max_vocab_size[col])
+            df_movies[col], v = \
+                categorical_encoding(
+                    df_movies,
+                    col,
+                    max_vocab_size[col]
+                )
             vocabulary[col] = v
     
         for col in ['movieId']:
             print(col)
-            df_movies[col] = df_movies[col].apply(lambda x: transform(x, vocabulary[col]))
+            df_movies[col] = \
+                df_movies[col].apply(
+                    lambda x: transform(x, vocabulary[col])
+                )
         
         return vocabulary, df_ratings, df_movies
     
     
-    def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
+    def score_vocabulary(
+        df_ratings:pd.DataFrame,
+        vocabulary:dict
+    ):
         """
         Score vocabulary
         """
@@ -154,11 +271,26 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
             df_ratings[col] = df_ratings[col].apply(lambda x: transform(x, vocabulary[col]))
         
         return df_ratings
+
+    print("Fitting vocabulary...")
+    vocabulary, df_ratings_train, df_movies = fit_vocabulary(df_ratings_train, df_movies)
+
+    print("Vocabulary on validation...")
+    df_ratings_val = score_vocabulary(df_ratings_val, vocabulary)
+    
+    print("Vocabulary on test...")
+    df_ratings_test = score_vocabulary(df_ratings_test, vocabulary)
+
+    print("Vocabulary on full data...")
+    df_ratings_full = score_vocabulary(df_ratings, vocabulary)
     ```
     <br/><br/>
 4. Compute the historical user features such as previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas computing the historical features were too much time consuming so I wrote the Cython modules for the same which improved the run time from 1 hour to 1.5 mins only.<br/><br/>
     ```python
-    def get_historical_user_features_cpp(df:pd.DataFrame, max_hist=20):
+    def get_historical_user_features_cpp(
+        df:pd.DataFrame,
+        max_hist=20
+    ):
         """
         Create historical sequential features of ratings
         """
@@ -167,14 +299,41 @@ The next steps in data processing pipeline would be as follows:<br/><br/>
         ratings = df['normalized_rating'].to_numpy().astype(np.float32)
         timestamps = df['timestamp'].to_numpy().astype(np.uint64)
     
-        prev_movie_ids, prev_ratings  = ml_32m_py.py_get_historical_features(user_ids, movie_ids, timestamps, ratings, df.shape[0], max_hist)
+        prev_movie_ids, prev_ratings = \
+            ml_32m_py.py_get_historical_features(
+                user_ids,
+                movie_ids,
+                timestamps,
+                ratings,
+                df.shape[0],
+                max_hist
+            )
     
         df["prev_movie_ids"] = prev_movie_ids
         df["prev_ratings"] = prev_ratings
+
+    print("Prepare historical features train...")
+    get_historical_user_features_cpp(df_ratings_train)
+    
+    print("Prepare historical features val...")
+    get_historical_user_features_cpp(df_ratings_val)
+    
+    print("Prepare historical features test...")
+    get_historical_user_features_cpp(df_ratings_test)
+
+    print("Prepare historical features full data...")
+    get_historical_user_features_cpp(df_ratings_full)
     ```
     <br/><br/>
     The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
-5. Convert the pandas dataframes into parquet files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
+    In order to build the Cython module, follow the steps:<br/><br/>
+    ```
+    pip install --upgrade Cython
+    python setup_ml_32m_gcp.py bdist_wheel
+    pip install --force-reinstall dist/*.whl
+    ```
+    <br/><br/>
+6. Convert the pandas dataframes into parquet files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
     ```python
     def save_dfs_parquet(
         out_dir:str, 
