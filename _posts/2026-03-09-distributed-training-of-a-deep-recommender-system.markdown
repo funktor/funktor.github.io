@@ -76,136 +76,142 @@ def get_ml_32m_dataframe(path:str):
 The above function uses additional UDFs to preprocess data. The entire codes can be found [here](https://github.com/funktor/recsys/blob/main/data_generator.py).<br/><br/>
 The next steps in data processing pipeline would be as follows:<br/><br/>
 1. Normalize the ratings - We normalize each rating to N(0.0, 1.0) by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users.<br/><br/>
+    ```python
+    def normalize_ratings(df:pd.DataFrame):
+        """
+        Normalize ratings
+        """
+        df2 = df[["userId", "rating"]].groupby(by=["userId"]).agg(mean_user_rating=('rating', 'mean'), std_user_rating=('rating', 'std'))
+        df = df.merge(df2, on=["userId"], how="inner")
+        df["normalized_rating"] = (df["rating"] - df["mean_user_rating"])/df["std_user_rating"]
+        df["normalized_rating"] = df["normalized_rating"].fillna(df["rating"])
+        df.drop(columns=["rating"], inplace=True)
+        return df
+    ```
+    <br/><br/>
 2. Split the dataset of ratings into train, test and validation. We choose to do time based split by first sorting on timestamp. In this way we ensure that historical features such as previously rated movies and ratings do not leak from training into testing or validation. We chose to use 80% of the ratings for training and 20% for testing. Out of 80% in training 20% is used for validation after each epoch of training. The movies metadata dataset is not splitted.<br/><br/>
+    ```python
+    def split_train_test(df:pd.DataFrame, min_rated=10, test_ratio=0.8, val_ratio=0.8):
+        """
+        Split dataset into train, test and validation
+        """
+        print("Splitting data into train test and validation...")
+        # Split data into training, testing and validation
+        df = df.sort_values(by='timestamp')
+        df2 = df[["userId", "movieId"]].groupby(by=["userId"]).agg(list).reset_index()
+    
+        # Filter all user_ids who have rated more than 'min_rated' movies
+        df2 = df2[df2.movieId.apply(len) > min_rated]
+        df = df.merge(df2, on=["userId"], how="inner", suffixes=("", "_right"))
+        df.drop(columns=['movieId_right'], inplace=True)
+    
+        n = df.shape[0]
+        m = int(test_ratio*n)
+    
+        df_train_val = df[:m]
+        df_test = df[m:]
+    
+        k = int(val_ratio*m)
+        df_train = df_train_val[:k]
+        df_val = df_train_val[k:]
+    
+        return df_train, df_val, df_test
+    ```
+    <br/><br/>
 3. Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
+    ```python
+    def fit_vocabulary(df_ratings:pd.DataFrame, df_movies:pd.DataFrame):
+        """
+        Fit vocabulary
+        """
+        vocabulary = {}
+        max_vocab_size = {'userId':1e100, 'movieId':1e100, 'description':1e5, 'genres':100, 'movie_year':1e100}
+    
+        for col in ['userId', 'movieId']:
+            print(col)
+            df_ratings[col], v = categorical_encoding(df_ratings, col, max_vocab_size[col])
+            vocabulary[col] = v
+    
+        for col in ['description', 'genres', 'movie_year']:
+            print(col)
+            df_movies[col], v = categorical_encoding(df_movies, col, max_vocab_size[col])
+            vocabulary[col] = v
+    
+        for col in ['movieId']:
+            print(col)
+            df_movies[col] = df_movies[col].apply(lambda x: transform(x, vocabulary[col]))
+        
+        return vocabulary, df_ratings, df_movies
+    
+    
+    def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
+        """
+        Score vocabulary
+        """
+        df_ratings = df_ratings.reset_index()
+        for col in ['userId', 'movieId']:
+            print(col)
+            df_ratings[col] = df_ratings[col].apply(lambda x: transform(x, vocabulary[col]))
+        
+        return df_ratings
+    ```
+    <br/><br/>
 4. Compute the historical user features such as previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas computing the historical features were too much time consuming so I wrote the Cython modules for the same which improved the run time from 1 hour to 1.5 mins only.<br/><br/>
+    ```python
+    def get_historical_user_features_cpp(df:pd.DataFrame, max_hist=20):
+        """
+        Create historical sequential features of ratings
+        """
+        user_ids = df['userId'].to_numpy().astype(np.uint32)
+        movie_ids = df['movieId'].to_numpy().astype(np.uint32)
+        ratings = df['normalized_rating'].to_numpy().astype(np.float32)
+        timestamps = df['timestamp'].to_numpy().astype(np.uint64)
+    
+        prev_movie_ids, prev_ratings  = ml_32m_py.py_get_historical_features(user_ids, movie_ids, timestamps, ratings, df.shape[0], max_hist)
+    
+        df["prev_movie_ids"] = prev_movie_ids
+        df["prev_ratings"] = prev_ratings
+    ```
+    <br/><br/>
+    The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
 5. Convert the pandas dataframes into parquet files as parquet format is quite generic and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
-Showing some of the methods the data_generator.py script here. Refer to [github](https://github.com/funktor/recsys/blob/main/data_generator.py) for complete code.<br/><br/>
-```python
-def normalize_ratings(df:pd.DataFrame):
-    """
-    Normalize ratings
-    """
-    df2 = df[["userId", "rating"]].groupby(by=["userId"]).agg(mean_user_rating=('rating', 'mean'), std_user_rating=('rating', 'std'))
-    df = df.merge(df2, on=["userId"], how="inner")
-    df["normalized_rating"] = (df["rating"] - df["mean_user_rating"])/df["std_user_rating"]
-    df["normalized_rating"] = df["normalized_rating"].fillna(df["rating"])
-    df.drop(columns=["rating"], inplace=True)
-    return df
-
-def split_train_test(df:pd.DataFrame, min_rated=10, test_ratio=0.8, val_ratio=0.8):
-    """
-    Split dataset into train, test and validation
-    """
-    print("Splitting data into train test and validation...")
-    # Split data into training, testing and validation
-    df = df.sort_values(by='timestamp')
-    df2 = df[["userId", "movieId"]].groupby(by=["userId"]).agg(list).reset_index()
-
-    # Filter all user_ids who have rated more than 'min_rated' movies
-    df2 = df2[df2.movieId.apply(len) > min_rated]
-    df = df.merge(df2, on=["userId"], how="inner", suffixes=("", "_right"))
-    df.drop(columns=['movieId_right'], inplace=True)
-
-    n = df.shape[0]
-    m = int(test_ratio*n)
-
-    df_train_val = df[:m]
-    df_test = df[m:]
-
-    k = int(val_ratio*m)
-    df_train = df_train_val[:k]
-    df_val = df_train_val[k:]
-
-    return df_train, df_val, df_test
-
-def fit_vocabulary(df_ratings:pd.DataFrame, df_movies:pd.DataFrame):
-    """
-    Fit vocabulary
-    """
-    vocabulary = {}
-    max_vocab_size = {'userId':1e100, 'movieId':1e100, 'description':1e5, 'genres':100, 'movie_year':1e100}
-
-    for col in ['userId', 'movieId']:
-        print(col)
-        df_ratings[col], v = categorical_encoding(df_ratings, col, max_vocab_size[col])
-        vocabulary[col] = v
-
-    for col in ['description', 'genres', 'movie_year']:
-        print(col)
-        df_movies[col], v = categorical_encoding(df_movies, col, max_vocab_size[col])
-        vocabulary[col] = v
-
-    for col in ['movieId']:
-        print(col)
-        df_movies[col] = df_movies[col].apply(lambda x: transform(x, vocabulary[col]))
+    ```python
+    def save_dfs_parquet(
+            out_dir:str, 
+            vocabulary:dict, 
+            df_ratings_train:pd.DataFrame, 
+            df_ratings_val:pd.DataFrame, 
+            df_ratings_test:pd.DataFrame, 
+            df_ratings_full:pd.DataFrame, 
+            df_movies:pd.DataFrame, 
+            num_partitions:int=32
+        ):
+        """
+        Save dataframe into parquet files
+        """
+        df_ratings_train["partition"] = df_ratings_train.index % num_partitions
+        df_ratings_val["partition"]   = df_ratings_val.index % num_partitions
+        df_ratings_test["partition"]  = df_ratings_test.index % num_partitions
+        df_ratings_full["partition"]  = df_ratings_full.index % num_partitions
     
-    return vocabulary, df_ratings, df_movies
-
-
-def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
-    """
-    Score vocabulary
-    """
-    df_ratings = df_ratings.reset_index()
-    for col in ['userId', 'movieId']:
-        print(col)
-        df_ratings[col] = df_ratings[col].apply(lambda x: transform(x, vocabulary[col]))
+        df_ratings_train = df_ratings_train.sample(frac=1).reset_index()
+        df_ratings_val   = df_ratings_val.sample(frac=1).reset_index()
+        df_ratings_test  = df_ratings_test.sample(frac=1).reset_index()
+        df_ratings_full  = df_ratings_full.sample(frac=1).reset_index()
     
-    return df_ratings
-
-
-def get_historical_user_features_cpp(df:pd.DataFrame, max_hist=20):
-    """
-    Create historical sequential features of ratings
-    """
-    user_ids = df['userId'].to_numpy().astype(np.uint32)
-    movie_ids = df['movieId'].to_numpy().astype(np.uint32)
-    ratings = df['normalized_rating'].to_numpy().astype(np.float32)
-    timestamps = df['timestamp'].to_numpy().astype(np.uint64)
-
-    prev_movie_ids, prev_ratings  = ml_32m_py.py_get_historical_features(user_ids, movie_ids, timestamps, ratings, df.shape[0], max_hist)
-
-    df["prev_movie_ids"] = prev_movie_ids
-    df["prev_ratings"] = prev_ratings
-
-
-def save_dfs_parquet(
-        out_dir:str, 
-        vocabulary:dict, 
-        df_ratings_train:pd.DataFrame, 
-        df_ratings_val:pd.DataFrame, 
-        df_ratings_test:pd.DataFrame, 
-        df_ratings_full:pd.DataFrame, 
-        df_movies:pd.DataFrame, 
-        num_partitions:int=32
-    ):
-    """
-    Save dataframe into parquet files
-    """
-    df_ratings_train["partition"] = df_ratings_train.index % num_partitions
-    df_ratings_val["partition"]   = df_ratings_val.index % num_partitions
-    df_ratings_test["partition"]  = df_ratings_test.index % num_partitions
-    df_ratings_full["partition"]  = df_ratings_full.index % num_partitions
-
-    df_ratings_train = df_ratings_train.sample(frac=1).reset_index()
-    df_ratings_val   = df_ratings_val.sample(frac=1).reset_index()
-    df_ratings_test  = df_ratings_test.sample(frac=1).reset_index()
-    df_ratings_full  = df_ratings_full.sample(frac=1).reset_index()
-
-    if os.path.exists(out_dir):
-        try:
-            shutil.rmtree(out_dir)
-        except:
-            pass
-
-    os.makedirs(out_dir, exist_ok=True)
-    joblib.dump(vocabulary, f"{out_dir}/vocabulary.pkl")
-    df_ratings_train.to_parquet(out_dir + "/train/", partition_cols=["partition"])
-    df_ratings_val.to_parquet(out_dir + "/validation/", partition_cols=["partition"])
-    df_ratings_test.to_parquet(out_dir + "/test/", partition_cols=["partition"])
-    df_ratings_full.to_parquet(out_dir + "/full_data/", partition_cols=["partition"])
-    df_movies.to_parquet(out_dir + "/movies.parquet")
-```
-<br/><br/>
-The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/recsys/blob/main/ml_32m_dp.cpp)
+        if os.path.exists(out_dir):
+            try:
+                shutil.rmtree(out_dir)
+            except:
+                pass
+    
+        os.makedirs(out_dir, exist_ok=True)
+        joblib.dump(vocabulary, f"{out_dir}/vocabulary.pkl")
+        df_ratings_train.to_parquet(out_dir + "/train/", partition_cols=["partition"])
+        df_ratings_val.to_parquet(out_dir + "/validation/", partition_cols=["partition"])
+        df_ratings_test.to_parquet(out_dir + "/test/", partition_cols=["partition"])
+        df_ratings_full.to_parquet(out_dir + "/full_data/", partition_cols=["partition"])
+        df_movies.to_parquet(out_dir + "/movies.parquet")
+    ```
+    <br/><br/>
+    
