@@ -532,18 +532,100 @@ In both torchrun and mpirun, environment variables are set for individual worker
 ```
 OMPI_COMM_WORLD_SIZE - World size i.e. total number of workers across all nodes.
 For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_SIZE=16.
+For torchrun it is WORLD_SIZE.
 
 OMPI_COMM_WORLD_LOCAL_RANK - Local rank of a worker.
 For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_LOCAL_RANK ranges from 0-7 in node 0 and 0-7 in node 1.
+For torchrun it is LOCAL_RANK.
 
 OMPI_COMM_WORLD_RANK - Global rank of a worker.
 For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_RANK ranges from 0-7 in node 0 and 8-15 in node 1
+For torchrun it is RANK.
 ```
-In the example I am working with I tweaked the DDP training strategy a bit. In DDP each worker initially has a view of all the training data and then at the start of each epoch, it shards the data across all the workers and nodes. On the other hand I am tweaking this a bit so that each worker only downloads an equal sized shard from GCP bucket and works with only the same set of training data for all epochs. There are some advantages and disadvantages with this approach over vanilla DDP.
+<br/><br/>
+In the example I am working with I tweaked the DDP training strategy a bit. In DDP each worker initially has a view of all the training data and then at the start of each epoch, data is sharded across all the workers and nodes. On the other hand I am tweaking this a bit so that each worker only downloads an equal sized shard from GCP bucket and works with only the same set of training data for all epochs. There are some advantages and disadvantages with this approach over vanilla DDP.
+<br/><br/>
 
 ### Advantage
-The CPU does not spend time in sharding the data before the start of each epoch and is usually faster. Also since each worker downloads only a subset of the training data, memory requirement is lower as compared to vanilla DDP where the CPU needs to download and preprocess all of the data and thus memory requirement is higher.
+The workers does not spend time in sharding the data before the start of each epoch and thus training is usually faster. Also since each worker downloads only a subset of the training data, memory requirement is lower as compared to vanilla DDP where each worker works with all of the data and thus memory requirement is higher.
 
 ### Disadvantage
+The vanilla DDP is useful when we have to shuffle the data after each epoch and thus in each epoch, each worker "sees" a different subset of data from the other epochs. Thus each worker works gets the chance to train with all the training data. But in the altered method, each worker sees the same subset of data in all epochs. With large datasets this should not make a lot of difference if we pre-shuffle the data once before epoch 0.
 
+### Setup DDP
+The first step is to initialize DDP before the start of training.
+```python
+def ddp_setup(rank_local, rank_global, world_size):
+    """
+    Setup DDP
+    """
+    init_process_group(backend="nccl", world_size=world_size, rank=rank_global)
+    torch.cuda.set_device(rank_local)
+
+rank_local  = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"]) if "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ else int(os.environ["LOCAL_RANK"])
+rank_global = int(os.environ["OMPI_COMM_WORLD_RANK"]) if "OMPI_COMM_WORLD_RANK" in os.environ else int(os.environ["RANK"])
+world_size  = int(os.environ["OMPI_COMM_WORLD_SIZE"]) if "OMPI_COMM_WORLD_SIZE" in os.environ else int(os.environ["WORLD_SIZE"])
+
+print("Setting up DDP...")
+if dist.is_initialized() is False:
+    ddp_setup(rank_local, rank_global, world_size)
+```
+<br/><br/>
+Since I am using GPU to train thus the backed "nccl" is the preferred protocol.
+
+### Get Datasets
+The next step is to for each worker GPU, download an "equal" sized shard from GCP. Note that during data generation, I partitioned the parquet dataset into 32 partitions. Thus if there are 8 GPU workers, each GPU downloads approximately 4 partitions of the parquet dataset. Also note that if the total number of records across the 32 partitions is not divisible evenly by 32, then all partitions may not have the same number of records. This could potentially lead to uneven number of batches which could in turn lead to stalling of GPU which we will see later how to overcome. For now assume that the dataset number of records is divisible by 32.
+```python
+def get_dataset(path:str, cache_dir:str, world_size:int, rank:int, in_memory:bool=False, path_is_dir:bool=True):
+    """
+    Get dataset by prepartitioning files to each worker process
+    """
+    if path_is_dir:
+        files = pre_partitions_for_download(path, world_size, rank)
+    else:
+        files = path
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    dataset = datasets.load_dataset("parquet", data_files=files, split="train", cache_dir=cache_dir, keep_in_memory=in_memory)
+    return dataset
+
+
+def get_datasets(path:str, world_size:int, rank:int):
+    """
+    Get train, validation and movies datasets
+    """
+    ratings_train = \
+        get_dataset(
+            f"{path}/train", 
+            f"/tmp/huggingface/{rank}/train", 
+            world_size, 
+            rank
+        )
+    ratings_train.set_format('pandas')
+    
+    ratings_val = \
+        get_dataset(
+            f"{path}/validation", 
+            f"/tmp/huggingface/{rank}/val", 
+            world_size, 
+            rank
+        )
+    ratings_val.set_format('pandas')
+    
+    movies_dataset = \
+        get_dataset(
+            f"{path}/movies.parquet", 
+            f"/tmp/huggingface/{rank}/movies", 
+            world_size, 
+            rank, 
+            in_memory=True, 
+            path_is_dir=False
+        ).to_pandas()
+
+    return ratings_train, ratings_val, movies_dataset
+
+print("Getting datasets...")
+ratings_train, ratings_val, movies_dataset = dataloader.get_datasets(datasets_gcs_path, world_size, rank_global)
+```
     
