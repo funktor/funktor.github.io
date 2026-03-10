@@ -574,7 +574,9 @@ if dist.is_initialized() is False:
 Since I am using GPU to train thus the backed "nccl" is the preferred protocol.
 
 ### Get Datasets
-The next step is to for each worker GPU, download an "equal" sized shard from GCP. Note that during data generation, I partitioned the parquet dataset into 32 partitions. Thus if there are 8 GPU workers, each GPU downloads approximately 4 partitions of the parquet dataset. Also note that if the total number of records across the 32 partitions is not divisible evenly by 32, then all partitions may not have the same number of records. This could potentially lead to uneven number of batches which could in turn lead to stalling of GPU which we will see later how to overcome. For now assume that the dataset number of records is divisible by 32.
+The next step is to for each worker GPU, download an "equal" sized shard from GCP. Note that during data generation, I partitioned the parquet dataset into 32 partitions. Thus if there are 8 GPU workers, each GPU downloads approximately 4 partitions of the parquet dataset.<br/><br/>
+Also note that if the total number of records across the 32 partitions is not divisible evenly by 32, then all partitions may not have the same number of records. This could potentially lead to uneven number of batches which could in turn lead to stalling of GPU which we will see later. For now assume that the dataset number of records is divisible by 32.
+<br/><br/>
 ```python
 def get_dataset(path:str, cache_dir:str, world_size:int, rank:int, in_memory:bool=False, path_is_dir:bool=True):
     """
@@ -628,4 +630,7 @@ def get_datasets(path:str, world_size:int, rank:int):
 print("Getting datasets...")
 ratings_train, ratings_val, movies_dataset = dataloader.get_datasets(datasets_gcs_path, world_size, rank_global)
 ```
+I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data. You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader remains agnostic of the data generator and is only bothered about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
+Note that before download, I only select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with indices where index % world size = local_rank. In this way each worker gets an almost equal share of files.<br/><br/>
+The movies dataset in held in memory whereas the ratings datasets are memory mapped on disk.<br/><br/>
     
