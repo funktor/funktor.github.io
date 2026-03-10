@@ -300,6 +300,15 @@ If ratings are missing, one way to implicitly label is to assign 1 to watched mo
 Assigning 0 or negative to unwatched movies could lead to bias in training data because if someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.
 <br/><br/>
 
+### Movie Features
+![Movie Embeddings](/docs/assets/movie_emb.png)
+<br/><br/>
+
+### Complete Model
+![Full Model](/docs/assets/model.png)
+<br/><br/>
+
+
 Onwards with our model architecture. The following architecture is quite simplistic compared to some of the latest developments around deep recommender systems. I am planning to upgrade the following architecture into a generative recommender system in the future.<br/><br/>
 1. On a high level, the model comprises of two towers, one for user features and another for movie features. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.<br/><br/>
 2. The movie tower accepts the movie features (as mentioned earlier) and passes them through Embedding Layers to convert the one-hot features into embeddings. There are some features like the genres and description/tags which is multi-hot i.e. they have multiple values. For these features, I am just computing average embedding after masking the 0s. Finally all movie features are concatenated and passed through a MLP layer with a non-linear activation function such as GeLU, Dropout and LayerNorm layers. Finally applying a cross feature layer using DCN on top of the output.<br/><br/>
