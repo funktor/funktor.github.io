@@ -24,6 +24,7 @@ Ratings - Normalized Rating corresponding to user_id and movie_id
 ```
 <br/><br/>
 
+![Data Generator Pipeline](/docs/assets/data_gen.png)
 ## Step 1
 The 1st step would be to read the dataset files. Since the dataset size is approximately `1 GB`, I can comfortably read the dataset into `Pandas` dataframes and do the processing on top of pandas. Although it is highly recommended to use either `Spark` to read and process the dataset on low memory systems or use `Polars` instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
 ```python
