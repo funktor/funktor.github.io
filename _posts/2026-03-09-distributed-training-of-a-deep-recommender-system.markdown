@@ -524,17 +524,26 @@ class RecommenderSystem(nn.Module):
 <br/><br/>
 
 ## Trainer
-Finally we come to the trainer part wherein we will explore distributed training using PyTorch. PyTorch provides multiple strategies for distributed training. The two most popular are DDP (Distributed Data Parallel) and FSDP (Fully Sharded Data Parallel). In both DDP and FSDP, the training data is partitioned across multiple workers across nodes and each worker works with only its data to compute the loss during forward passes and compute gradients in backward passes. The gradients are then averaged and broadcasted to all workers so that each worker now sees the same gradient values. In FSDP, the model is also partitioned across the workers. This is the case where the size of model is too large to fit in the memory of a single node or worker. But in FSDP communication overhead increases as compared to DDP because each worker also needs to coordinate with other workers in the forward passes too.<br/><br/>
-In the example that I am working with, the model size is small enough to fit in the memory of a worker and thus I am going to use DDP. DDP uses multiple backend protocols for communication between workers such as MPI, Gloo and NCCL. For training on GPUs, almost always NCCL performs better than MPI or Gloo. We will deep dive each of these protocols and implement a custom MPI based distributed training in the next post.<br/><br/>
+Finally we come to the trainer part wherein we will explore distributed training using PyTorch. PyTorch provides multiple strategies for distributed training. The two most popular are `DDP` (Distributed Data Parallel) and `FSDP` (Fully Sharded Data Parallel). In both `DDP` and `FSDP`, the training data is partitioned across multiple workers across nodes and each worker works with only its data to compute the loss during forward passes and compute gradients in backward passes. The gradients are then averaged and broadcasted to all workers so that each worker now sees the same gradient values. In FSDP, the model is also partitioned across the workers. This is the case where the size of model is too large to fit in the memory of a single node or worker. But in FSDP communication overhead increases as compared to DDP because each worker also needs to coordinate with other workers in the forward passes too.<br/><br/>
+In the example that I am working with, the model size is small enough to fit in the memory of a worker and thus I am going to use DDP. DDP uses multiple backend protocols for communication between workers such as `MPI`, `Gloo` and `NCCL`. For training on GPUs, almost always NCCL performs better than MPI or Gloo. We will deep dive each of these protocols and implement a custom MPI based distributed training in the next post.<br/><br/>
 PyTorch provides 2 important tools for running a trainer script across multiple workers and/or multiple nodes - `torchrun` and `mpirun`.<br/><br/>
-While torchrun is easy to work with as it does not require installing OpenMPI libraries or overhead of enabling ssh and tcp communication between the workers as in mpirun but in order to use torchrun, one needs to login to all the nodes/pods individually and run the script in each node individually. This might not be an ideal situation when we have to deploy the trainer in production and run the training jobs using a job scheduler such as Airflow. That is why I prefer to use `mpirun` instead of `torchrun` for this example.<br/><br/>
+While torchrun is easy to work with as it does not require installing `OpenMPI` libraries or overhead of enabling ssh and tcp communication between the workers as in mpirun but in order to use torchrun, one needs to login to all the nodes/pods individually and run the script in each node individually. This might not be an ideal situation when we have to deploy the trainer in production and run the training jobs using a job scheduler such as `Airflow`. That is why I prefer to use `mpirun` instead of `torchrun` for this example.<br/><br/>
 In both torchrun and mpirun, environment variables are set for individual workers and nodes. The most important in mpirun are the following:<br/><br/>
 ```
-OMPI_COMM_WORLD_SIZE - world size i.e. total number of workers across all nodes. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_SIZE=16
-OMPI_COMM_WORLD_LOCAL_RANK - local rank of a worker. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_LOCAL_RANK ranges from 0-7 in node 0 and 0-7 in node 1
-OMPI_COMM_WORLD_RANK - global rank of a worker. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_RANK ranges from 0-7 in node 0 and 8-15 in node 1
+OMPI_COMM_WORLD_SIZE - World size i.e. total number of workers across all nodes.
+For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_SIZE=16.
 
+OMPI_COMM_WORLD_LOCAL_RANK - Local rank of a worker.
+For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_LOCAL_RANK ranges from 0-7 in node 0 and 0-7 in node 1.
+
+OMPI_COMM_WORLD_RANK - Global rank of a worker.
+For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_RANK ranges from 0-7 in node 0 and 8-15 in node 1
 ```
+In the example I am working with I tweaked the DDP training strategy a bit. In DDP each worker initially has a view of all the training data and then at the start of each epoch, it shards the data across all the workers and nodes. On the other hand I am tweaking this a bit so that each worker only downloads an equal sized shard from GCP bucket and works with only the same set of training data for all epochs. There are some advantages and disadvantages with this approach over vanilla DDP.
 
+### Advantage
+The CPU does not spend time in sharding the data before the start of each epoch and is usually faster. Also since each worker downloads only a subset of the training data, memory requirement is lower as compared to vanilla DDP where the CPU needs to download and preprocess all of the data and thus memory requirement is higher.
+
+### Disadvantage
 
     
