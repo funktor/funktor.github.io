@@ -184,7 +184,7 @@ The next few steps in data processing pipeline would be as follows:<br/><br/>
     ```python
     def categorical_encoding(
         df:pd.DataFrame,
-        col:str, '
+        col:str,
         max_vocab_size=1000
     ):
         """
@@ -466,4 +466,17 @@ The next few steps in data processing pipeline would be as follows:<br/><br/>
     )
     ```
     <br/><br/>
+Next, I define the model architecture. As mentioned earlier that I am solving this recommender system problem as a regression over the normalized ratings. Regression is not the only way to solve. One can also solve this as a binary classification problem by turning ratings and views into binary labels for e.g. with normalized ratings, one can assign a label of 1 for all ratings >= 0 and a label of 0 to all ratings < 0 since normalized ratings has a mean of 0. There are few challenges I saw when implementing a binary classification approach to a recommender system:<br/><br/>
+1. Defining positive and negative examples correctly. One strategy is as mentioned above where we consider all ratings above the mean for that user as positives and rest as negatives. But this is only possible  where explicit ratings are available.
+2. Even with explicit ratings available, should I consider the unrated movies as negatives too because the user might have chose to ignore watching them or worse decided to not rate them at all.
+3. If ratings are missing, one way to implicitly label is to assign 1 to watched movies and 0 to not watched movies. But this could lead to severe class imbalance issues as number of unwatched movies far exceeds watched movies.
+4. Assigning 0 or negative to unwatched movies could lead to bias in training data because is someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.
+<br/><br/>
+Anyways, onwards with our model architecture.<br/><br/>
+1. The model comprises of two towers, one for user and another for movie. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.
+2. Movie tower accepts the movie features (as mentioned earlier) and passes them through Embedding Layers to convert the one-hot features into embeddings. There are some features like the genres or description/tags which is multi-hot i.e. they have multiple values. For these features, I am just doing average embedding after masking the 0s. Finally all movie features are concatenated and passed through a MLP layer with a non-linear activation function such as GeLU, Dropout and LayerNorm layers. Finally applying a cross feature layer using DCN on top of the output.
+3. Similar to movie tower, the user tower converts the one-hot features into embeddings first. The historical features are considered as sequential features and they are handled using a Transformer Layer where the previous N rated movies are passed through a Transformer layer and then I take the dot product of the output of Transformer with the previous N ratings corresponding to these movies.
+   
+One definite challenge with a binary classification problem is class imbalance because 
+
     
