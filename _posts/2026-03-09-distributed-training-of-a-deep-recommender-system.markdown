@@ -6,8 +6,8 @@ categories: ml
 ---
 Designing a recommender system is not a trivial problem to solve and big tech companies have invested hundreds of millions into building the best recommender systems platform. While I will not go through the details of designing a full recommender system in this post and I would like to keep that for a future post. In this post I would be walking through the steps I followed to train a deep recommender system (a recommender system implemented using deep neural networks) in a distributed environment i.e. where we have a cluster of nodes/pods each with a limited memory and limited number of CPUs/GPUs.<br/><br/>
 Please note that this was a weekly side project that I felt would be fun to do. Many of the codes or design that are shown here may not be fully optimized for production. Athough I will try to point out scopes for improvements wherever possible to the best of my knowledge. Also, I leveraged some of my team's reserved and not in use GPU pods to run the model so to keep the post short I will not go through the setup of the distributed environment such as provisioning nodes in GCP or writing kebernetes YAML to spin up multiple GPU pods etc.<br/><br/>
-The dataset used for training the deep recommender system is MovieLens-32M (~32 million movie ratings).<br/><br/>
-The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp),  movies metadata such as title, genre etc. and movie tags. I will be using all of these data as features to train a regression model to predict the rating given the user and movie input features and any other features. To be more precise I am going to use the following features for the model.<br/><br/>
+The dataset used for training the deep recommender system is `MovieLens-32M` (~32 million movie ratings).<br/><br/>
+The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp),  movies metadata such as title, genre etc. and movie tags. I will be using all of these data as features to train a `regression model` to predict the rating given the user and movie input features and any other features. To be more precise I am going to use the following features for the model.<br/><br/>
 ```
 User Features
 1. user_id
@@ -25,7 +25,7 @@ Ratings - Normalized Rating corresponding to user_id and movie_id
 <br/><br/>
 
 ## Step 1
-The 1st step would be to read the dataset files. Since the dataset size is approximately 1 GB, I can comfortably read the dataset into Pandas dataframes and do the processing on top of pandas. Although it is highly recommended to use either Spark to read and process the dataset on low memory systems or use Polars instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
+The 1st step would be to read the dataset files. Since the dataset size is approximately `1 GB`, I can comfortably read the dataset into `Pandas` dataframes and do the processing on top of pandas. Although it is highly recommended to use either `Spark` to read and process the dataset on low memory systems or use `Polars` instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
 ```python
 def get_ml_32m_dataframe(path:str):
     """
@@ -126,7 +126,7 @@ The above function uses certain UDFs to preprocess data. The columns I am intere
 The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. The entire codes can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).<br/><br/>
 
 ## Step 2
-Normalize the ratings - Normalize each rating to N(0, 1) by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users. One can also build a model with the mean and standard deviation as learnable parameters using the negative log likelihood of normal distribution as the loss function. It would usually make more sense to do that.<br/><br/>
+Normalize the ratings - Normalize each rating in `N(0, 1)` by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users. One can also build a model with the mean and standard deviation as learnable parameters using the `negative log likelihood` of `normal distribution` as the loss function. It would usually make more sense to do that.<br/><br/>
 ```python
 def normalize_ratings(df:pd.DataFrame):
     """
@@ -148,7 +148,7 @@ def normalize_ratings(df:pd.DataFrame):
 <br/><br/>
 
 ## Step 3
-Split the dataset of ratings into train, test and validation. I choose to do a time based split by first sorting on timestamp. In this way I can ensure that historical features such as previously rated movies and ratings do not leak from training into testing or validation. I chose to use 80% of the ratings for training and 20% for testing. Out of 80% in training 20% is used for validation after each epoch of training. The movies metadata dataset is not splitted as it is used to join with the ratings dataset in train, test and validation.<br/><br/>
+Split the dataset of ratings into train, test and validation. I choose to do a `time based split` by first sorting on timestamp. In this way I can ensure that historical features such as previously rated movies and ratings do not leak from training into testing or validation. I chose to use `80%` of the ratings for training and `20%` for testing. Out of 80% in training 20% is used for validation after each epoch of training. The movies metadata dataset is not splitted as it is used to join with the ratings dataset in train, test and validation.<br/><br/>
 ```python
 def split_train_test(
     df:pd.DataFrame,
@@ -186,56 +186,30 @@ Before splitting, I am filtering ratings data by users who have given at-least m
 ## Step 4
 Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
 ```python
-def fit_vocabulary(
-    df_ratings:pd.DataFrame,
-    df_movies:pd.DataFrame
-):
+def fit_vocabulary(df_ratings:pd.DataFrame, df_movies:pd.DataFrame):
     """
     Fit vocabulary
     """
     vocabulary = {}
-    max_vocab_size = \
-        {
-            'userId':1e100,
-            'movieId':1e100,
-            'description':1e5,
-            'genres':100,
-            'movie_year':1e100
-        }
+    max_vocab_size = {'userId':1e100, 'movieId':1e100, 'description':1e5, 'genres':100, 'movie_year':1e100}
 
     for col in ['userId', 'movieId']:
         print(col)
-        df_ratings[col], v = \
-            categorical_encoding(
-                df_ratings,
-                col,
-                max_vocab_size[col]
-            )
+        df_ratings[col], v = categorical_encoding(df_ratings, col, max_vocab_size[col])
         vocabulary[col] = v
 
     for col in ['description', 'genres', 'movie_year']:
         print(col)
-        df_movies[col], v = \
-            categorical_encoding(
-                df_movies,
-                col,
-                max_vocab_size[col]
-            )
+        df_movies[col], v = categorical_encoding(df_movies, col, max_vocab_size[col])
         vocabulary[col] = v
 
     for col in ['movieId']:
         print(col)
-        df_movies[col] = \
-            df_movies[col].apply(
-                lambda x: transform(x, vocabulary[col])
-            )
+        df_movies[col] = df_movies[col].apply(lambda x: transform(x, vocabulary[col]))
     
     return vocabulary, df_ratings, df_movies
 
-def score_vocabulary(
-    df_ratings:pd.DataFrame,
-    vocabulary:dict
-):
+def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
     """
     Score vocabulary
     """
@@ -246,12 +220,12 @@ def score_vocabulary(
     
     return df_ratings
 ```
-To limit vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).<br/><br/>
+To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).<br/><br/>
 
 ## Step 5
-Compute the historical user features such as the previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas, computing the historical features becomes too much time consuming task so I wrote the Cython modules for the same which improved the run time from 1 hour to 1.5 mins only.<br/><br/>
+Compute the historical user features such as the previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas, computing the historical features becomes too much time consuming task so I wrote the `Cython` modules for the same which improved the run time from `1 hour` to only `1.5 mins`.<br/><br/>
 The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/distributed-recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
-In order to build the Cython module, follow the steps:<br/><br/>
+In order to build the Cython module, follow the steps shown below:<br/><br/>
 ```
 pip install --upgrade Cython
 python setup_ml_32m_gcp.py bdist_wheel
@@ -260,7 +234,7 @@ pip install --force-reinstall dist/*.whl
 <br/><br/>
 
 ## Step 6
-Convert the pandas dataframes into parquet files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the GCS buckets in the cloud.<br/><br/>
+Convert the pandas dataframes into `parquet` files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the `GCS buckets` in the cloud.<br/><br/>
 ```python
 def save_dfs_parquet(
     out_dir:str, 
@@ -275,15 +249,16 @@ def save_dfs_parquet(
     """
     Save dataframe into parquet files
     """
-
     # Partition the training data so as we can read only a subset of partitions
     # if required for debugging etc.
+
     df_ratings_train["partition"] = df_ratings_train.index % num_partitions
     df_ratings_val["partition"]   = df_ratings_val.index % num_partitions
     df_ratings_test["partition"]  = df_ratings_test.index % num_partitions
     df_ratings_full["partition"]  = df_ratings_full.index % num_partitions
 
-    # shuffle the datasets so that user ids are randomly distributed
+    # shuffle the datasets so that user ids are randomly distributed across rows
+
     df_ratings_train = df_ratings_train.sample(frac=1).reset_index()
     df_ratings_val   = df_ratings_val.sample(frac=1).reset_index()
     df_ratings_test  = df_ratings_test.sample(frac=1).reset_index()
@@ -305,11 +280,20 @@ def save_dfs_parquet(
 ```
 <br/><br/>
 
-Next, I define the model architecture. As mentioned earlier that I am solving this recommender system problem as a regression over the normalized ratings. Regression is not the only way to solve. One can also solve this as a binary classification problem by turning ratings and views into binary labels for e.g. with normalized ratings, one can assign a label of 1 for all ratings >= 0 and a label of 0 to all ratings < 0 since normalized ratings has a mean of 0. There are few challenges I saw when implementing a binary classification approach to a recommender system:<br/><br/>
-1. Defining positive and negative examples correctly. One strategy is as mentioned above where we consider all ratings above the mean for that user as positives and rest as negatives. But this is only possible  where explicit ratings are available.<br/><br/>
-2. Even with explicit ratings available, should I consider the unrated movies as negatives too because the user might have chose to ignore watching them or worse decided to not rate them at all.<br/><br/>
-3. If ratings are missing, one way to implicitly label is to assign 1 to watched movies and 0 to not watched movies. But this could lead to severe class imbalance issues as number of unwatched movies far exceeds watched movies.<br/><br/>
-4. Assigning 0 or negative to unwatched movies could lead to bias in training data because is someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.<br/><br/>
+## Model Architecture
+As mentioned earlier that I am solving this recommender system problem as a `regression` over the `normalized ratings`. Regression is not the only way to solve. One can also solve this as a `binary classification` problem by turning ratings and views into binary labels for e.g. with normalized ratings, one can assign a label of 1 for all ratings >= 0 and a label of 0 to all ratings < 0 since normalized ratings has a mean of 0. There are few challenges I saw when implementing a binary classification approach to a recommender system:<br/><br/>
+
+### Challenge 1
+Defining positive and negative examples correctly. One strategy is as mentioned above where we consider all ratings above the mean for that user as positives and rest as negatives. But this is only possible  where explicit ratings are available.
+
+### Challenge 2
+Even with explicit ratings available, should I consider the unrated movies as negatives too because the user might have chose to ignore watching them or worse decided to not rate them at all.<br/><br/>
+
+### Challenge 3
+If ratings are missing, one way to implicitly label is to assign 1 to watched movies and 0 to not watched movies. But this could lead to severe class imbalance issues as number of unwatched movies far exceeds watched movies.<br/><br/>
+
+### Challenge 4
+Assigning 0 or negative to unwatched movies could lead to bias in training data because is someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.<br/><br/>
 
 Onwards with our model architecture. The following architecture is quite simplistic compared to some of the latest developments around deep recommender systems. I am planning to upgrade the following architecture into a generative recommender system in the future.<br/><br/>
 1. On a high level, the model comprises of two towers, one for user features and another for movie features. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.<br/><br/>
