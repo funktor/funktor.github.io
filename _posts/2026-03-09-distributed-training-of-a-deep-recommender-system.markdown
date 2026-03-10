@@ -123,7 +123,8 @@ df_ratings, df_movies = get_ml_32m_dataframe(dataset_path)
 ```
 <br/><br/>
 The above function uses certain UDFs to preprocess data. The columns I am interested in are : `[user_id, movie_id, rating, timestamp, description, genres, movie_year]`.<br/><br/>
-The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. The entire codes can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).<br/><br/>
+The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. The entire codes can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
+<br/><br/>
 
 ## Step 2
 Normalize the ratings - Normalize each rating in `N(0, 1)` by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users. One can also build a model with the mean and standard deviation as learnable parameters using the `negative log likelihood` of `normal distribution` as the loss function. It would usually make more sense to do that.<br/><br/>
@@ -181,7 +182,8 @@ def split_train_test(
 
     return df_train, df_val, df_test
 ```
-Before splitting, I am filtering ratings data by users who have given at-least min-rated number of ratings so as to reduce noise in the training dataset due to long tail users with 1 or 2 ratings only.<br/><br/>
+Before splitting, I am filtering ratings data by users who have given at-least min-rated number of ratings so as to reduce noise in the training dataset due to long tail users with 1 or 2 ratings only.
+<br/><br/>
 
 ## Step 4
 Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
@@ -220,7 +222,8 @@ def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
     
     return df_ratings
 ```
-To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).<br/><br/>
+To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
+<br/><br/>
 
 ## Step 5
 Compute the historical user features such as the previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas, computing the historical features becomes too much time consuming task so I wrote the `Cython` modules for the same which improved the run time from `1 hour` to only `1.5 mins`.<br/><br/>
@@ -287,13 +290,14 @@ As mentioned earlier that I am solving this recommender system problem as a `reg
 Defining positive and negative examples correctly. One strategy is as mentioned above where we consider all ratings above the mean for that user as positives and rest as negatives. But this is only possible  where explicit ratings are available.
 
 ### Challenge 2
-Even with explicit ratings available, should I consider the unrated movies as negatives too because the user might have chose to ignore watching them or worse decided to not rate them at all.<br/><br/>
+Even with explicit ratings available, should I consider the unrated movies as negatives too because the user might have chose to ignore watching them or worse decided to not rate them at all.
 
 ### Challenge 3
-If ratings are missing, one way to implicitly label is to assign 1 to watched movies and 0 to not watched movies. But this could lead to severe class imbalance issues as number of unwatched movies far exceeds watched movies.<br/><br/>
+If ratings are missing, one way to implicitly label is to assign 1 to watched movies and 0 to not watched movies. But this could lead to severe class imbalance issues as number of unwatched movies far exceeds watched movies.
 
 ### Challenge 4
-Assigning 0 or negative to unwatched movies could lead to bias in training data because is someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.<br/><br/>
+Assigning 0 or negative to unwatched movies could lead to bias in training data because if someone has not watched a movie and you train them as negatives, the model will learn to rank them and similar movies lower thus reducing the diversity in recommendations.
+<br/><br/>
 
 Onwards with our model architecture. The following architecture is quite simplistic compared to some of the latest developments around deep recommender systems. I am planning to upgrade the following architecture into a generative recommender system in the future.<br/><br/>
 1. On a high level, the model comprises of two towers, one for user features and another for movie features. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.<br/><br/>
