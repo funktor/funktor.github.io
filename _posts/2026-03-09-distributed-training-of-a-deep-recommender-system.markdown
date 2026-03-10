@@ -24,8 +24,10 @@ Ratings - Normalized Rating corresponding to user_id and movie_id
 ```
 <br/><br/>
 
+## Data Generation
 ![Data Generator Pipeline](/docs/assets/data_gen.png)
-## Step 1
+
+### Step 1
 The 1st step would be to read the dataset files. Since the dataset size is approximately `1 GB`, I can comfortably read the dataset into `Pandas` dataframes and do the processing on top of pandas. Although it is highly recommended to use either `Spark` to read and process the dataset on low memory systems or use `Polars` instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
 ```python
 def get_ml_32m_dataframe(path:str):
@@ -127,7 +129,7 @@ The above function uses certain UDFs to preprocess data. The columns I am intere
 The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. The entire codes can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
 <br/><br/>
 
-## Step 2
+### Step 2
 Normalize the ratings - Normalize each rating in `N(0, 1)` by the mean and standard deviation of all ratings given by the user id because each user has their own preference and rating standard thus it does not make sense to normalize using all the users. One can also build a model with the mean and standard deviation as learnable parameters using the `negative log likelihood` of `normal distribution` as the loss function. It would usually make more sense to do that.<br/><br/>
 ```python
 def normalize_ratings(df:pd.DataFrame):
@@ -149,7 +151,7 @@ def normalize_ratings(df:pd.DataFrame):
 ```
 <br/><br/>
 
-## Step 3
+### Step 3
 Split the dataset of ratings into train, test and validation. I choose to do a `time based split` by first sorting on timestamp. In this way I can ensure that historical features such as previously rated movies and ratings do not leak from training into testing or validation. I chose to use `80%` of the ratings for training and `20%` for testing. Out of 80% in training 20% is used for validation after each epoch of training. The movies metadata dataset is not splitted as it is used to join with the ratings dataset in train, test and validation.<br/><br/>
 ```python
 def split_train_test(
@@ -186,7 +188,7 @@ def split_train_test(
 Before splitting, I am filtering ratings data by users who have given at-least min-rated number of ratings so as to reduce noise in the training dataset due to long tail users with 1 or 2 ratings only.
 <br/><br/>
 
-## Step 4
+### Step 4
 Compute the vocabularies for the categorical features only on the training data. Apply the learnt vocabularies on the validation and testing datasets.<br/><br/>
 ```python
 def fit_vocabulary(df_ratings:pd.DataFrame, df_movies:pd.DataFrame):
@@ -226,7 +228,7 @@ def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
 To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
 <br/><br/>
 
-## Step 5
+### Step 5
 Compute the historical user features such as the previously rated N movies and previous N ratings each for training, testing and validation datasets separately. With pandas, computing the historical features becomes too much time consuming task so I wrote the `Cython` modules for the same which improved the run time from `1 hour` to only `1.5 mins`.<br/><br/>
 The C++/Cython module for the `ml_32m_py.py_get_historical_features` can be found in github [here](https://github.com/funktor/distributed-recsys/blob/main/ml_32m_dp.cpp).<br/><br/>
 In order to build the Cython module, follow the steps shown below:<br/><br/>
@@ -237,7 +239,7 @@ pip install --force-reinstall dist/*.whl
 ```
 <br/><br/>
 
-## Step 6
+### Step 6
 Convert the pandas dataframes into `parquet` files as parquet format is quite generic and efficient for column based feature datasets and if you are going to use spark in the future, you do not need to change the model dataloader. Save the parquet files in the `GCS buckets` in the cloud.<br/><br/>
 ```python
 def save_dfs_parquet(
@@ -303,7 +305,7 @@ Assigning 0 or negative to unwatched movies could lead to bias in training data 
 ### Movie Features
 ![Movie Embeddings](/docs/assets/movie_emb.png)
 <br/><br/>
-Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
+DCN v2 is a cross feature layer to handle feature-feature interactions. Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
 ```python
 class MovieEncoder(nn.Module):
     def __init__(
@@ -521,11 +523,18 @@ class RecommenderSystem(nn.Module):
 ```
 <br/><br/>
 
-Onwards with our model architecture. The following architecture is quite simplistic compared to some of the latest developments around deep recommender systems. I am planning to upgrade the following architecture into a generative recommender system in the future.<br/><br/>
-1. On a high level, the model comprises of two towers, one for user features and another for movie features. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.<br/><br/>
-2. The movie tower accepts the movie features (as mentioned earlier) and passes them through Embedding Layers to convert the one-hot features into embeddings. There are some features like the genres and description/tags which is multi-hot i.e. they have multiple values. For these features, I am just computing average embedding after masking the 0s. Finally all movie features are concatenated and passed through a MLP layer with a non-linear activation function such as GeLU, Dropout and LayerNorm layers. Finally applying a cross feature layer using DCN on top of the output.<br/><br/>
-3. Similar to movie tower, the user tower converts the one-hot features into embeddings first. The historical features are considered as sequential features and they are handled using a Transformer Layer where the previous N rated movies are passed through a Transformer layer and then I take the dot product of the output of Transformer with the previous N ratings corresponding to these movies.<br/><br/>
-   
-One definite challenge with a binary classification problem is class imbalance because 
+## Trainer
+Finally we come to the trainer part wherein we will explore distributed training using PyTorch. PyTorch provides multiple strategies for distributed training. The two most popular are DDP (Distributed Data Parallel) and FSDP (Fully Sharded Data Parallel). In both DDP and FSDP, the training data is partitioned across multiple workers across nodes and each worker works with only its data to compute the loss during forward passes and compute gradients in backward passes. The gradients are then averaged and broadcasted to all workers so that each worker now sees the same gradient values. In FSDP, the model is also partitioned across the workers. This is the case where the size of model is too large to fit in the memory of a single node or worker. But in FSDP communication overhead increases as compared to DDP because each worker also needs to coordinate with other workers in the forward passes too.<br/><br/>
+In the example that I am working with, the model size is small enough to fit in the memory of a worker and thus I am going to use DDP. DDP uses multiple backend protocols for communication between workers such as MPI, Gloo and NCCL. For training on GPUs, almost always NCCL performs better than MPI or Gloo. We will deep dive each of these protocols and implement a custom MPI based distributed training in the next post.<br/><br/>
+PyTorch provides 2 important tools for running a trainer script across multiple workers and/or multiple nodes - `torchrun` and `mpirun`.<br/><br/>
+While torchrun is easy to work with as it does not require installing OpenMPI libraries or overhead of enabling ssh and tcp communication between the workers as in mpirun but in order to use torchrun, one needs to login to all the nodes/pods individually and run the script in each node individually. This might not be an ideal situation when we have to deploy the trainer in production and run the training jobs using a job scheduler such as Airflow. That is why I prefer to use `mpirun` instead of `torchrun` for this example.<br/><br/>
+In both torchrun and mpirun, environment variables are set for individual workers and nodes. The most important in mpirun are the following:<br/><br/>
+```
+OMPI_COMM_WORLD_SIZE - world size i.e. total number of workers across all nodes. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_SIZE=16
+OMPI_COMM_WORLD_LOCAL_RANK - local rank of a worker. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_LOCAL_RANK ranges from 0-7 in node 0 and 0-7 in node 1
+OMPI_COMM_WORLD_RANK - global rank of a worker. For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_RANK ranges from 0-7 in node 0 and 8-15 in node 1
+
+```
+
 
     
