@@ -303,11 +303,223 @@ Assigning 0 or negative to unwatched movies could lead to bias in training data 
 ### Movie Features
 ![Movie Embeddings](/docs/assets/movie_emb.png)
 <br/><br/>
+Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
+```python
+class MovieEncoder(nn.Module):
+    def __init__(
+            self, 
+            movie_id_size, 
+            movie_desc_size,
+            movie_genres_size,
+            movie_year_size, 
+            embedding_size, 
+            dropout=0.0
+        ) -> None:
+        
+        super(MovieEncoder, self).__init__()
+        
+        self.movie_id_emb = MovieId(movie_id_size, embedding_size)
+        self.movie_desc_emb = nn.Embedding(movie_desc_size, 256, padding_idx=0)
+        self.movie_genres_emb = nn.Embedding(movie_genres_size, 8, padding_idx=0)
+        self.movie_year_emb = nn.Embedding(movie_year_size, 16, padding_idx=0)
+
+        self.fc_concat = nn.Linear(embedding_size + 280, embedding_size)
+        init_weights(self.fc_concat)
+
+        self.fc = nn.Sequential(
+            self.fc_concat,
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(embedding_size)
+        )
+
+        self.cross_features = CrossFeatureLayer(embedding_size + 280, 3, 0.0)
+
+    def forward(
+            self, 
+            ids:torch.Tensor, 
+            descriptions:torch.Tensor, 
+            genres:torch.Tensor, 
+            years:torch.Tensor
+        ):
+
+        id_emb = self.movie_id_emb(ids) # (batch, embedding_size)
+        desc_emb = emb_averaging(descriptions, self.movie_desc_emb) # (batch, 256)
+        genres_emb = emb_averaging(genres, self.movie_genres_emb) # (batch, 8)
+        years_emb = self.movie_year_emb(years) # (batch, 16)
+
+        movie_embedding = torch.concat([id_emb, desc_emb, genres_emb, years_emb], dim=-1) # (batch, embedding_size + 280)
+        movie_embedding = self.cross_features(movie_embedding) + movie_embedding # (batch, embedding_size + 280)
+        movie_embedding = self.fc(movie_embedding) # (batch, embedding_size)
+
+        return movie_embedding
+```
+The full code with all the components can be found at the [github repo](https://github.com/funktor/distributed-recsys/blob/main/model.py).<br/><br/>
 
 ### Complete Model
 ![Full Model](/docs/assets/model.png)
 <br/><br/>
+Recommender system class definition:
+```python
+class RecommenderSystem(nn.Module):
+    def __init__(
+            self, 
+            user_id_size, 
+            user_embedding_size, 
+            user_prev_rated_seq_len, 
+            user_num_encoder_layers, 
+            user_num_heads, 
+            user_dim_ff,
+            user_dropout,
+            movie_id_size, 
+            movie_desc_size,
+            movie_genres_size,
+            movie_year_size, 
+            movie_embedding_size, 
+            movie_dropout,
+            embedding_size,
+            dropout=0.0
+        ) -> None:
 
+        super(RecommenderSystem, self).__init__()
+
+        self.user_embedding_size = user_embedding_size
+        self.movie_embedding_size = movie_embedding_size
+
+        self.movie_encoder = \
+            MovieEncoder\
+            (
+                movie_id_size, 
+                movie_desc_size,
+                movie_genres_size,
+                movie_year_size, 
+                movie_embedding_size, 
+                movie_dropout
+            )
+        
+        self.user_encoder = \
+            UserEncoder\
+            (
+                user_id_size,
+                user_embedding_size
+            )
+                
+        self.movie_id_emb = self.movie_encoder.movie_id_emb
+
+        self.user_prev_positional_encoding = \
+            PositionalEncoding(
+                movie_embedding_size, 
+                user_prev_rated_seq_len, 
+                user_dropout
+            )
+        
+        self.user_prev_encoder_block = \
+            Encoder(
+                user_num_encoder_layers, 
+                movie_embedding_size, 
+                user_num_heads, 
+                user_dim_ff, 
+                user_dropout
+            )
+
+        self.user_prev_num_heads = user_num_heads
+
+        self.fc_concat = nn.Linear(user_embedding_size + movie_embedding_size, embedding_size)
+        init_weights(self.fc_concat)
+
+        self.fc = nn.Sequential(
+            self.fc_concat,
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(embedding_size)
+        )
+
+        self.cross_features = CrossFeatureLayer(embedding_size, 3, 0.0)
+
+        self.fc_out = nn.Linear(embedding_size, 1)
+        init_weights(self.fc_out)
+
+        self.out = nn.Sequential(
+            self.fc_out
+        )
+
+    def get_movie_embeddings(
+            self, 
+            movie_ids:torch.Tensor, # (batch,)
+            movie_descriptions:torch.Tensor, # (batch, ntokens)
+            movie_genres:torch.Tensor, # (batch, ntokens)
+            movie_years:torch.Tensor # (batch,))
+    ):
+        
+        return \
+            self.movie_encoder\
+                (
+                    movie_ids, 
+                    movie_descriptions, 
+                    movie_genres, 
+                    movie_years
+                ) 
+    
+    def get_user_embeddings(
+            self, 
+            user_ids:torch.Tensor # (batch,)
+    ):
+        
+        return \
+            self.user_encoder\
+                (
+                    user_ids
+                )  
+
+    def forward(
+            self, 
+            user_ids:torch.Tensor, # (batch,)
+            user_prev_rated_movie_ids:torch.Tensor, # (batch, seq)
+            user_prev_ratings:torch.Tensor, # (batch, seq)
+            movie_ids:torch.Tensor, # (batch,)
+            movie_descriptions:torch.Tensor, # (batch, ntokens)
+            movie_genres:torch.Tensor, # (batch, ntokens)
+            movie_years:torch.Tensor # (batch,)
+        ):
+        
+        movie_embeddings = \
+            self.get_movie_embeddings\
+                (
+                    movie_ids,
+                    movie_descriptions,
+                    movie_genres,
+                    movie_years
+                )                                  # (batch, movie_embedding_size)
+        
+        user_embeddings = \
+            self.get_user_embeddings\
+                (
+                    user_ids
+                )                               # (batch, user_embedding_size)
+        
+        # mask the paddings from attention
+        mask = (user_prev_rated_movie_ids != 0).float().unsqueeze(-1) # (batch, prev_rated_seq_len, 1)
+        mask = torch.matmul(mask, mask.transpose(-2,-1)).unsqueeze(1).repeat(1, self.user_prev_num_heads, 1, 1) # (batch, num_heads, prev_rated_seq_len, prev_rated_seq_len)
+        
+        rated_movie_emb = self.movie_id_emb(user_prev_rated_movie_ids)   # (batch, prev_rated_seq_len, movie_embedding_size)
+        rated_movie_emb = self.user_prev_positional_encoding(rated_movie_emb) # (batch, prev_rated_seq_len, movie_embedding_size)
+        rated_movie_emb = self.user_prev_encoder_block(rated_movie_emb, mask) # (batch, prev_rated_seq_len, movie_embedding_size)
+
+        rated_movie_ratings = user_prev_ratings.unsqueeze(1) # (batch, 1, prev_rated_seq_len)
+        # weighted sum of ratings
+        rated_movie_emb_weighted = torch.matmul(rated_movie_ratings, rated_movie_emb).squeeze(1) # (batch, movie_embedding_size)
+
+        movie_embeddings = movie_embeddings + rated_movie_emb_weighted # (batch, movie_embedding_size)
+        
+        emb_concat = torch.concat([movie_embeddings, user_embeddings], dim=-1) # (batch, movie_embedding_size + user_embedding_size)
+        
+        emb  = self.fc_concat(emb_concat) # (batch, embedding_size)
+        emb  = self.cross_features(emb) + emb  # (batch, embedding_size)
+        out  = self.out(emb).squeeze(-1)  # (batch,)
+
+        return out
+```
+<br/><br/>
 
 Onwards with our model architecture. The following architecture is quite simplistic compared to some of the latest developments around deep recommender systems. I am planning to upgrade the following architecture into a generative recommender system in the future.<br/><br/>
 1. On a high level, the model comprises of two towers, one for user features and another for movie features. The outputs from 2 towers are concatenated and passed through a MLP layer with a single output i.e. the predicted rating for the user and movie.<br/><br/>
