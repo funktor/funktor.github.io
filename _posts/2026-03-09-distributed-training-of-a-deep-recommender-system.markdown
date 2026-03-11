@@ -1145,3 +1145,95 @@ I am using infinite loop for the batch generator instead of iterating till numbe
 <br/><br/>
 The full code for prefetching batches can be found in this [file](https://github.com/funktor/distributed-recsys/blob/main/dataloader.py).
 <br/><br/>
+
+### Saving Models and Embeddings
+Once all epochs are completed save the model weights and optimizer states. Although it is highly recommended to checkpoint the model after each epoch so that one can restart training if the trainer crashes in between. It should be noted that the model is saved or loaded by a single worker per node/pod usually rank_local=0.<br/><br/>
+```python
+def checkpoint(model:nn.Module, optimizer:torch.optim.Optimizer, filename):
+    """
+    Checkpoint model and optimizer
+    """
+    torch.save({'optimizer':optimizer.state_dict(), 'model':model.state_dict()}, filename)
+    
+def load_model(filename):
+    """
+    Load model and optimizer
+    """
+    chkpt = torch.load(filename, weights_only=False)
+    return chkpt['model'], chkpt['optimizer']
+
+model:RecommenderSystem = rec.module
+
+# Save final model by rank=0 worker
+if rank_global == 0:
+    print("Saving model...")
+    checkpoint(model, optimizer, os.path.join(model_out_dir, f"final_model.pth"))
+
+    print("Uploading model to GCS...")
+    upload_directory_with_transfer_manager(
+        gcs_bucket_name, 
+        model_out_dir, 
+        f"{gcs_prefix}/{model_out_dir}"
+    )
+
+```
+<br/><br/>
+
+## Using mpirun to run trainer
+We have the codes and the GPU workers and nodes in place. We need to run the training on multiple nodes or pods each with multiple GPU workers. In my case I had 2 reserved pods each with 8 L4 GPU workers. As said earlier I won't be showing how to create those pods with GPU workers in this post. Probably will keep that for another post. But for the moment I had used some unused reservation on GCP sitting idle. Here are the key steps involved in running the training job from your local server on the 2 pods each running 8 GPUs.
+
+### Setup MPI (on local server as well as worker nodes)
+```
+# Run the following commands on local server as well as worker nodes
+sudo apt-get update
+sudo apt-get install openmpi-bin libopenmpi-dev
+mpirun --version
+```
+
+## Setup SSH and TCP on local server and worker nodes
+```
+# On each worker node start ssh server
+sudo apt update
+sudo apt install openssh-server -y
+sudo service ssh start
+
+# Generate SSH key on local server (head node)
+ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+
+# Copy public key from head node to worker nodes
+# On each worker node
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+
+# Append the copied key (paste the output from 'cat ~/.ssh/id_rsa.pub' in head node)
+# On each worker node
+echo "<head node public key>" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+### Run on local server
+To get the IP addresses of the worker nodes/pods, run `kubectl get pods -o wide`.
+In the below command, the arguments with flag -H specifies the IP addresses of the pods along with the number of GPU workers i.e. 8 workers.
+Note that only one of the worker node/pod can be the master node. MASTER_PORT can be any unoccupied port on the worker nodes.
+The argument `-x PATH` indicates that the PATH environment variable on the local server is exported to each worker and the OpenMPI looks at all directories and sub-directories in the PATH to locate the script `trainer.py`. Thus it is important that the local server and the worker nodes have the same configurations.
+I had created another pod with the same configuration as the GPU worker pods but only with CPU configurations.
+```
+# Each worker node has 8 GPUs total 16 GPUs across 2 nodes
+nohup mpirun -np 16 \
+    -H 240.76.37.135:8, 240.76.41.135:8 \
+    -x MASTER_ADDR=240.76.37.135 \
+    -x MASTER_PORT=29500 \
+    -x PATH \
+    -bind-to none -map-by slot \
+    -mca pml ob1 -mca btl ^openib \
+    python \
+        trainer.py \
+            --gcs_bucket "recsys" \
+            --gcs_prefix "ml-32m"  \
+            --gcs_data_dir "dataset_ml_32m" \
+            --batch_size 128 \
+            --num_epochs 10 \
+            --num_workers 4 \
+            --accumulate_grad_batches 4 \
+            --model_out_dir "/tmp/model_outputs" >output.log 2>&1 &
+```
