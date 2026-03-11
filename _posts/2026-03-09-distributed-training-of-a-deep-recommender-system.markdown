@@ -5,9 +5,10 @@ date:   2026-03-09 18:50:11 +0530
 categories: ml
 ---
 Designing a recommender system is not a trivial problem to solve and big tech companies have invested hundreds of millions into building the best recommender systems platform. While I will not go through the details of designing a full recommender system in this post and I would like to keep that for a future post. In this post I would be walking through the steps I followed to train a deep recommender system (a recommender system implemented using deep neural networks) in a distributed environment i.e. where we have a cluster of nodes/pods each with a limited memory and limited number of CPUs/GPUs.<br/><br/>
-Please note that this was a weekly side project that I felt would be fun to do. Many of the codes or design that are shown here may not be fully optimized for production. Athough I will try to point out scopes for improvements wherever possible to the best of my knowledge. Also, I leveraged some of my team's reserved and not in use GPU pods to run the model so to keep the post short I will not go through the setup of the distributed environment such as provisioning nodes in GCP or writing kebernetes YAML to spin up multiple GPU pods etc.<br/><br/>
-The dataset used for training the deep recommender system is `MovieLens-32M` (~32 million movie ratings).<br/><br/>
-The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp),  movies metadata such as title, genre etc. and movie tags. I will be using all of these data as features to train a `regression model` to predict the rating given the user and movie input features and any other features. To be more precise I am going to use the following features for the model.<br/><br/>
+Note that this was a weekly side project that I felt would be fun to do. Many of the codes or design that are shown here may not be fully optimized for production. Athough I will try to point out scopes for improvements wherever possible to the best of my knowledge. Also, I leveraged some of my team's reserved and not in use GPU pods to run the model so to keep the post short I will not go through the setup of the distributed environment such as provisioning nodes in GCP or writing kebernetes YAML to spin up multiple GPU pods etc.<br/><br/>
+For anyone interested in deploying a distributed trainer in production, look at [Ray](https://docs.pytorch.org/tutorials/beginner/distributed_training_with_ray_tutorial.html). The biggest pro I found in using Ray for distributed training is that it can autoscale and has fault tolerance inbuilt.<br/><br/>
+The dataset used for training the deep recommender system in this post is `MovieLens-32M` (~32 million movie ratings).<br/><br/>
+The dataset comprises of multiple files corresponding to ratings (user id, movie id, rating, timestamp), movies metadata such as title, genre etc. and movie tags. I will be using all of these data as features to train a `regression model` to predict the rating given the user and movie input features along with any other features. To be more precise I am going to use the following features for the model.<br/><br/>
 ```
 User Features
 1. user_id
@@ -28,7 +29,7 @@ Ratings - Normalized Rating corresponding to user_id and movie_id
 ![Data Generator Pipeline](/docs/assets/data_gen.png)
 
 ### Step 1
-The 1st step would be to read the dataset files. Since the dataset size is approximately `1 GB`, I can comfortably read the dataset into `Pandas` dataframes and do the processing on top of pandas. Although it is highly recommended to use either `Spark` to read and process the dataset on low memory systems or use `Polars` instead of Pandas due to Polars being significantly faster than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
+The 1st step would be to read the dataset files. Since the original dataset size is approximately `1 GB`, I can comfortably read the dataset into `Pandas` dataframes and do the processing on top of pandas. Although it is highly recommended to use either `Spark` to read and process the dataset on low memory systems or use `Polars` instead of Pandas due to Polars being significantly [faster](https://www.databricks.com/blog/polars-vs-pandas) than Pandas for data processing. I wrote this simple Python function to read the dataset into dataframes as follows:<br/><br/>
 ```python
 def get_ml_32m_dataframe(path:str):
     """
@@ -126,7 +127,7 @@ df_ratings, df_movies = get_ml_32m_dataframe(dataset_path)
 ```
 <br/><br/>
 The above function uses certain UDFs to preprocess data. The columns I am interested in are : `[user_id, movie_id, rating, timestamp, description, genres, movie_year]`.<br/><br/>
-The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. The entire codes can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
+The column `description` is a derived column from title and tags. I am assuming a 1-gram language model and extracting the words as tokens. Instead of a 1-gram model, one can use a n-gram model. The entire code can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
 <br/><br/>
 
 ### Step 2
@@ -185,7 +186,7 @@ def split_train_test(
 
     return df_train, df_val, df_test
 ```
-Before splitting, I am filtering ratings data by users who have given at-least min-rated number of ratings so as to reduce noise in the training dataset due to long tail users with 1 or 2 ratings only.
+Before splitting, I am filtering ratings data by users who have given at-least `min-rated` number of ratings so as to reduce noise in the training dataset due to long tail users with 1 or 2 ratings only. Usually one can set min_ratings as 10 or 20.
 <br/><br/>
 
 ### Step 4
@@ -285,9 +286,11 @@ def save_dfs_parquet(
     df_movies.to_parquet(out_dir + "/movies.parquet")
 ```
 <br/><br/>
+The parquet dataset is partitioned randomly into 32 partitions so that during training, multiple GPU workers can access only a subset of the partitions and train the model on that subset of data instead of working with the full dataset. Later we will see that using 8 GPU workers, each GPU worker accesses roughly 4 partitions thus enabling parallelization.
+<br/><br/>
 
 ## Model Architecture
-As mentioned earlier that I am solving this recommender system problem as a `regression` over the `normalized ratings`. Regression is not the only way to solve. One can also solve this as a `binary classification` problem by turning ratings and views into binary labels for e.g. with normalized ratings, one can assign a label of 1 for all ratings >= 0 and a label of 0 to all ratings < 0 since normalized ratings has a mean of 0. There are few challenges I saw when implementing a binary classification approach to a recommender system:<br/><br/>
+As mentioned earlier that I am solving this recommender system problem as a `regression` over the `normalized ratings`. Regression is not the only way to solve. One can also solve this as a `binary classification` problem by turning ratings and views into binary labels. For e.g. with normalized ratings, one can assign a label of 1 to all ratings >= 0 and a label of 0 to all ratings < 0 since normalized ratings has a mean of 0. There are few challenges I saw when implementing a binary classification approach to a recommender system:<br/><br/>
 
 ### Challenge 1
 Defining positive and negative examples correctly. One strategy is as mentioned above where we consider all ratings above the mean for that user as positives and rest as negatives. But this is only possible  where explicit ratings are available.
@@ -305,7 +308,7 @@ Assigning 0 or negative to unwatched movies could lead to bias in training data 
 ### Movie Features
 ![Movie Embeddings](/docs/assets/movie_emb.png)
 <br/><br/>
-DCN v2 is a cross feature layer to handle feature-feature interactions. Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
+[DCN v2](https://arxiv.org/abs/2008.13535) is a cross feature layer to enable `feature-feature interactions`. Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
 ```python
 class MovieEncoder(nn.Module):
     def __init__(
