@@ -524,6 +524,8 @@ class RecommenderSystem(nn.Module):
 <br/><br/>
 
 ## Trainer
+![Trainer](/docs/assets/mpi.png)
+
 Finally we come to the trainer part wherein we will explore distributed training using PyTorch. PyTorch provides multiple strategies for distributed training. The two most popular are `DDP` (Distributed Data Parallel) and `FSDP` (Fully Sharded Data Parallel). In both `DDP` and `FSDP`, the training data is partitioned across multiple workers across nodes and each worker works with only its data to compute the loss during forward passes and compute gradients in backward passes. The gradients are then averaged and broadcasted to all workers so that each worker now sees the same gradient values. In FSDP, the model is also partitioned across the workers. This is the case where the size of model is too large to fit in the memory of a single node or worker. But in FSDP communication overhead increases as compared to DDP because each worker also needs to coordinate with other workers in the forward passes too.<br/><br/>
 In the example that I am working with, the model size is small enough to fit in the memory of a worker and thus I am going to use DDP. DDP uses multiple backend protocols for communication between workers such as `MPI`, `Gloo` and `NCCL`. For training on GPUs, almost always NCCL performs better than MPI or Gloo. We will deep dive each of these protocols and implement a custom MPI based distributed training in the next post.<br/><br/>
 PyTorch provides 2 important tools for running a trainer script across multiple workers and/or multiple nodes - `torchrun` and `mpirun`.<br/><br/>
@@ -1180,7 +1182,8 @@ if rank_global == 0:
 <br/><br/>
 
 ## Using mpirun to run trainer
-We have the codes and the GPU workers and nodes in place. We need to run the training on multiple nodes or pods each with multiple GPU workers. In my case I had 2 reserved pods each with 8 L4 GPU workers. As said earlier I won't be showing how to create those pods with GPU workers in this post. Probably will keep that for another post. But for the moment I had used some unused reservation on GCP sitting idle. Here are the key steps involved in running the training job from your local server on the 2 pods each running 8 GPUs.
+We have the codes and the GPU workers in place. We need to run the training on multiple nodes or pods each with multiple GPU workers. In my case I had 2 reserved pods each with `8 L4 GPU` workers. Each worker node has `90 CPU cores` and around `360GB of RAM`. Each GPU has around `23GB of global memory`. Probably the configuration is on the higher side and most often `16 CPU cores` and total of `32GB RAM` should be enough to train the movielens-32m recommender system. As said earlier, I had used some unused reservation on GCP sitting idle.<br/><br/>
+Here are the key steps involved in running the training job from your local server on the 2 pods each running 8 GPUs.<br/><br/>
 
 ### Setup MPI (on local server as well as worker nodes)
 ```
@@ -1211,12 +1214,12 @@ echo "<head node public key>" >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
 
-### Run on local server
-To get the IP addresses of the worker nodes/pods, run `kubectl get pods -o wide`.
-In the below command, the arguments with flag -H specifies the IP addresses of the pods along with the number of GPU workers i.e. 8 workers.
-Note that only one of the worker node/pod can be the master node. MASTER_PORT can be any unoccupied port on the worker nodes.
-The argument `-x PATH` indicates that the PATH environment variable on the local server is exported to each worker and the OpenMPI looks at all directories and sub-directories in the PATH to locate the script `trainer.py`. Thus it is important that the local server and the worker nodes have the same configurations.
-I had created another pod with the same configuration as the GPU worker pods but only with CPU configurations.
+### Running mpirun from local server
+To get the IP addresses of the worker nodes/pods, run `kubectl get pods -o wide`. 
+In the below command, the arguments with flag -H specifies the IP addresses of the pods along with the number of GPU workers i.e. `8 workers`.
+Note that only one of the worker node/pod can be the master node. `MASTER_PORT` can be any unoccupied port number on the worker nodes.
+The argument `-x PATH` indicates that the PATH environment variable on the local server is exported to each worker and the MPI tries to locate the script `trainer.py` in the exported PATH variable. Thus it is important that the local server and the worker nodes have the same filesystem and configuration.<br/><br/>
+To execute the `mpirun` command I had created another pod with the same configuration as the GPU worker pods but with CPU configurations.
 ```
 # Each worker node has 8 GPUs total 16 GPUs across 2 nodes
 nohup mpirun -np 16 \
@@ -1237,3 +1240,5 @@ nohup mpirun -np 16 \
             --accumulate_grad_batches 4 \
             --model_out_dir "/tmp/model_outputs" >output.log 2>&1 &
 ```
+<br/><br/>
+The flag `-bind-to none` indicates that the any MPI process running on the worker nodes/pods is not locked to any CPU. Thus any process can be handled by any CPU if the worker nodes has multiple cores. This is useful in multiprocessing scenario. The remaining flags are mpi specific related to the Byte Transport Layer protocol. In order to use `torchrun` instead of `mpirun` follow the steps mentioned in the [README.md](https://github.com/funktor/distributed-recsys/tree/main) file for the hithub repository.
