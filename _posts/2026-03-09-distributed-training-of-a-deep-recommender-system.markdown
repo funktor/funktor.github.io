@@ -630,7 +630,165 @@ def get_datasets(path:str, world_size:int, rank:int):
 print("Getting datasets...")
 ratings_train, ratings_val, movies_dataset = dataloader.get_datasets(datasets_gcs_path, world_size, rank_global)
 ```
-I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data. You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader remains agnostic of the data generator and is only bothered about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
-Note that before download, I only select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with indices where index % world size = local_rank. In this way each worker gets an almost equal share of files.<br/><br/>
+I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data. You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader is agnostic of the data generator and is only concerned about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
+I am using `cache_dir` to cache the downloaded files which means that the next time I run the trainer, the files will be fetched from local disk instead of downloading from GCP.<br/><br/>
+Note that before download, I select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with file indices where index % world size = local_rank. In this way each worker gets an almost equal share of files.<br/><br/>
 The movies dataset in held in memory whereas the ratings datasets are memory mapped on disk.<br/><br/>
+Another disadvantage of using a custom sharding with DDP training is that each worker now probably has to deal with different number of batches per epoch. If we have different number of batches per epoch, then the worker that finishes first with all its batches, will exit after broadcasting its gradients for its last batch whereas the workers with more number of batches will wait for all the workers to broadcast its gradients for averaging for the additional batches. But since one or more number of batches have exited, the worker with more number of batches will wait indefinitely causing NCCL timeouts.<br/><br/>
+One solution to this problem is to assign equal number of batches to each GPU worker.<br/><br/>
+```python
+def count_rows_in_gcs_parquet(parquet_path:str):
+    """
+    Counts the total number of rows across multiple Parquet files in a GCS bucket path.
+    """
+    # Initialize the GCSFileSystem
+    fs = gcsfs.GCSFileSystem()
     
+    # Use pyarrow to open the dataset without reading the actual data
+    # parquet_path is assumed to be in the following format: gs://[bucket-name]/**/*.parquet
+    parquet_paths = parquet_path.split("/")
+    parquet_paths = parquet_paths[2:-1]
+    parquet_dir = "/".join(parquet_paths)
+    print(parquet_dir)
+
+    dataset = pq.ParquetDataset(parquet_dir, filesystem=fs)
+    
+    # Sum the row counts from the metadata of each fragment (file)
+    total_rows = sum(fragment.count_rows() for fragment in dataset.fragments)
+    return total_rows
+
+# Assign each GPU equal number of batches
+num_train_data = count_rows_in_gcs_parquet(ratings_train_path)
+batches_per_epoch = num_train_data // (world_size*batch_size)
+```
+<br/><br/>
+Thus each worker will complete the same number of iterations per epoch. This problem is avoided if we use the vanilla DDP because DDP internally makes sure that each GPU worker works with same number of batches.
+
+### Download Vocabulary
+In order to train the embeddings layers we need the vocabulary file that was generated during the data generation phase. But we need to make sure that in each node only one worker downloads the file because if multiple workers downloads the same file, if the output path is same, then the file might get corrupted to concurrent writes, or else each worker needs to download the same file at multiple paths which is waste of disk space.
+<br/><br/>
+```python
+# Download vocabulary to local path only by rank=0 worker. Need to synchronize using marker file 
+if rank_local == 0:
+    dataloader.download_vocabulary(path_vocab, VOCAB_PATH)
+    for i in range(num_gpu_workers):
+        Path(f"/tmp/marker_file_{i}.txt").touch()
+
+while True:
+    if os.path.exists(f"/tmp/marker_file_{rank_local}.txt"):
+        Path(f"/tmp/marker_file_{rank_local}.txt").unlink()
+        break
+
+print("Reading vocabulary...")
+vocabulary = dataloader.get_vocabulary(VOCAB_PATH)
+```
+<br/><br/>
+But we also need to synchronize the workers after reading of vocabulary. One way is to only allow the rank_local=0 worker to download the file and when download is completed, it creates a temporary marker file for each worker. While the other workers wait for the corresponding marker file to be available. Finally each worker reads the vocabulary. The reason for writing multiple marker files corresponding to each worker is because we want to delete the marker files after each run (failed or successful). If there is only a single marker file, then it might happen that rank_local=1 worker sees it first and deletes the marker file before rank_local=2 worker sees it. Thus rank_local=2 worker will indefinitely stuck waiting for the marker file to be present.
+<br/><br/>
+```python
+try
+    # Training code goes in here
+except Exception as e:
+    print(e)
+finally:
+    # delete the marker files
+    if os.path.exists(f"/tmp/marker_file_{rank_local}.txt"):
+        Path(f"/tmp/marker_file_{rank_local}.txt").unlink()
+
+    # destroy ddp processes
+    if dist.is_initialized():
+        dist.destroy_process_group()
+```
+
+### Initialize Model and Optimizer
+Before we start training, we need to initialize the model and optimizer. I am using the standard `Adam` optimizer although one can easily substitute it with `AdamW` or any other optimizer. Instead of keeping a constant learning rate, I am using a `Cosine` learning rate scheduler. Also in order to handle large batch sizes, I am using gradient accumulation i.e. for e.g. if I want a batch size of 2048 and my system only allows a batch size of 128 without causing OOM errors, then I can accumulate 16 batches before I do the backward pass and compute the gradients.
+<br/><br/>
+```python
+def get_trainer_and_optimizer(vocabulary:dict, rank:int):
+    """
+    Get model and optimizer
+    """
+    user_id_size = len(vocabulary["userId"])+1
+    movie_id_size = len(vocabulary["movieId"])+1
+    user_embedding_size = 128
+    user_prev_rated_seq_len = 20
+    user_num_encoder_layers = 1
+    user_num_heads = 4
+    user_dim_ff = 128
+    user_dropout = 0.0
+    movie_desc_size = len(vocabulary["description"])+1
+    movie_genres_size = len(vocabulary["genres"])+1
+    movie_year_size = len(vocabulary["movie_year"])+1
+    movie_embedding_size = 128
+    movie_dropout = 0.0
+    embedding_size = 128
+
+    rec = \
+        RecommenderSystem(
+            user_id_size, 
+            user_embedding_size, 
+            user_prev_rated_seq_len, 
+            user_num_encoder_layers, 
+            user_num_heads, 
+            user_dim_ff,
+            user_dropout,
+            movie_id_size, 
+            movie_desc_size,
+            movie_genres_size,
+            movie_year_size, 
+            movie_embedding_size, 
+            movie_dropout,
+            embedding_size
+        ).to(rank)
+    
+    optimizer = optim.Adam(rec.parameters(), lr=0.0001)
+    return rec, optimizer
+
+class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
+    """
+    Cosine Learning Rate Scheduler
+    """
+    def __init__(self, optimizer, warmup, max_iters):
+        self.warmup = warmup
+        self.max_num_iters = max_iters
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        lr_factor = self.get_lr_factor(epoch=self.last_epoch)
+        return [base_lr * lr_factor for base_lr in self.base_lrs]
+
+    def get_lr_factor(self, epoch):
+        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch / self.max_num_iters))
+        if epoch <= self.warmup:
+            lr_factor *= epoch * 1.0 / self.warmup
+        return lr_factor
+
+print("Getting model and optimizer...")
+rec, optimizer = get_trainer_and_optimizer(vocabulary, rank_local)
+
+# Load existing model if model_path provided
+if model_path and os.path.exists(model_path):
+    rec_st, optimizer_st = load_model(model_path)
+    rec.load_state_dict(rec_st)
+    optimizer.load_state_dict(optimizer_st)
+
+# Wrap model in DDP
+rec = DDP(rec, device_ids=[rank_local], find_unused_parameters=True)
+
+# Create path for storing checkpoints and saving final model
+if rank_global == 0:
+    os.makedirs(model_out_dir, exist_ok=True)
+
+# Initialize optimizer
+optimizer.zero_grad()
+
+# Initialize loss
+criterion = nn.MSELoss()
+scheduler = \
+    CosineWarmupScheduler(
+        optimizer, 
+        warmup=50, 
+        max_iters=batches_per_epoch*max_num_epochs/accumulate_grad_batches
+    )
+```
+I am also creating checkpoints for the model based on the validation loss after each epoch and also storing the final model. If one wants to reuse an existing model, they just need to pass the model path argument to the trainer script. Refer to th full trainer script [here](https://github.com/funktor/distributed-recsys/blob/main/trainer.py).
