@@ -962,9 +962,63 @@ for epoch in range(max_num_epochs):
 
 ```
 <br/><br/>
-In order to facilitate faster training because the batches are loaded one by one from disk, I am using prefetching to load multiple batches with the help of multiple CPU processes (workers) and placing the loaded batches in a FIFO queue. For validation I am not using prefetching as it causes OOM errors with too many batches in memory. The batches that are prefetched are asynchronously copied from CPU to corresponding GPU worker using CUDA streams. To enable asynchronous transfers, one needs to use pin_memory for the tensors on CPU side so that those memory addresses are not overwritten before transfer is completed.
+In order to facilitate faster training because the batches are loaded one by one from disk, I am using prefetching to load multiple batches with the help of multiple CPU processes (workers) and placing the loaded batches in a FIFO queue. For validation I am not using prefetching as it causes OOM errors with too many batches in memory. The batches that are prefetched are asynchronously copied from CPU to the corresponding GPU worker using CUDA streams. 
+<br/><br/>
+There are N producer processes writing to a shared Queue and only a single consumer process reading from the shared Queue.<br/><br/>
+With multiprocessing few things needs to be taken care of.<br/><br/>
+1. You cannot pass a generator to a CPU worker process as it will complain about `Pickling` issue. The generator needs to be initialized within the process itself.
+2. Same for CUDA streams. You need to initialize `Streams` within the process itself.
+3. With multiprocessing, the CUDA context should not be recreated again in each process. To prevent that instead of using "fork" as context for multiprocessing, use "spawn". With spawn context, read only objects are not duplicated or copied in memory. Use `mp.set_start_method('spawn', force=True)`
+4. Any additional CUDA stream needs to be synchronized with the main stream.
+5. Make sure to either join() or terminate() the producer processes once generator is exhausted.
 <br/><br/>
 ```python
+def fill_prefetch_queue(queue:Queue, batch_iter, stream, device, worker_id):
+    """
+    Method to fetch batch and push to queue
+    """
+    try:
+        # fetch from generator
+        data, labels = next(batch_iter)
+    except StopIteration:
+        # generator exhausted
+        queue.put(None)
+        return
+
+    with torch.cuda.stream(stream): 
+        data_gpu = []
+        for obj in data:
+            # asynchronous data transfer from CPU to GPU
+            data_gpu += [obj.to(device=device, non_blocking=True)]
+
+        labels_gpu = labels.to(device=device, non_blocking=True)
+        # synchronize streams once transfer is completed
+        stream.synchronize()
+        queue.put((data_gpu, labels_gpu))
+
+
+def fill_queue(
+        queue:Queue, 
+        ratings_dataset:Dataset, 
+        movies_dataset:pd.DataFrame, 
+        batch_size:int, 
+        device:str, 
+        worker_id:int, 
+        num_workers:int):
+    
+    """
+    Method called by each producer process
+    """
+    # separate stream
+    stream = torch.cuda.Stream()
+
+    # get iterator to generator
+    batch_iter = prepare_batches(ratings_dataset, movies_dataset, batch_size, device, worker_id, num_workers)
+
+    while True:
+        fill_prefetch_queue(queue, batch_iter, stream, device, worker_id)
+
+
 def prepare_batches_prefetch(
     ratings_dataset:Dataset, 
     movies_dataset:pd.DataFrame, 
@@ -1022,12 +1076,72 @@ else:
             if batch is not None:
                 data, labels = batch
                 yield data, labels
-            
+
+            # for reference counting
             del batch
         except Exception:
             for p in producers:
                 p.terminate()
 ```
+<br/><br/>
+To enable asynchronous transfers, one needs to use pin_memory for the tensors on CPU side so that those memory addresses are directly accessible by the GPU worker.  Without pin_memory=True, the pages in RAM might be swapped to disk if there is high RAM usage. For asynchronous data transfers it is important that the memory addresses are not overwritten by some other CPU processes.<br/><br/>
+```python
+def prepare_batches(
+        ratings_dataset:Dataset, 
+        movies_dataset:pd.DataFrame, 
+        batch_size=128, 
+        device="gpu", 
+        worker_id:int=0, 
+        num_workers:int=1000
+    ):
+    """
+    Prepare batch by padding and converting to numpy and tensor formats
+    """
+    max_seq_len = 20
+    n = ratings_dataset.shape[0]
+    i = worker_id*batch_size
+
+    while True:
+        df_ratings_batch_df:pd.DataFrame = ratings_dataset[i:min(i+batch_size, n)]
+        df_ratings_batch_df = df_ratings_batch_df.reset_index()
+        df_ratings_batch_df = df_ratings_batch_df.merge(movies_dataset, on=["movieId"], how="left")
+
+        df_ratings_batch_df['description'] = df_ratings_batch_df['description'].apply(lambda x: x if isinstance(x, list) else [])
+        df_ratings_batch_df['genres'] = df_ratings_batch_df['genres'].apply(lambda x: x if isinstance(x, list) else [])
+        df_ratings_batch_df['movie_year'] = df_ratings_batch_df['movie_year'].fillna(0)
+
+        user_ids = df_ratings_batch_df["userId"].to_numpy(dtype=np.int32)
+        user_prev_rated_movie_ids = pad_batch(df_ratings_batch_df["prev_movie_ids"].to_numpy(), dtype=np.int32, max_seq_len=max_seq_len)
+        user_prev_ratings = pad_batch(df_ratings_batch_df["prev_ratings"].to_numpy(), dtype=np.float32, max_seq_len=max_seq_len)
+
+        movie_ids = df_ratings_batch_df["movieId"].to_numpy(dtype=np.int32)
+        movie_descriptions = pad_batch(df_ratings_batch_df["description"].to_numpy(), dtype=np.int32)
+        movie_genres = pad_batch(df_ratings_batch_df["genres"].to_numpy(), dtype=np.int32)
+        movie_years = df_ratings_batch_df["movie_year"].to_numpy(dtype=np.int32)
+
+        labels = df_ratings_batch_df["normalized_rating"].to_numpy(dtype=np.float32)
+
+        del df_ratings_batch_df
+
+        # pin_memory ensure data can be asynchronously transferred from RAM to GPU
+        user_ids = torch.from_numpy(user_ids).pin_memory()
+        user_prev_rated_movie_ids = torch.from_numpy(user_prev_rated_movie_ids).pin_memory()
+        user_prev_ratings = torch.from_numpy(user_prev_ratings).pin_memory()
+
+        movie_ids = torch.from_numpy(movie_ids).pin_memory()
+        movie_descriptions = torch.from_numpy(movie_descriptions).pin_memory()
+        movie_genres = torch.from_numpy(movie_genres).pin_memory()
+        movie_years = torch.from_numpy(movie_years).pin_memory()
+
+        labels = torch.from_numpy(labels).pin_memory()
+
+        i = (i + num_workers*batch_size) % n
+
+        yield [user_ids, user_prev_rated_movie_ids, user_prev_ratings, movie_ids, movie_descriptions, movie_genres, movie_years], labels
+
+```
+<br/><br/>
+I am using infinite loop for the batch generator instead of iterating till number of batches because for the scenario where there could be different number of batches per GPU worker, I need to make sure that each worker loops till the same number of batches. For workers with more number of batches than `batches_per_epoch`, it is not a problem but with workers having less number of batches than `batches_per_epoch` there needs to be some way to continue to generate data till `batches_per_epoch`.
 <br/><br/>
 The full code for prefetching batches can be found in this [file](https://github.com/funktor/distributed-recsys/blob/main/dataloader.py).
 <br/><br/>
