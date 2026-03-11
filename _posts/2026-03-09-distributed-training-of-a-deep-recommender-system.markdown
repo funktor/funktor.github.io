@@ -699,6 +699,7 @@ finally:
     if dist.is_initialized():
         dist.destroy_process_group()
 ```
+<br/><br/>
 
 ### Initialize Model and Optimizer
 Before we start training, we need to initialize the model and optimizer. I am using the standard `Adam` optimizer although one can easily substitute it with `AdamW` or any other optimizer. Instead of keeping a constant learning rate, I am using a `Cosine` learning rate scheduler. Also in order to handle large batch sizes, I am using gradient accumulation i.e. for e.g. if I want a batch size of 2048 and my system only allows a batch size of 128 without causing OOM errors, then I can accumulate 16 batches before I do the backward pass and compute the gradients.
@@ -791,4 +792,242 @@ scheduler = \
         max_iters=batches_per_epoch*max_num_epochs/accumulate_grad_batches
     )
 ```
-I am also creating checkpoints for the model based on the validation loss after each epoch and also storing the final model. If one wants to reuse an existing model, they just need to pass the model path argument to the trainer script. Refer to th full trainer script [here](https://github.com/funktor/distributed-recsys/blob/main/trainer.py).
+<br/><br/>
+I am also creating checkpoints for the model based on the validation loss after each epoch and also storing the final model. If one wants to reuse an existing model, they just need to pass the model path argument to the trainer script. Refer to the full trainer script [here](https://github.com/funktor/distributed-recsys/blob/main/trainer.py).
+<br/><br/>
+
+### The Training Loop
+This is the main section where the magic happens. Instead of loading all the batches in memory I am using a Python `generator` to load batches from the disk and then let the trainer script read each batch from generator. After a batch is loaded, I also need to make sure that the format is compatible with the PyTorch model training. For that I need to pad batches with 0s to make sure we have a consistent numpy array format and then convert each numpy array into Pytorch `Tensors` with the correct data type and device placement. Since I am using GPUs to train my model, I am placing all the tensors in the corresponding GPU worker for that data shard.<br/><br/>
+<br/><br/>
+```python
+# Get training batch iterator
+batch_iter_train = dataloader.prepare_batches_prefetch(ratings_train, movies_dataset, batch_size, device=rank_local, num_workers=num_workers)
+
+# Get validation batch iterator
+batch_iter_val = dataloader.prepare_batches_prefetch(ratings_val, movies_dataset, batch_size=16, device=rank_local, prefetch_factor=0)
+
+for epoch in range(max_num_epochs):
+    print(f"Starting epoch {epoch+1}...")
+    start_epoch_time = time.time()
+    rec.train()
+
+    sum_loss = 0.0
+    sum_rows = 0
+    
+    i = 0
+    while True:
+        try:
+            # Get next batch of data and labels
+            batch = next(batch_iter_train)
+
+            data, labels = batch
+            user_ids, user_prev_rated_movie_ids, user_prev_ratings, movie_ids, movie_descriptions, movie_genres, movie_years = data
+
+            output:torch.Tensor = \
+                rec(
+                    user_ids,
+                    user_prev_rated_movie_ids, 
+                    user_prev_ratings,
+                    movie_ids, 
+                    movie_descriptions, 
+                    movie_genres, 
+                    movie_years
+                )
+            
+            # Calculate batch loss
+            batch_loss:torch.Tensor = criterion(output.contiguous(), labels.contiguous())
+            batch_loss /= accumulate_grad_batches
+
+            sum_loss += output.shape[0]*batch_loss.item()
+            sum_rows += output.shape[0]
+
+            batch_loss.backward()
+
+            # Accumulate batches to compute gradient
+            if (i+1) % accumulate_grad_batches == 0:
+                # Broadcast total loss and total number of rows to all gpu workers to calculate avg loss
+                acc_loss = torch.Tensor([sum_loss, sum_rows]).to(rank_local)
+                dist.reduce(acc_loss, dst=0, op=dist.ReduceOp.SUM)
+                acc_loss = acc_loss.tolist()
+                avg_loss = acc_loss[0]/acc_loss[1]
+
+                # Print loss by rank=0 worker
+                if rank_global == 0:
+                    print(f"Epoch: {epoch+1}, Batch: {i+1}, Average Loss: {avg_loss}")
+
+                # Compute gradients
+                nn.utils.clip_grad_norm_(rec.parameters(), max_norm=1.0)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+
+            i += 1
+            if i >= batches_per_epoch:
+                break
+
+        except StopIteration:
+            break
+
+    # Do same for remaining batches (not divisible by accumulate grad batches)
+    acc_loss = torch.Tensor([sum_loss, sum_rows]).to(rank_local)
+    dist.reduce(acc_loss, dst=0, op=dist.ReduceOp.SUM)
+    acc_loss = acc_loss.tolist()
+    avg_loss = acc_loss[0]/acc_loss[1]
+
+    if rank_global == 0:
+        print(f"Epoch: {epoch+1}, Batch: {i+1}, Average Loss: {avg_loss}")
+
+    nn.utils.clip_grad_norm_(rec.parameters(), max_norm=1.0)
+    optimizer.step()
+    scheduler.step()
+    optimizer.zero_grad()
+
+    end_epoch_time = time.time()
+
+    duration = (end_epoch_time-start_epoch_time)/60
+    duration = torch.Tensor([duration]).to(rank_local)
+    dist.reduce(duration, dst=0, op=dist.ReduceOp.SUM)
+    duration = duration.tolist()
+
+    if rank_global == 0:
+        print(f"Training Time for epoch {epoch+1} = {duration[0]/world_size} minutes")
+
+
+    print(f"Running validation for epoch {epoch+1}...")
+    # Do validation
+    rec.eval()
+
+    with torch.no_grad():
+        sum_loss = 0.0
+        sum_rows = 0
+
+        i = 0
+        while True:
+            try:
+                batch = next(batch_iter_val)
+
+                data, labels = batch
+                user_ids, user_prev_rated_movie_ids, user_prev_ratings, movie_ids, movie_descriptions, movie_genres, movie_years = data
+
+                output:torch.Tensor = \
+                    rec(
+                        user_ids,
+                        user_prev_rated_movie_ids, 
+                        user_prev_ratings,
+                        movie_ids, 
+                        movie_descriptions, 
+                        movie_genres, 
+                        movie_years
+                    )
+            
+                batch_loss:torch.Tensor = criterion(output.cpu().contiguous(), labels.cpu().contiguous())
+
+                sum_loss += output.shape[0]*batch_loss.item()
+                sum_rows += output.shape[0]
+
+                if rank_global == 0:
+                    print(f"Epoch: {epoch+1}, Batch: {i+1}, Loss (Rank 0): {sum_loss/sum_rows}")
+
+                # Clear cache after each 10 batches
+                if (i+1) % 10:
+                    torch.cuda.empty_cache()
+                    gc.collect()
+
+                i += 1
+
+                if i >= max_num_batches:
+                    break
+
+            except StopIteration:
+                break
+        
+        # Compute average validation loss after 1st epoch
+        vloss = torch.Tensor([sum_loss, sum_rows]).to(rank_local)
+        dist.reduce(vloss, dst=0, op=dist.ReduceOp.SUM)
+
+        vloss = vloss.tolist()
+        avg_vloss = vloss[0]/vloss[1]
+
+        if rank_global == 0:
+            print(f"Average Validation Loss: {avg_vloss}")
+            print()
+        
+        # Checkpoint only through rank=0 worker because same weights across all workers after sync
+        if rank_global == 0:
+            print("Checkpointing...")
+            
+            if avg_vloss < best_vloss:
+                best_vloss = avg_vloss
+                checkpoint(rec.module, optimizer, os.path.join(model_out_dir, f"checkpoint-best-vloss.pth"))
+
+```
+<br/><br/>
+In order to facilitate faster training because the batches are loaded one by one from disk, I am using prefetching to load multiple batches with the help of multiple CPU processes (workers) and placing the loaded batches in a FIFO queue. For validation I am not using prefetching as it causes OOM errors with too many batches in memory. The batches that are prefetched are asynchronously copied from CPU to corresponding GPU worker using CUDA streams. To enable asynchronous transfers, one needs to use pin_memory for the tensors on CPU side so that those memory addresses are not overwritten before transfer is completed.
+<br/><br/>
+```python
+def prepare_batches_prefetch(
+    ratings_dataset:Dataset, 
+    movies_dataset:pd.DataFrame, 
+    batch_size=128, 
+    device="gpu", 
+    prefetch_factor:int=4, 
+    num_workers:int=4
+):
+"""
+Get batches using prefetching through multiple workers
+"""
+
+if prefetch_factor == 0:
+    # No prefetching
+    batch_iter = prepare_batches(ratings_dataset, movies_dataset, batch_size, device, 0, 1)
+    while True:
+        try:
+            data, labels = next(batch_iter)
+            data_gpu = []
+            for obj in data:
+                data_gpu += [obj.to(device=device)]
+            labels_gpu = labels.to(device=device)
+            yield data_gpu, labels_gpu
+        except StopIteration:
+            break
+
+else:        
+    # multiprocessing queue to push the prefetched batches
+    queue = Queue(maxsize=prefetch_factor*num_workers)
+
+    # Each producer process gets batches and pushes to queue
+    producers = []
+    for i in range(num_workers):
+        p = \
+            multiprocessing.Process(
+                target=fill_queue, 
+                args=(
+                    queue, 
+                    ratings_dataset, 
+                    movies_dataset, 
+                    batch_size, 
+                    device, 
+                    i, 
+                    num_workers
+                )
+            )
+        p.start()
+        producers += [p]
+    
+    # Main consumer process from queue
+    while True:
+        try:
+            batch = queue.get()
+    
+            if batch is not None:
+                data, labels = batch
+                yield data, labels
+            
+            del batch
+        except Exception:
+            for p in producers:
+                p.terminate()
+```
+<br/><br/>
+The full code for prefetching batches can be found in this [file](https://github.com/funktor/distributed-recsys/blob/main/dataloader.py).
+<br/><br/>
