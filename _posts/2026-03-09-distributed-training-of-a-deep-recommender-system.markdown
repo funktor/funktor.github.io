@@ -636,7 +636,8 @@ def get_datasets(path:str, world_size:int, rank:int):
 print("Getting datasets...")
 ratings_train, ratings_val, movies_dataset = dataloader.get_datasets(datasets_gcs_path, world_size, rank_global)
 ```
-I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data. You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader is agnostic of the data generator and is only concerned about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
+I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data.<br/><br/> 
+You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader is agnostic of the data generator and is only concerned about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
 I am using `cache_dir` to cache the downloaded files which means that the next time I run the trainer, the files will be fetched from local disk instead of downloading from GCP.<br/><br/>
 Note that before download, I select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with file indices where index % world size = local_rank. In this way each worker gets an almost equal share of files.<br/><br/>
 The movies dataset in held in memory whereas the ratings datasets are memory mapped on disk.<br/><br/>
@@ -671,7 +672,7 @@ batches_per_epoch = num_train_data // (world_size*batch_size)
 Thus each worker will complete the same number of iterations per epoch. This problem is avoided if we use the vanilla DDP because DDP internally makes sure that each GPU worker works with same number of batches.
 
 ### Download Vocabulary
-In order to train the embeddings layers we need the vocabulary file that was generated during the data generation phase. But we need to make sure that in each node only one worker downloads the file because if multiple workers downloads the same file, if the output path is same, then the file might get corrupted to concurrent writes, or else each worker needs to download the same file at multiple paths which is waste of disk space.
+In order to train the embeddings layers we need the vocabulary file that was generated during the data generation phase. But we need to make sure that in each node only one worker downloads the file because if multiple workers downloads the same file, and if the output path is same, then the file might get corrupted due to concurrent writes, or else each worker needs to download the same file at multiple locations which is waste of disk space.
 <br/><br/>
 ```python
 # Download vocabulary to local path only by rank=0 worker. Need to synchronize using marker file 
