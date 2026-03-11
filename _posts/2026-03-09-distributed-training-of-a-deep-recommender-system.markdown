@@ -1193,7 +1193,7 @@ sudo apt-get install openmpi-bin libopenmpi-dev
 mpirun --version
 ```
 
-## Setup SSH and TCP on local server and worker nodes
+### Setup SSH and TCP on local server and worker nodes
 ```
 # On each worker node start ssh server
 sudo apt update
@@ -1241,4 +1241,5 @@ nohup mpirun -np 16 \
             --model_out_dir "/tmp/model_outputs" >output.log 2>&1 &
 ```
 <br/><br/>
-The flag `-bind-to none` indicates that the any MPI process running on the worker nodes/pods is not locked to any CPU. Thus any process can be handled by any CPU if the worker nodes has multiple cores. This is useful in multiprocessing scenario. The remaining flags are mpi specific related to the Byte Transport Layer protocol. In order to use `torchrun` instead of `mpirun` follow the steps mentioned in the [README.md](https://github.com/funktor/distributed-recsys/tree/main) file for the hithub repository.
+The flag `-bind-to none` indicates that the any MPI process running on the worker nodes/pods is not locked to any CPU. Thus any process can be handled by any CPU if the worker nodes has multiple cores. This is useful in multiprocessing scenario. The remaining flags are mpi specific related to the [Byte Transport Layer](https://docs.open-mpi.org/en/v5.0.x/mca.html) protocol.<br/><br/>
+In order to use `torchrun` instead of `mpirun` follow the steps mentioned in the [README.md](https://github.com/funktor/distributed-recsys/tree/main) file for the github repository.
