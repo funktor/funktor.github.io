@@ -226,7 +226,7 @@ def score_vocabulary(df_ratings:pd.DataFrame, vocabulary:dict):
     
     return df_ratings
 ```
-To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
+To limit the vocabulary size, I am using a frequency based criteria wherein I keep the top N values per feature based on frequency of occurrence. This is useful for categorical features with millions or         billions of categories such as language models. Frequency based filtering may not be optimal because many times a low frequency value could be a better feature than another high frequency value. A better strategy could be to use `TF-IDF` scores. Again the entire code for vocabulary fitting and scoring can be found [here](https://github.com/funktor/distributed-recsys/blob/main/data_generator.py).
 <br/><br/>
 
 ### Step 5
@@ -549,14 +549,14 @@ For e.g. if there are 2 nodes each with 8 GPU workers, then OMPI_COMM_WORLD_RANK
 For torchrun it is RANK.
 ```
 <br/><br/>
-In the example I am working with I tweaked the DDP training strategy a bit. In vanilla DDP each worker initially has a view of all the training data and then at the start of each epoch, data is sharded across all the workers and nodes. Here I am tweaking this a bit so that each worker only downloads an equal sized shard from GCP bucket and works with only the same set of training data for all epochs. There are some advantages and disadvantages with this approach over vanilla DDP.
+In the example I am working with, I tweaked the DDP training strategy a bit. In vanilla DDP each worker initially has a view of all the training data and then at the start of each epoch, data is sharded across all the workers and nodes. Here I am tweaking this a bit so that each worker only downloads an equal sized shard from GCP bucket and works with only the same set of training data for all epochs. There are some advantages and disadvantages with this approach over vanilla DDP.
 <br/><br/>
 
 ### Advantage
-The workers does not spend time in sharding the data before the start of each epoch and thus training is usually faster. Also since each worker downloads only a subset of the training data, memory requirement is lower as compared to vanilla DDP where each worker works with all of the data and thus memory requirement is higher.
+The worker processes need not download the same metadata for the dataset. Each worker often reads the entire file index to sample its subset, leading to high disk I/O. When multiple processes (DDP ranks) try to read or index the same file simultaneously, it causes massive overhead, particularly with many small files.
 
 ### Disadvantage
-The vanilla DDP is useful when we have to `shuffle` the data after each epoch and thus in each epoch, each worker "sees" a different subset of data from the other epochs. Thus each worker gets the chance to train with all the training data. But in the altered method, each worker sees the same subset of data in all epochs. With large datasets this should not make a lot of difference if we pre-shuffle the data once before epoch 0.
+The vanilla DDP is useful when we have to `shuffle` the data after each epoch and thus in each epoch, each worker "sees" a different subset of data from the other epochs. Thus each worker gets the chance to train with all the training data. But with pre-sharding, each worker sees the same subset of data in all epochs. With large datasets this should not make a lot of difference if we pre-shuffle the data once before epoch 0.
 
 ### Setup DDP
 The first step is to initialize DDP before the start of training.
@@ -578,6 +578,7 @@ if dist.is_initialized() is False:
 ```
 <br/><br/>
 Since I am using GPU to train thus the backed "nccl" is the preferred protocol.
+<br/><br/>
 
 ### Get Datasets
 The next step is to for each worker GPU, download an "equal" sized shard from GCP. Note that during data generation, I partitioned the parquet dataset into 32 partitions. Thus if there are 8 GPU workers, each GPU downloads approximately 4 partitions of the parquet dataset.<br/><br/>
@@ -639,7 +640,7 @@ ratings_train, ratings_val, movies_dataset = dataloader.get_datasets(datasets_gc
 I am using huggingface's `dataset` package to download the parquet files from GCP. The dataset package downloads the parquet files from GCP and internally stores them in the `arrow` format on disk. In my case I am saving the files in the `pandas` format because for each batch, I need to join the batch of ratings with the movies dataset to get a single batch of training data.<br/><br/> 
 You might ask as to why save the files in parquet if the original dataset was in pandas and for loading the batches we are using the pandas format. The reasoning is that the dataloader is agnostic of the data generator and is only concerned about the final files stored in GCP. Since parquet is more commonly used for large datasets, I prefer to store the files in parquet format only.<br/><br/>
 I am using `cache_dir` to cache the downloaded files which means that the next time I run the trainer, the files will be fetched from local disk instead of downloading from GCP.<br/><br/>
-Note that before download, I select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with file indices where index % world size = local_rank. In this way each worker gets an almost equal share of files.<br/><br/>
+Note that before download, I select the indices of the files to download based on the local rank of the worker and the world size. The current worker downloads all files with file indices where `index % world size = local_rank`. In this way each worker gets an almost equal share of files.<br/><br/>
 The movies dataset in held in memory whereas the ratings datasets are memory mapped on disk.<br/><br/>
 Another disadvantage of using a custom sharding with DDP training is that each worker now probably has to deal with different number of batches per epoch. If we have different number of batches per epoch, then the worker that finishes first with all its batches, will exit after broadcasting its gradients for its last batch whereas the workers with more number of batches will wait for all the workers to broadcast its gradients for averaging for the additional batches. But since one or more number of batches have exited, the worker with more number of batches will wait indefinitely causing NCCL timeouts.<br/><br/>
 One solution to this problem is to assign equal number of batches to each GPU worker.<br/><br/>
@@ -670,6 +671,7 @@ batches_per_epoch = num_train_data // (world_size*batch_size)
 ```
 <br/><br/>
 Thus each worker will complete the same number of iterations per epoch. This problem is avoided if we use the vanilla DDP because DDP internally makes sure that each GPU worker works with same number of batches.
+<br/><br/>
 
 ### Download Vocabulary
 In order to train the embeddings layers we need the vocabulary file that was generated during the data generation phase. But we need to make sure that in each node only one worker downloads the file because if multiple workers downloads the same file, and if the output path is same, then the file might get corrupted due to concurrent writes, or else each worker needs to download the same file at multiple locations which is waste of disk space.
@@ -709,7 +711,8 @@ finally:
 <br/><br/>
 
 ### Initialize Model and Optimizer
-Before we start training, we need to initialize the model and optimizer. I am using the standard `Adam` optimizer although one can easily substitute it with `AdamW` or any other optimizer. Instead of keeping a constant learning rate, I am using a `Cosine` learning rate scheduler. Also in order to handle large batch sizes, I am using gradient accumulation i.e. for e.g. if I want a batch size of 2048 and my system only allows a batch size of 128 without causing OOM errors, then I can accumulate 16 batches before I do the backward pass and compute the gradients.
+Before we start training, we need to initialize the model and optimizer. I am using the standard `Adam` optimizer although one can easily substitute it with `AdamW` or any other optimizer. Instead of keeping a constant learning rate, I am using a `Cosine` learning rate scheduler. Also in order to handle large batch sizes, I am using gradient accumulation i.e. for e.g. if I want a batch size of 2048 and my system only allows a batch size of 128 without causing OOM errors, then I can accumulate 16 batches before I do the backward pass and compute the gradients.<br/><br/>
+Note that the batch size specified during training is only per worker i.e. if batch_size=128, then each worker loads a batch of 128 records. For 8 workers, I am effectively loading 128*8=1024 rows. Thus effective batch size per iteration is `batch_size * num_workers`.
 <br/><br/>
 ```python
 def get_trainer_and_optimizer(vocabulary:dict, rank:int):
@@ -774,18 +777,8 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
 print("Getting model and optimizer...")
 rec, optimizer = get_trainer_and_optimizer(vocabulary, rank_local)
 
-# Load existing model if model_path provided
-if model_path and os.path.exists(model_path):
-    rec_st, optimizer_st = load_model(model_path)
-    rec.load_state_dict(rec_st)
-    optimizer.load_state_dict(optimizer_st)
-
 # Wrap model in DDP
 rec = DDP(rec, device_ids=[rank_local], find_unused_parameters=True)
-
-# Create path for storing checkpoints and saving final model
-if rank_global == 0:
-    os.makedirs(model_out_dir, exist_ok=True)
 
 # Initialize optimizer
 optimizer.zero_grad()
@@ -800,7 +793,7 @@ scheduler = \
     )
 ```
 <br/><br/>
-I am also creating checkpoints for the model based on the validation loss after each epoch and also storing the final model. If one wants to reuse an existing model, they just need to pass the model path argument to the trainer script. Refer to the full trainer script [here](https://github.com/funktor/distributed-recsys/blob/main/trainer.py).
+Refer to the full trainer script [here](https://github.com/funktor/distributed-recsys/blob/main/trainer.py).
 <br/><br/>
 
 ### The Training Loop
@@ -975,10 +968,11 @@ There are N producer processes writing to a shared Queue and only a single consu
 With multiprocessing few things needs to be taken care of.<br/><br/>
 1. You cannot pass a generator to a CPU worker process as it will complain about `Pickling` issue. The generator needs to be initialized within the process itself.
 2. Same for CUDA streams. You need to initialize `Streams` within the process itself.
-3. With multiprocessing, the CUDA context should not be recreated again in each process. To prevent that instead of using "fork" as context for multiprocessing, use "spawn". With spawn context, read only objects are not duplicated or copied in memory. Use `mp.set_start_method('spawn', force=True)`
+3. With multiprocessing, the CUDA context should not be recreated again in each process. To prevent that, instead of using "fork" as a context for multiprocessing, use "spawn". With spawn context, read only objects are not duplicated or copied in memory. Use `mp.set_start_method('spawn', force=True)`
 4. Any additional CUDA stream needs to be synchronized with the main stream.
 5. Make sure to either join() or terminate() the producer processes once generator is exhausted.
 <br/><br/>
+
 ```python
 def fill_prefetch_queue(queue:Queue, batch_iter, stream, device, worker_id):
     """
@@ -1091,6 +1085,7 @@ else:
                 p.terminate()
 ```
 <br/><br/>
+
 To enable asynchronous transfers, one needs to use pin_memory for the tensors on CPU side so that those memory addresses are directly accessible by the GPU worker.  Without pin_memory=True, the pages in RAM might be swapped to disk if there is high RAM usage. For asynchronous data transfers it is important that the memory addresses are not overwritten by some other CPU processes.<br/><br/>
 ```python
 def prepare_batches(
