@@ -308,6 +308,7 @@ Assigning 0 or negative to unwatched movies could lead to bias in training data 
 ### Movie Features
 ![Movie Embeddings](/docs/assets/movie_emb.png)
 <br/><br/>
+
 [DCN v2](https://arxiv.org/abs/2008.13535) is a cross feature layer to enable `feature-feature interactions`. Here is a snippet of the code for computing the movie embeddings as shown above:<br/><br/>
 ```python
 class MovieEncoder(nn.Module):
@@ -364,6 +365,7 @@ The full code with all the components can be found at the [github repo](https://
 ### Complete Model
 ![Full Model](/docs/assets/model.png)
 <br/><br/>
+
 Recommender system class definition:
 ```python
 class RecommenderSystem(nn.Module):
@@ -528,6 +530,7 @@ class RecommenderSystem(nn.Module):
 
 ## Trainer
 ![Trainer](/docs/assets/mpi.png)
+<br/><br/>
 
 Finally we come to the trainer part wherein we will explore distributed training using PyTorch. PyTorch provides multiple strategies for distributed training. The two most popular are `DDP` ([Distributed Data Parallel](https://docs.pytorch.org/tutorials/beginner/ddp_series_theory.html)) and `FSDP` ([Fully Sharded Data Parallel](https://arxiv.org/abs/2304.11277)). In both `DDP` and `FSDP`, the training data is partitioned across multiple workers across multiple nodes with each worker working with only its data to compute the loss during forward passes and compute gradients in backward passes.<br/><br/> 
 The gradients are then averaged and `broadcasted` to all workers so that each worker now sees the same gradient values. In FSDP, the model is also partitioned across the workers. This is the case where the size of model is too large to fit in the memory of a single node or worker. But in FSDP communication overhead increases as compared to DDP because each worker also needs to coordinate with other workers in the forward passes too.<br/><br/>
@@ -554,9 +557,11 @@ In the example I am working with, I tweaked the DDP training strategy a bit. In 
 
 ### Advantage
 The worker processes need not download the same metadata for the dataset. Each worker often reads the entire file index to sample its subset, leading to high disk I/O. When multiple processes (DDP ranks) try to read or index the same file simultaneously, it causes massive overhead, particularly with many small files.
+<br/><br/>
 
 ### Disadvantage
 The vanilla DDP is useful when we have to `shuffle` the data after each epoch and thus in each epoch, each worker "sees" a different subset of data from the other epochs. Thus each worker gets the chance to train with all the training data. But with pre-sharding, each worker sees the same subset of data in all epochs. With large datasets this should not make a lot of difference if we pre-shuffle the data once before epoch 0.
+<br/><br/>
 
 ### Setup DDP
 The first step is to initialize DDP before the start of training.
@@ -1192,6 +1197,7 @@ sudo apt-get update
 sudo apt-get install openmpi-bin libopenmpi-dev
 mpirun --version
 ```
+<br/><br/>
 
 ### Setup SSH and TCP on local server and worker nodes
 ```
@@ -1213,6 +1219,7 @@ chmod 700 ~/.ssh
 echo "<head node public key>" >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
+<br/><br/>
 
 ### Running mpirun from local server
 To get the IP addresses of the worker nodes/pods, run `kubectl get pods -o wide`. 
