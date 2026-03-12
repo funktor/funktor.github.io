@@ -1021,68 +1021,68 @@ def fill_queue(
 
 
 def prepare_batches_prefetch(
-    ratings_dataset:Dataset, 
-    movies_dataset:pd.DataFrame, 
-    batch_size=128, 
-    device="gpu", 
-    prefetch_factor:int=4, 
-    num_workers:int=4
-):
-"""
-Get batches using prefetching through multiple workers
-"""
-
-if prefetch_factor == 0:
-    # No prefetching
-    batch_iter = prepare_batches(ratings_dataset, movies_dataset, batch_size, device, 0, 1)
-    while True:
-        try:
-            data, labels = next(batch_iter)
-            data_gpu = []
-            for obj in data:
-                data_gpu += [obj.to(device=device)]
-            labels_gpu = labels.to(device=device)
-            yield data_gpu, labels_gpu
-        except StopIteration:
-            break
-
-else:        
-    # multiprocessing queue to push the prefetched batches
-    queue = Queue(maxsize=prefetch_factor*num_workers)
-
-    # Each producer process gets batches and pushes to queue
-    producers = []
-    for i in range(num_workers):
-        p = \
-            multiprocessing.Process(
-                target=fill_queue, 
-                args=(
-                    queue, 
-                    ratings_dataset, 
-                    movies_dataset, 
-                    batch_size, 
-                    device, 
-                    i, 
-                    num_workers
+        ratings_dataset:Dataset, 
+        movies_dataset:pd.DataFrame, 
+        batch_size=128, 
+        device="gpu", 
+        prefetch_factor:int=4, 
+        num_workers:int=4
+    ):
+    """
+    Get batches using prefetching through multiple workers
+    """
+    
+    if prefetch_factor == 0:
+        # No prefetching
+        batch_iter = prepare_batches(ratings_dataset, movies_dataset, batch_size, device, 0, 1)
+        while True:
+            try:
+                data, labels = next(batch_iter)
+                data_gpu = []
+                for obj in data:
+                    data_gpu += [obj.to(device=device)]
+                labels_gpu = labels.to(device=device)
+                yield data_gpu, labels_gpu
+            except StopIteration:
+                break
+    
+    else:        
+        # multiprocessing queue to push the prefetched batches
+        queue = Queue(maxsize=prefetch_factor*num_workers)
+    
+        # Each producer process gets batches and pushes to queue
+        producers = []
+        for i in range(num_workers):
+            p = \
+                multiprocessing.Process(
+                    target=fill_queue, 
+                    args=(
+                        queue, 
+                        ratings_dataset, 
+                        movies_dataset, 
+                        batch_size, 
+                        device, 
+                        i, 
+                        num_workers
+                    )
                 )
-            )
-        p.start()
-        producers += [p]
+            p.start()
+            producers += [p]
+        
+        # Main consumer process from queue
+        while True:
+            try:
+                batch = queue.get()
+        
+                if batch is not None:
+                    data, labels = batch
+                    yield data, labels
     
-    # Main consumer process from queue
-    while True:
-        try:
-            batch = queue.get()
-    
-            if batch is not None:
-                data, labels = batch
-                yield data, labels
-
-            # for reference counting
-            del batch
-        except Exception:
-            for p in producers:
-                p.terminate()
+                # for reference counting
+                del batch
+            except Exception:
+                for p in producers:
+                    p.terminate()
 ```
 <br/><br/>
 
