@@ -31,4 +31,140 @@ void gemm_cpu(
 ```
 <br/><br/>
 The above function computes the `GEMM` (General Matrix Multiply) where `D=alpha*A.B + beta*C`. For standard matrix multiplication A.B we can consider `alpha=1.0` and `beta=0.0`.<br/><br/>
-CPU is limited by the number of threads because CPUs are optimized for lowering the latency of a single process instead of solving problems in parallel. Most modern GPUs have thousands of cores or threads to perform GEMM in parallel and that would be the topic of this post. We will try to optimize GEMM on GPUs by exploring leveraging different CUDA kernel optimization strategies.
+CPU is limited by the number of threads because CPUs are optimized for lowering the latency of a single process instead of solving problems in parallel. Most commercially available CPUs have at-most `64 cores`. On the other hand modern GPUs have thousands of cores or threads to perform GEMM in parallel (`SIMD` or `SIMT` Single Instruction Multiple Data/Threads) and that would be the topic of this post. We will try to optimize GEMM on GPUs by leveraging different CUDA kernel optimization strategies.<br/><br/>
+Before we begin exploring kernels, one should keep in mind that not all GPU architectures are built same and the same kernel A that performs better than kernel B on a GPU arch X, may perform worse than kernel B on another GPU arch Y. Importantly you should write your kernels keeping in mind the GPU architecture of your compute nodes or pods.<br/><br/>
+All of the kernels I am going to show here are written on `L4 GPUs` and so the performance numbers are w.r.t. the L4 GPUs only. The numbers might change drastically if you run the same kernel on say `H100` or `A100` or `RTX`.<br/><br/>
+All the codes are available at my [github repository](https://github.com/funktor/gemm).
+
+## Kernel 1 - Standard CUDA
+```cpp
+__global__
+void gemm_fp32_cuda(
+    const float *a_fp32, 
+    const float *b_fp32, 
+    float *c_fp32, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    int row = blockIdx.y*blockDim.y + threadIdx.y;
+    int col = blockIdx.x*blockDim.x + threadIdx.x;
+
+    if (row < m && col < n) {
+        float res = 0.0f;
+        for (int i = 0; i < k; i++) res += a_fp32[row*k+i]*b_fp32[i*n+col];
+        c_fp32[row*n+col] = alpha*res + beta*c_fp32[row*n+col];
+    }
+}
+
+float *c_gpu_fp32_ccores;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_ccores, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_ccores[i] = 0.0f;
+
+dim3 bd(32, 32, 1);
+dim3 gd((n+31)/32, (m+31)/32, 1);
+
+gemm_fp32_cuda<<<gd, bd>>>(a_fp32, b_fp32, c_gpu_fp32_ccores, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_ccores));
+```
+<br/><br/>
+In CUDA, each block of threads can have at-most `1024 threads`. It is upto you how you want to distribute the threads across multiple dimensions. For e.g. in the above kernel each block is 2D and thus each dimension has 32 threads totalling `32*32=1024` threads. Note that in the dimensions defined above, the 1st dimension (x) corresponds to number of columns and 2nd dimension (y) corresponds to number of rows.
+<br/><br/>
+Total number of blocks required to populate the entire output matrix along the column dimension is `ceil(n/32)` or `(n+31)/32` where n is the number of columns in output matrix and along the row dimension is `(m+31)/32`. In the above kernel, each thread is responsible for computing one element of the output matrix.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `40.4367 ms`.
+<br/><br/>
+To compile all the CUDA kernels on `L4 GPU`, I use the following command from the terminal. Make sure you have the necessary libraries such as TBB or OpenMP installed.<br/><br/>
+```
+nvcc -rdc=true *.cu -Xcompiler -fopenmp -o my_gemm -O3 -Xcompiler -O3 --gpu-code=sm_89 -arch=compute_89 -lcublas -lcurand -ltbb
+```
+<br/><br/>
+
+## Kernel 2 - 1D Tiling + Thread Coarsening
+```cpp
+#define COARSE_FACTOR 4
+#define TILE_WIDTH 32
+
+__global__
+void gemm_fp32_cuda_tiled(
+    const float *a_fp32, 
+    const float *b_fp32, 
+    float *c_fp32, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    __shared__ float Mds[TILE_WIDTH*TILE_WIDTH];
+    __shared__ float Nds[TILE_WIDTH*TILE_WIDTH];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row = by*TILE_WIDTH + ty;
+    int col_start = bx*TILE_WIDTH*COARSE_FACTOR + tx;
+
+    float Pval[COARSE_FACTOR];
+    for (int r = 0; r < COARSE_FACTOR; r++) Pval[r] = 0.0f;
+
+    for (int ph = 0; ph < k; ph += TILE_WIDTH) {
+        if (row < m && (ph + tx) < k) Mds[ty*TILE_WIDTH+tx] = a_fp32[row*k + ph + tx];
+        else Mds[ty*TILE_WIDTH+tx] = 0.0f;
+
+        for (int r = 0; r < COARSE_FACTOR; r++) {
+            int col = col_start + r*TILE_WIDTH;
+
+            if ((ph + ty) < k && col < n) Nds[ty*TILE_WIDTH+tx] = b_fp32[(ph + ty)*n + col];
+            else Nds[ty*TILE_WIDTH+tx] = 0.0f;
+            __syncthreads();
+
+            for (int i = 0; i < TILE_WIDTH; i++) Pval[r] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx];
+            __syncthreads();
+        }
+    }
+
+    for (int r = 0; r < COARSE_FACTOR; r++) {
+        int col = col_start + r*TILE_WIDTH;
+        if (row < m && col < n) c_fp32[row*n+col] = alpha*Pval[r] + beta*c_fp32[row*n+col];
+    }
+}
+
+float *c_gpu_fp32_tiled;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_tiled, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_tiled[i] = 0.0f;
+
+dim3 bd1(32, 32, 1);
+dim3 gd1((n+32*COARSE_FACTOR-1)/(32*COARSE_FACTOR), (m+31)/32, 1);
+
+gemm_fp32_cuda_tiled<<<gd1, bd1>>>(a_fp32, b_fp32, c_gpu_fp32_tiled, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_tiled));
+```
+<br/><br/>
+As before, we have a blocks of threads where each block has 32 threads per row and there are 32 such rows totalling 1024 threads per block. But now each thread is responsible for computing 4 consecutive elements (`COARSE_FACTOR=4`). Thus each block now computes the output elements equivalent to 4 blocks as in the previous kernel. Thus number of blocks required will reduce along the column (x) dimension to `(n+127)/128`.
+<br/><br/>
+Also, another important technique used to optimize the kernel is Tiling. In Tiling, instead of each thread reading a full row `i` of matrix A and a full column `j` of matrix B from the global memory to compute `C[i,j]`, each thread now reads `TILE_WIDTH=32` elements from row `i` in A and `TILE_WIDTH=32` elements from column `j` in B at a time, loads them from global memory to shared memory and computes the partial sum for `C[i,j]`. Once a tile from A and B has been read and partial sum is computed, the next tile from A and B is read by the thread to get the next 32 elements of row `i` in A and next 32 elements of column `j` in B and the process is repeated. To understand why this works:<br/><br/>
+```
+C[i,j] = A[i,0]*B[0,j] + A[i,1]*B[1,j] + ... + A[i,k]*B[k,j]
+
+Assuming each tile is of size 32 and k=4096, then there would be 128 tiles.
+C_tile_0[i,j]   = A[i,0]*B[0,j]       + A[i,1]*B[1,j]       + ... + A[i,31]*B[31,j]
+C_tile_1[i,j]   = A[i,32]*B[32,j]     + A[i,33]*B[33,j]     + ... + A[i,63]*B[63,j]
+C_tile_2[i,j]   = A[i,64]*B[64,j]     + A[i,65]*B[65,j]     + ... + A[i,95]*B[95,j]
+....
+C_tile_127[i,j] = A[i,4064]*B[4064,j] + A[i,4065]*B[4065,j] + ... + A[i,4095]*B[4095,j]
+
+Then we have,
+C[i,j] = C_tile_0[i,j] + C_tile_1[i,j] + ... + C_tile_127[i,j]
+```
+<br/><br/>
+The reason for Tiling is to reduce the latency in fetching data everytime from the global memory of the GPU. Similar to memory hierarchy in CPU : Register > L1 > L2 > L3 > RAM, GPU has its own memory hiierarchy which looks something like Register > Shared Memory > Global Memory. Similar to CPU, the higher performance memory are limited in size as compared to the lower performance memory i.e. shared memory is much smaller (48KB per SM) as compared to global memory (around 23GB). The process is similar to caching where we pull the frequenctly accessed elements from RAM to L1/L2/L3 Cache.
+Shared memory is accessible by all threads in the block. Thus if thread T1 computes the element `C[i,j]` and thread 2 computed `C[i,j+1]`, then note that we only need to read the row `i` from global memory to shared memory once for all columns corresponding to row `i` in the output matrix C. But since shared memory size is limited we resort to use tiling i.e. read 32 elements from row `i` at a time.
