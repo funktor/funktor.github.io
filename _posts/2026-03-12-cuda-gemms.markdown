@@ -149,16 +149,16 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_fp32_tiled));
 ```
 <br/><br/>
-As before, we have a blocks of threads where each block has 32 threads per row and there are 32 such rows totalling 1024 threads per block. But now each thread is responsible for computing 4 consecutive elements (`COARSE_FACTOR=4`). Thus each block now computes the output elements equivalent to 4 blocks as in the previous kernel. Thus number of blocks required will reduce along the column (x) dimension to `(n+127)/128`.
+As before, we have a blocks of threads where each block has 32 threads per row and there are 32 such rows totalling 1024 threads per block. But now each thread is responsible for computing 4 elements (`COARSE_FACTOR=4`). Thus each block now computes the output elements equivalent to 4 blocks as in the previous kernel. Thus number of blocks required will reduce along the column (x) dimension to `(n+127)/128`.
 <br/><br/>
 Also, another important technique used to optimize the kernel is Tiling. In Tiling, instead of each thread reading a full row `i` of matrix A and a full column `j` of matrix B from the global memory to compute `C[i,j]`, each thread now reads `TILE_WIDTH=32` elements from row `i` in A and `TILE_WIDTH=32` elements from column `j` in B at a time, loads them from global memory to shared memory and computes the partial sum for `C[i,j]`. Once a tile from A and B has been read and partial sum is computed, the next tile from A and B is read by the thread to get the next 32 elements of row `i` in A and next 32 elements of column `j` in B and the process is repeated. To understand why this works:<br/><br/>
 ```
 C[i,j] = A[i,0]*B[0,j] + A[i,1]*B[1,j] + ... + A[i,k]*B[k,j]
 
 Assuming each tile is of size 32 and k=4096, then there would be 128 tiles.
-C_tile_0[i,j]   = A[i,0]*B[0,j]       + A[i,1]*B[1,j]       + ... + A[i,31]*B[31,j]
-C_tile_1[i,j]   = A[i,32]*B[32,j]     + A[i,33]*B[33,j]     + ... + A[i,63]*B[63,j]
-C_tile_2[i,j]   = A[i,64]*B[64,j]     + A[i,65]*B[65,j]     + ... + A[i,95]*B[95,j]
+C_tile_0[i,j]   = A[i,0]*B[0,j]       + A[i,1]*B[1,j]       +  ...  + A[i,31]*B[31,j]
+C_tile_1[i,j]   = A[i,32]*B[32,j]     + A[i,33]*B[33,j]     +  ...  + A[i,63]*B[63,j]
+C_tile_2[i,j]   = A[i,64]*B[64,j]     + A[i,65]*B[65,j]     +  ...  + A[i,95]*B[95,j]
 ....
 C_tile_127[i,j] = A[i,4064]*B[4064,j] + A[i,4065]*B[4065,j] + ... + A[i,4095]*B[4095,j]
 
@@ -166,5 +166,9 @@ Then we have,
 C[i,j] = C_tile_0[i,j] + C_tile_1[i,j] + ... + C_tile_127[i,j]
 ```
 <br/><br/>
-The reason for Tiling is to reduce the latency in fetching data everytime from the global memory of the GPU. Similar to memory hierarchy in CPU : Register > L1 > L2 > L3 > RAM, GPU has its own memory hiierarchy which looks something like Register > Shared Memory > Global Memory. Similar to CPU, the higher performance memory are limited in size as compared to the lower performance memory i.e. shared memory is much smaller (48KB per SM) as compared to global memory (around 23GB). The process is similar to caching where we pull the frequenctly accessed elements from RAM to L1/L2/L3 Cache.
-Shared memory is accessible by all threads in the block. Thus if thread T1 computes the element `C[i,j]` and thread 2 computed `C[i,j+1]`, then note that we only need to read the row `i` from global memory to shared memory once for all columns corresponding to row `i` in the output matrix C. But since shared memory size is limited we resort to use tiling i.e. read 32 elements from row `i` at a time.
+The reason for Tiling is to reduce the latency in fetching data from the global memory of the GPU. The process of Tiling is similar to caching where we pull the frequenctly accessed elements from RAM to L1/L2/L3 Cache.
+<br/><br/>
+Similar to memory hierarchy in CPU : Register > L1 > L2 > L3 > RAM, GPU has its own memory hierarchy which looks something like Register > Shared Memory > Global Memory. Similar to CPU, the higher performance memory are limited in size as compared to the lower performance memory i.e. shared memory is much smaller (`48KB` per block and `163KB` per SM) as compared to global memory (around `24GB`).<br/><br/>
+Shared memory is accessible by all threads in the block. Thus if thread `T1` computes the element `C[i,j]` and thread `T2` computed `C[i,j+1]`, then note that we only need to read the row `i` from global memory to shared memory once for all columns corresponding to row `i` in the output matrix C. But since shared memory size is limited we resort to use tiling i.e. read 32 elements from row `i` at a time.<br/><br/>
+In the above kernel, each thread computes 4 elements `C[i,j]`, `C[i,j+32]`, `C[i,j+64]` and `C[i,j+96]`. This is because consecutive threads compute consecutive elements. Threads T0 to T31 computes `C[i,j]` to `C[i,j+31]`. Then the same threads computes `C[i,j+32]` to `C[i,j+63]` and so on. A group of 32 consecutive threads is called a `Warp` and a Warp is scheduled to run simultaneously, thus threads T0 to T31 is accessing consecutive memory locations and thus require a single GPU cycle to read all 32 consecutive elements.
+<br/><br/>
