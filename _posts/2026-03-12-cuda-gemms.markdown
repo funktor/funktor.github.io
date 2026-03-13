@@ -174,15 +174,19 @@ Similar to memory hierarchy in CPU : Register > L1 > L2 > L3 > RAM, GPU has its 
 Shared memory is accessible by all threads in the block. Thus if thread `T1` computes the element `C[i,j]` and thread `T2` computed `C[i,j+1]`, then note that we only need to read the row `i` from global memory to shared memory once for all columns corresponding to row `i` in the output matrix C. But since shared memory size is limited we resort to use tiling i.e. read 32 elements from row `i` at a time.<br/><br/>
 In the above kernel, each thread computes 4 elements `C[i,j]`, `C[i,j+32]`, `C[i,j+64]` and `C[i,j+96]`. This is because consecutive threads compute consecutive elements. Threads T0 to T31 computes `C[i,j]` to `C[i,j+31]`. Then the same threads computes `C[i,j+32]` to `C[i,j+63]` and so on. A group of 32 consecutive threads is called a `Warp` and a Warp is scheduled to run simultaneously, thus threads T0 to T31 is accessing consecutive memory locations and thus require a single GPU cycle to read all 32 consecutive elements.
 <br/><br/>
-In matrix multiplication, multiplying two k length vectors requires 2*k operations (k multiplications + k additions). Multiplying two matrices of size `TILE_WIDTH*TILE_WIDTH` requires `2*TILE_WIDTH^3` operations. The number of bytes transferred in the above kernel from global memory is `8*TILE_WIDTH^2` bytes for `Mds` and `8*TILE_WIDTH^2` bytes for `Nds`. Thus the ratio of operations per byte transferred is `TILE_WIDTH/8` which is 4 i.e. for every byte transferred from global memory, we are doing 4 operations.
+In matrix multiplication, multiplying two k length vectors requires 2*k operations (k multiplications + k additions). Multiplying two matrices of size `TILE_WIDTH*TILE_WIDTH` requires `2*TILE_WIDTH^3` operations. The number of bytes transferred in the above kernel from global memory per `ph` is `8*TILE_WIDTH^2` bytes for `Mds` and `8*COARSE_FACTOR*TILE_WIDTH^2` bytes for `Nds`. Thus the ratio of operations per byte transferred is `(2*COARSE_FACTOR*TILE_WIDTH^3)/(8*TILE_WIDTH^2 + 8*COARSE_FACTOR*TILE_WIDTH^2)` which is 6.4 i.e. for every byte transferred from global memory, we are doing 6.4 operations.
 <br/><br/>
-Without tiling, to compute each element of output matrix C, we required `2*k` operations (k columns) and transferred `16*k` bytes from global memory in total. Thus the number of operations per byte transferred was `0.25`. Thus with tiling we have improved the ratio by `TILE_WIDTH` times. Note that the amount of shared memory usage per block is currently `16*TILE_WIDTH^2` bytes or 16KB. If we double the TILE_WIDTH, the shared memory usage will become 4 times i.e. 64KB which exceeds 48KB available per block. Thus, we cannot increase shared memory arrays arbitrarily to improve the ratio of number of operations per byte transferred from global memory.
+Without tiling, to compute each element of output matrix C, we required `2*k` operations (k columns) and transferred `16*k` bytes from global memory in total. Thus the number of operations per byte transferred was `0.25`. Thus with tiling we have improved the ratio by `constant*TILE_WIDTH` times. Note that the amount of shared memory usage per block is currently `16*TILE_WIDTH^2` bytes or 16KB. If we double the TILE_WIDTH, the shared memory usage will become 4 times i.e. 64KB which exceeds 48KB available per block. Thus, we cannot increase shared memory arrays arbitrarily to improve the ratio of number of operations per byte transferred from global memory.
 <br/><br/>
-This number will be useful when we look at the next kernel.
+Another important metric to look out for is that for a thread to compute a submatrix of size `1x4` for the output matrix C, it needs to load a sub-matrix of shape `1xk` from A and a sub-matrix of shape `kx4` from B. Thus in order to compute 4 output elements, the kernel needs to load `k + 4k = 5k` elements in total from global memory. The number of outputs per element loaded from global memory is `4/5k`. This number will be useful when we look at the next kernel.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `27.349 ms`.
 <br/><br/>
 
 ## Kernel 3 - 2D Tiling + Thread Coarsening
 ```cpp
+#define COARSE_FACTOR_2D 4
+#define TILE_WIDTH 32
 __global__
 void gemm_fp32_cuda_tiled_2D(
     const float *a_fp32, 
@@ -238,4 +242,21 @@ void gemm_fp32_cuda_tiled_2D(
 }
 ```
 <br/><br/>
-Instead of each thread computing 4 elements of the same row in the output matrix, in the above kernel each thread now computes 4x4 elements comprising of 4 rows and 4 columns of the output matrix.
+![2D Tile](/docs/assets/2d_tile.png)
+<br/><br/>
+Instead of each thread computing 4 elements of the same row in the output matrix, in the above kernel each thread now computes `4x4` elements comprising of 4 rows and 4 columns of the output matrix. Apart from these most of the code is similar to the 1D Tiling kernel above. Let's compute the number of operations per byte transferred with 2D tiling kernel.
+<br/><br/>
+Total number of operations in 4x4 blocks each with 32x32 elements = `(2*COARSE_FACTOR_2D*COARSE_FACTOR_2D*TILE_WIDTH^3)`
+<br/><br/>
+Total number of bytes transferred = `(8*COARSE_FACTOR_2D*TILE_WIDTH^2 + 8*COARSE_FACTOR_2D*COARSE_FACTOR_2D*TILE_WIDTH^2)` bytes.
+<br/><br/>
+Ratio of number of operations per byte transferred = `(COARSE_FACTOR_2D*TILE_WIDTH)/(4*(1 + COARSE_FACTOR_2D)) = 6.4`
+<br/><br/>
+Thus, the ratio of number of operations per byte transferred remains same as the previous kernel.
+<br/><br/>
+But note that in order to compute 4x4=16 elements of C, the kernel loads `4xk` elements from A and `kx4` elements from B, thus totalling 8k elements. The number of outputs per element loaded from global memory is `16/8k=2/k`. Compare this to the previous kernel where number of outputs per element loaded from global memory was `0.8/k`. 
+<br/><br/>
+We can see that this kernel is more efficient because it computes more element for the same number of inputs loaded from global memory. This metric is useful because apart from shared memory, GPU also has L1/L2 cache similar to CPU and often elements fetched from global memory are cached for reuse. 
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `23.7353 ms`.
+<br/><br/>
