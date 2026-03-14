@@ -264,6 +264,9 @@ Time taken to multiply two 4096x4096 matrices is around `23.7353 ms`.
 
 ## Kernel 4 - 2D Tiling + Vectorization
 ```cpp
+#define TILE_WIDTH 32
+#define COARSE_FACTOR_2D 4
+
 __global__
 void gemm_fp32_cuda_tiled_2D_vectorize(
     float *a_fp32, 
@@ -337,6 +340,8 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_vec));
 ```
 <br/><br/>
+![2D Tile Vec](/docs/assets/2d_tile_vec.png)
+<br/><br/>
 In the above kernel we are using vectorization with `float4` data type i.e. instead of a thread loading a 32-bit `float` from global memory, a thread loads a 128-bit `float4` or 4 consecutive 32-bit addresses. Instead of 4 instructions, now we have to issue only one instruction.
 <br/><br/>
 ```
@@ -344,12 +349,20 @@ reinterpret_cast<float4 *>(&Mds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<flo
 reinterpret_cast<float4 *>(&Nds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<float4 *>(&b_fp32[(ph + ty)*n + col])[0];
 ```
 <br/><br/>
-In order to work with `float4` vectorization the x-dimension for each block of thread is reduced by a factor of 4 from the previous kernel i.e. instead of each thread computing `4x4=16` elements of the output matrix, now each each thread computes `4x4x4=64` elements. Note that having many threads per block is not always good because GPU has what is known as the `occupancy problem`. Basically the resources such as number of registers, number of warps that can be simulataneously scheduled, maximum shared memory per block, maximum registers per thread are limited. When number of threads are higher, it can lead to smaller concurrency due to exceeding number of registers per thread or shared mempry size etc. So often you would see that lesser number of threads perform better than more number of threads.<br/><br/>
-Note that the shared memory addresses needs to be 16 byte or 128-bit aligned using `alignas(16)`. Time taken to multiply two 4096x4096 matrices is around `15.1583 ms`.
+In order to work with `float4` vectorization the x-dimension for each block of thread is reduced by a factor of 4 from the previous kernel i.e. instead of each thread computing `4x4=16` elements of the output matrix, now each each thread computes `4x4x4=64` elements.
+<br/><br/>
+Note that having many threads per block is not always good because GPU has what is known as the `occupancy problem`. Basically the resources such as number of registers, number of warps that can be simulataneously scheduled, maximum shared memory per block, maximum registers per thread are limited. When number of threads are higher, it can lead to smaller concurrency due to exceeding number of registers per thread or shared mempry size etc. So often you would see that lesser number of threads perform better than more number of threads.<br/><br/>
+Note that the shared memory addresses needs to be 16 byte or 128-bit aligned using `alignas(16)`.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `15.1583 ms`.
 <br/><br/>
 
-## Kernel 4 - 2D Tiling + Asynchronous Pipelining
+## Kernel 5 - 2D Tiling + Asynchronous Pipelining
 ```cpp
+#define TILE_WIDTH 32
+#define COARSE_FACTOR_2D 4
+#define NUM_STAGES_ASYNC_PIPELINE 4
+
 __global__
 void gemm_fp32_cuda_tiled_2D_async(
     const float *a_fp32, 
@@ -423,4 +436,18 @@ void gemm_fp32_cuda_tiled_2D_async(
         }
     }
 }
+
+float *c_gpu_fp32_tiled_2d_async;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_tiled_2d_async, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_tiled_2d_async[i] = 0.0f;
+
+dim3 bd21(8, 32, 1);
+dim3 gd21((n+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), (m+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), 1);
+
+gemm_fp32_cuda_tiled_2D_async<<<gd21, bd21>>>(a_fp32, b_fp32, c_gpu_fp32_tiled_2d_async, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_async));
 ```
+<br/><br/>
+CUDA pipeline is something similar to a FIFO Queue. There is a producer pushing stages to the end of the queue while the consumer is reading the stages from the front of the queue. In the above kernel we are pipelining the 
