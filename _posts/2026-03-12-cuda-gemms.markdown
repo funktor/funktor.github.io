@@ -33,6 +33,7 @@ void gemm_cpu(
 The above function computes the `GEMM` (General Matrix Multiply) where `D=alpha*A.B + beta*C`. For standard matrix multiplication A.B we can consider `alpha=1.0` and `beta=0.0`.<br/><br/>
 CPU is limited by the number of threads because CPUs are optimized for lowering the latency of a single process instead of solving problems in parallel. Most commercially available CPUs have at-most `64 cores`. On the other hand modern GPUs have thousands of cores or threads to perform GEMM in parallel (`SIMD` or `SIMT` Single Instruction Multiple Data/Threads) and that would be the topic of this post. We will try to optimize GEMM on GPUs by leveraging different CUDA kernel optimization strategies.<br/><br/>
 Before we begin exploring kernels, one should keep in mind that not all GPU architectures are built same and the same kernel A that performs better than kernel B on a GPU arch X, may perform worse than kernel B on another GPU arch Y. Importantly you should write your kernels keeping in mind the GPU architecture of your compute nodes or pods.<br/><br/>
+Also, for the same architecture matrices of different dimensions shows different relative performance for different kernels. For e.g. say on L4 GPU, if kernel 1 performs better than kernel 2 on 1024x1024 matrices it does not imply that kernel 1 will still perform better than kernel 2 on 4096x4096 matrices.<br/><br/>
 All of the kernels I am going to show here are written on `L4 GPUs` and so the performance numbers are w.r.t. the L4 GPUs only. The numbers might change drastically if you run the same kernel on say `H100` or `A100` or `RTX`.<br/><br/>
 All the codes are available at my [github repository](https://github.com/funktor/gemm).
 
@@ -260,3 +261,166 @@ We can see that this kernel is more efficient because it computes more element f
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `23.7353 ms`.
 <br/><br/>
+
+## Kernel 4 - 2D Tiling + Vectorization
+```cpp
+__global__
+void gemm_fp32_cuda_tiled_2D_vectorize(
+    float *a_fp32, 
+    float *b_fp32, 
+    float *c_fp32, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    __shared__ alignas(16) float Mds[TILE_WIDTH*TILE_WIDTH];
+    __shared__ alignas(16) float Nds[TILE_WIDTH*TILE_WIDTH];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row_start = by*TILE_WIDTH*COARSE_FACTOR_2D + ty;
+    int col_start = bx*TILE_WIDTH*COARSE_FACTOR_2D + tx*4;
+
+    float Pval[COARSE_FACTOR_2D*COARSE_FACTOR_2D*4];
+    for (int r = 0; r < COARSE_FACTOR_2D*COARSE_FACTOR_2D*4; r++) Pval[r] = 0.0f;
+
+    for (int ph = 0; ph < k; ph += TILE_WIDTH) {
+        for (int r = 0; r < COARSE_FACTOR_2D; r++) {
+            int row = row_start + r*TILE_WIDTH;
+            reinterpret_cast<float4 *>(&Mds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<float4 *>(&a_fp32[row*k + ph + tx*4])[0];
+
+            for (int c = 0; c < COARSE_FACTOR_2D; c++) {
+                int col = col_start + c*TILE_WIDTH;
+
+                reinterpret_cast<float4 *>(&Nds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<float4 *>(&b_fp32[(ph + ty)*n + col])[0];
+                __syncthreads();
+
+                for (int i = 0; i < TILE_WIDTH; i++) {
+                    Pval[r*COARSE_FACTOR_2D*4 + 4*c + 0] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx*4+0];
+                    Pval[r*COARSE_FACTOR_2D*4 + 4*c + 1] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx*4+1];
+                    Pval[r*COARSE_FACTOR_2D*4 + 4*c + 2] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx*4+2];
+                    Pval[r*COARSE_FACTOR_2D*4 + 4*c + 3] += Mds[ty*TILE_WIDTH+i]*Nds[i*TILE_WIDTH+tx*4+3];
+                }
+                __syncthreads();
+            }
+        }
+    }
+
+    for (int r = 0; r < COARSE_FACTOR_2D; r++) {
+        int row = row_start + r*TILE_WIDTH;
+        for (int c = 0; c < COARSE_FACTOR_2D; c++) {
+            int col = col_start + c*TILE_WIDTH;
+
+            c_fp32[row*n + col + 0] = alpha*Pval[r*COARSE_FACTOR_2D*4 + 4*c + 0] + beta*c_fp32[row*n + col + 0];
+            c_fp32[row*n + col + 1] = alpha*Pval[r*COARSE_FACTOR_2D*4 + 4*c + 1] + beta*c_fp32[row*n + col + 1];
+            c_fp32[row*n + col + 2] = alpha*Pval[r*COARSE_FACTOR_2D*4 + 4*c + 2] + beta*c_fp32[row*n + col + 2];
+            c_fp32[row*n + col + 3] = alpha*Pval[r*COARSE_FACTOR_2D*4 + 4*c + 3] + beta*c_fp32[row*n + col + 3];
+        }
+    }
+}
+
+float *c_gpu_fp32_tiled_2d_vec;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_tiled_2d_vec, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_tiled_2d_vec[i] = 0.0f;
+
+dim3 bd3(8, 32, 1);
+dim3 gd3((n+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), (m+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), 1);
+
+gemm_fp32_cuda_tiled_2D_vectorize<<<gd3, bd3>>>(a_fp32, b_fp32, c_gpu_fp32_tiled_2d_vec, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_vec));
+```
+<br/><br/>
+In the above kernel we are using vectorization with `float4` data type i.e. instead of a thread loading a 32-bit `float` from global memory, a thread loads a 128-bit `float4` or 4 consecutive 32-bit addresses. Instead of 4 instructions, now we have to issue only one instruction.
+<br/><br/>
+```
+reinterpret_cast<float4 *>(&Mds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<float4 *>(&a_fp32[row*k + ph + tx*4])[0];
+reinterpret_cast<float4 *>(&Nds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<float4 *>(&b_fp32[(ph + ty)*n + col])[0];
+```
+<br/><br/>
+In order to work with `float4` vectorization the x-dimension for each block of thread is reduced by a factor of 4 from the previous kernel i.e. instead of each thread computing `4x4=16` elements of the output matrix, now each each thread computes `4x4x4=64` elements. Note that having many threads per block is not always good because GPU has what is known as the `occupancy problem`. Basically the resources such as number of registers, number of warps that can be simulataneously scheduled, maximum shared memory per block, maximum registers per thread are limited. When number of threads are higher, it can lead to smaller concurrency due to exceeding number of registers per thread or shared mempry size etc. So often you would see that lesser number of threads perform better than more number of threads.<br/><br/>
+Note that the shared memory addresses needs to be 16 byte or 128-bit aligned using `alignas(16)`. Time taken to multiply two 4096x4096 matrices is around `15.1583 ms`.
+<br/><br/>
+
+## Kernel 4 - 2D Tiling + Asynchronous Pipelining
+```cpp
+__global__
+void gemm_fp32_cuda_tiled_2D_async(
+    const float *a_fp32, 
+    const float *b_fp32, 
+    float *c_fp32, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    cuda::pipeline<cuda::thread_scope_thread> pipeline = cuda::make_pipeline();
+
+    __shared__ alignas(16) float Mds[NUM_STAGES_ASYNC_PIPELINE][TILE_WIDTH*TILE_WIDTH];
+    __shared__ alignas(16) float Nds[NUM_STAGES_ASYNC_PIPELINE][TILE_WIDTH*TILE_WIDTH];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int row_start = by*TILE_WIDTH*COARSE_FACTOR_2D + ty;
+    int col_start = bx*TILE_WIDTH*COARSE_FACTOR_2D + tx*4;
+
+    for (int r = 0; r < COARSE_FACTOR_2D; r++) {
+        int row = row_start + r*TILE_WIDTH;
+        for (int c = 0; c < COARSE_FACTOR_2D; c++) {
+            int col = col_start + c*TILE_WIDTH;
+            
+            for (int s = 0; s < NUM_STAGES_ASYNC_PIPELINE; s++) {
+                pipeline.producer_acquire();
+                cuda::memcpy_async(Mds[s] + ty*TILE_WIDTH + tx*4, a_fp32 + row*k + s*TILE_WIDTH + tx*4, cuda::aligned_size_t<4>(sizeof(float)*4), pipeline);
+                cuda::memcpy_async(Nds[s] + ty*TILE_WIDTH + tx*4, b_fp32 + (s*TILE_WIDTH + ty)*n + col, cuda::aligned_size_t<4>(sizeof(float)*4), pipeline);
+                pipeline.producer_commit();
+            }
+
+            int s = NUM_STAGES_ASYNC_PIPELINE;
+            float res[4] = {0.0f};
+
+            for (int ph = 0; ph < k; ph += TILE_WIDTH) {
+                int stage = s % NUM_STAGES_ASYNC_PIPELINE;
+
+                constexpr size_t pending_batches = NUM_STAGES_ASYNC_PIPELINE - 1;
+                cuda::pipeline_consumer_wait_prior<pending_batches>(pipeline);
+                __syncthreads();
+
+                for (int i = 0; i < TILE_WIDTH; i++) {
+                    res[0] += Mds[stage][ty*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+0];
+                    res[1] += Mds[stage][ty*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+1];
+                    res[2] += Mds[stage][ty*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+2];
+                    res[3] += Mds[stage][ty*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+3];
+                }
+
+                pipeline.consumer_release();
+                __syncthreads();
+
+                pipeline.producer_acquire();
+                if (s*TILE_WIDTH < k) {
+                    cuda::memcpy_async(Mds[stage] + ty*TILE_WIDTH + tx*4, a_fp32 + row*k + s*TILE_WIDTH + tx*4, cuda::aligned_size_t<4>(sizeof(float)*4), pipeline);
+                    cuda::memcpy_async(Nds[stage] + ty*TILE_WIDTH + tx*4, b_fp32 + (s*TILE_WIDTH + ty)*n + col, cuda::aligned_size_t<4>(sizeof(float)*4), pipeline);
+                }
+                pipeline.producer_commit();
+
+                s += 1;
+            }
+
+            c_fp32[row*n+col+0] = alpha * res[0] + beta * c_fp32[row*n+col+0];
+            c_fp32[row*n+col+1] = alpha * res[1] + beta * c_fp32[row*n+col+1];
+            c_fp32[row*n+col+2] = alpha * res[2] + beta * c_fp32[row*n+col+2];
+            c_fp32[row*n+col+3] = alpha * res[3] + beta * c_fp32[row*n+col+3];
+        }
+    }
+}
+```
