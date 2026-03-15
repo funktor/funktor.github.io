@@ -450,4 +450,17 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_async));
 ```
 <br/><br/>
-CUDA pipeline is something similar to a FIFO Queue. There is a producer pushing stages to the end of the queue while the consumer is reading the stages from the front of the queue. In the above kernel we are pipelining the 
+CUDA `pipeline` is something similar to a `FIFO Queue`. There is a `producer` pushing stages to the end of the queue while the `consumer` is reading the stages off the front of the queue. 
+<br/><br/>
+Recall that in the 2D kernel, each thread computes `4x4x4=64` elements of the output matrix. To compute each output element, we use tiles that slide over the matrix A along the columns and over matrix B along rows. For `k=4096` and tile dimension of `32x32`, to compute each element one needs to slide over `128 tiles` in both A (horizontally) and B (vertically). In the original 2D kernel, we slide over each tile one by one.
+<br/><br/>
+Instead what if in the meantime the threads that are multiplying the shared memory matrices `Mds` and `Nds`, the inactive threads asynchronpusly transfer the next tile from the global memory and by the time the computation is done, the next tiles should be ready to use. Thus we can basically overlap transfer of tiles from global memory to shared memory with actual matrix multiplication computations.
+<br/><br/>
+In the above kernel, we define shared memory matrices of size `4x32x32`. For each output element, initally we issue asynchronous copy command from global memory to shared memory of 4 tiles (or stages). The producer pushes the `4 stages` into the pipeline. This operation is `non-blocking` and it does not use registers during the copy process (during standard copy of global to shared, first the data is read into registers and then copied from registers to shared memory).
+<br/><br/>
+Next we check in a for-loop if at-least 1 stage has been completed (in FIFO order the first stage to be pushed is the first stage to complete). If not the consumer waits, else pulls the completed stage off the front of the pipeline and does the matrix multiplication of the 2 shared memory matrices corresponding to 1st stage. Now if there are any pending tiles, the producer again issues a asynchronous copy command and pushes this stage to the back of the pipeline. The loop continues until there are no more tiles.
+<br/><br/>
+Since data transfer is a time consuming operation as compared to matrix multiplication, thus we issue multiple asynchronous copy commands at the beginning so that there is a good overlap between data transfer and actual computation.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `14.9248 ms`.
+<br/><br/>
