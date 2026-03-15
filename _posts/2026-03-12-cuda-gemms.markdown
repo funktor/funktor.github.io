@@ -464,6 +464,8 @@ Next we check in a for-loop if at-least 1 stage has been completed (in FIFO orde
 <br/><br/>
 Since data transfer is a time consuming operation as compared to matrix multiplication, thus we issue multiple asynchronous copy commands at the beginning so that there is a good overlap between data transfer and actual computation.
 <br/><br/>
+Note that the pipeline object is local to the thread (`cuda::pipeline<cuda::thread_scope_thread>`) because we are using a single pipeline to queue all the tiles required for computing a single output element by an individual thread. Having the pipeline visiblity at the block level, one cannot use the `cuda::pipeline_consumer_wait_prior<pending_batches>(pipeline)` command because the completed stage may come from any thread's job i.e. it could correspond to any other output element.
+<br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `14.9248 ms`.
 <br/><br/>
 
@@ -505,50 +507,80 @@ void gemm_fp32_cuda_tiled_2D_async_warp_spl(
         int row = row_start + r*TILE_WIDTH;
         for (int c = 0; c < COARSE_FACTOR_2D; c++) {
             int col = col_start + c*TILE_WIDTH;
-            float res[4] = {0.0f};
+            float res[8] = {0.0f};
 
             if (warp_id == 0) {
-                int s = 0;
                 int row_off = by*TILE_WIDTH*COARSE_FACTOR_2D + r*TILE_WIDTH + tid;
                 int col_off = bx*TILE_WIDTH*COARSE_FACTOR_2D + c*TILE_WIDTH;
 
                 for (int ph = 0; ph < k; ph += TILE_WIDTH) {
-                    int stage = s % NUM_STAGES_ASYNC_PIPELINE;
+                    int stage = (ph/TILE_WIDTH) % NUM_STAGES_ASYNC_PIPELINE;
                     pipe.producer_acquire();
                     cuda::memcpy_async(Mds[stage] + tid*TILE_WIDTH, a_fp32 + row_off*k + ph, cuda::aligned_size_t<4>(sizeof(float)*32), pipe);
                     cuda::memcpy_async(Nds[stage] + tid*TILE_WIDTH, b_fp32 + (ph + tid)*n + col_off, cuda::aligned_size_t<4>(sizeof(float)*32), pipe);
                     pipe.producer_commit();
-                    s += 1;
                 }
             }
             else {
                 auto consumer_group = cooperative_groups::tiled_partition<32>(block);
-                int s = 0;
-                int row_off = ty-4;
 
                 for (int ph = 0; ph < k; ph += TILE_WIDTH) {
-                    int stage = s % NUM_STAGES_ASYNC_PIPELINE;
+                    int stage = (ph/TILE_WIDTH) % NUM_STAGES_ASYNC_PIPELINE;
                     pipe.consumer_wait();
-                    for (int i = 0; i < TILE_WIDTH; i++) {
-                        res[0] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+0];
-                        res[1] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+1];
-                        res[2] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+2];
-                        res[3] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+3];
+                    for (int row_off=ty-4; row_off < TILE_WIDTH; row_off += 28) {
+                        for (int i = 0; i < TILE_WIDTH; i++) {
+                            res[4*(row_off/28) + 0] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+0];
+                            res[4*(row_off/28) + 1] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+1];
+                            res[4*(row_off/28) + 2] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+2];
+                            res[4*(row_off/28) + 3] += Mds[stage][row_off*TILE_WIDTH+i]*Nds[stage][i*TILE_WIDTH+tx*4+3];
+                        }
                     }
                     cooperative_groups::sync(consumer_group);
                     pipe.consumer_release();
-                    s += 1;
                 }
 
-                row_off = row - 4;
-                c_fp32[row_off*n+col+0] = alpha * res[0] + beta * c_fp32[row_off*n+col+0];
-                c_fp32[row_off*n+col+1] = alpha * res[1] + beta * c_fp32[row_off*n+col+1];
-                c_fp32[row_off*n+col+2] = alpha * res[2] + beta * c_fp32[row_off*n+col+2];
-                c_fp32[row_off*n+col+3] = alpha * res[3] + beta * c_fp32[row_off*n+col+3];
+                for (int row_off=ty-4; row_off < TILE_WIDTH; row_off += 28) {
+                    c_fp32[(row+row_off-ty)*n+col + 0] = alpha * res[4*(row_off/28) +  0] + beta * c_fp32[(row+row_off-ty)*n+col + 0];
+                    c_fp32[(row+row_off-ty)*n+col + 1] = alpha * res[4*(row_off/28) +  1] + beta * c_fp32[(row+row_off-ty)*n+col + 1];
+                    c_fp32[(row+row_off-ty)*n+col + 2] = alpha * res[4*(row_off/28) +  2] + beta * c_fp32[(row+row_off-ty)*n+col + 2];
+                    c_fp32[(row+row_off-ty)*n+col + 3] = alpha * res[4*(row_off/28) +  3] + beta * c_fp32[(row+row_off-ty)*n+col + 3];
+                }
             }
         }
     }
 }
+
+float *c_gpu_fp32_tiled_2d_async_warp_spl;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_tiled_2d_async_warp_spl, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_tiled_2d_async_warp_spl[i] = 0.0f;
+
+dim3 bd22(8, 32, 1);
+dim3 gd22((n+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), (m+32*COARSE_FACTOR_2D-1)/(32*COARSE_FACTOR_2D), 1);
+
+gemm_fp32_cuda_tiled_2D_async_warp_spl<<<gd22, bd22>>>(a_fp32, b_fp32, c_gpu_fp32_tiled_2d_async_warp_spl, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_async_warp_spl));
 ```
 <br/><br/>
-In the previous kernel, all the threads are participating for both data transfer and actual computations. In this kernel, we divide the responsibilities. Assuming a block of thread of 8x32=256 threads, it will be divided up into warps of 32 threads each. Thus, there will be 8 warps in total per block. We can use the 1st warp for all data transfer jobs whereas the remaining 7 warps would be used for actual computations.
+In the previous kernel, all the threads are participating for both data transfer and actual computations. In this kernel, we divide the responsibilities. Assuming a block of thread of `8x32=256` threads, it will be divided up into warps of 32 threads each. Thus, there will be `8 warps` in total per block. We can use the `1st warp (producer)` for all data transfer jobs whereas the remaining `7 warps (consumers)` would be used for actual matrix multiplcation computations.
+<br/><br/>
+
+Without warp specialization, we can face the following challenges:<br/><br/>
+### Warp Divergence
+Some threads in a warp might be doing matrix multiplications whereas the other threads of the same warp might be involved in data transfer from global memory. One cannot achive full `SIMD` with this kind of setting. Warp specialization aims for full SIMD and removes `warp divergence` because all threads in warp are either doing data transefr or doing matmul.
+<br/><br/>
+
+### Redundant register usage
+All threads in a warp use the same number of registers. Clearly the threads involved in matmul needs to use more number of registers than the threads doing data transfer but since threads do not have a separation of responsibilities, all threads are using additional registers.
+<br/><br/>
+
+### Unnecessary __syncthreads()
+Using `__syncthreads()` to sync all threads is slow. Since we do not know which threads are doing data transfer and which matmul, we need to do __syncthreads() to sync all threads in a block. This could lead to wastage of bandwidth. On the other hand, with warp specialization, since we know which warps are doing matmul, we can explicitly sync only those warps using `cooperative_groups::sync(consumer_group)`.
+<br/><br/>
+
+Note that the pipeline is shared among all threads in the block unlike the previous kernel where the pipeline had visibility at the thread scope level because with warp specialization, all consumer warps needs to synchronize.
+<br/><br/>
+
+In the above kernel it might appear that the producer warp (warp_id=0) might overwrite the stages as it loops over the k-dimension because there are only 4 stages. Note that the pipeline has been created with `shared_state` with a maximum concurrency of 4 i.e. at any given point in time the pipeline can have a maximum of 4 stages in the queue. The consumer warps are waiting on the stages. So once 1st stage has been completed for e.g. stage=0 is pushed to pipeline by the producer warp and data is transferred, it is `locked` for writing until the consumer warps read it and releases the lock.
+<br/><br/>
