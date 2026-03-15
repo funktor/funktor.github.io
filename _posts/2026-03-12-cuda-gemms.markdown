@@ -450,6 +450,8 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_fp32_tiled_2d_async));
 ```
 <br/><br/>
+![Async](/docs/assets/async.png)
+<br/><br/>
 CUDA `pipeline` is something similar to a `FIFO Queue`. There is a `producer` pushing stages to the end of the queue while the `consumer` is reading the stages off the front of the queue. 
 <br/><br/>
 Recall that in the 2D kernel, each thread computes `4x4x4=64` elements of the output matrix. To compute each output element, we use tiles that slide over the matrix A along the columns and over matrix B along rows. For `k=4096` and tile dimension of `32x32`, to compute each element one needs to slide over `128 tiles` in both A (horizontally) and B (vertically). In the original 2D kernel, we slide over each tile one by one.
