@@ -357,7 +357,7 @@ Note that the shared memory addresses needs to be 16 byte or 128-bit aligned usi
 Time taken to multiply two 4096x4096 matrices is around `15.1583 ms`.
 <br/><br/>
 
-## Kernel 5 - 2D Tiling + Asynchronous Pipelining
+## Kernel 5 - 2D Tiling + Asynchronous Pipelining N-Stage
 ```cpp
 #define TILE_WIDTH 32
 #define COARSE_FACTOR_2D 4
@@ -507,7 +507,6 @@ void gemm_fp32_cuda_tiled_2D_async_warp_spl(
         int row = row_start + r*TILE_WIDTH;
         for (int c = 0; c < COARSE_FACTOR_2D; c++) {
             int col = col_start + c*TILE_WIDTH;
-            float res[8] = {0.0f};
 
             if (warp_id == 0) {
                 int row_off = by*TILE_WIDTH*COARSE_FACTOR_2D + r*TILE_WIDTH + tid;
@@ -523,6 +522,7 @@ void gemm_fp32_cuda_tiled_2D_async_warp_spl(
             }
             else {
                 auto consumer_group = cooperative_groups::tiled_partition<32>(block);
+                float res[8] = {0.0f};
 
                 for (int ph = 0; ph < k; ph += TILE_WIDTH) {
                     int stage = (ph/TILE_WIDTH) % NUM_STAGES_ASYNC_PIPELINE;
@@ -567,6 +567,7 @@ In the previous kernel, all the threads are participating for both data transfer
 <br/><br/>
 
 Without warp specialization, we can face the following challenges:<br/><br/>
+
 ### Warp Divergence
 Some threads in a warp might be doing matrix multiplications whereas the other threads of the same warp might be involved in data transfer from global memory. One cannot achive full `SIMD` with this kind of setting. Warp specialization aims for full SIMD and removes `warp divergence` because all threads in warp are either doing data transefr or doing matmul.
 <br/><br/>
@@ -584,3 +585,69 @@ Note that the pipeline is shared among all threads in the block unlike the previ
 
 In the above kernel it might appear that the producer warp (warp_id=0) might overwrite the stages as it loops over the k-dimension because there are only 4 stages. Note that the pipeline has been created with `shared_state` with a maximum concurrency of 4 i.e. at any given point in time the pipeline can have a maximum of 4 stages in the queue. The consumer warps are waiting on the stages. So once 1st stage has been completed for e.g. stage=0 is pushed to pipeline by the producer warp and data is transferred, it is `locked` for writing until the consumer warps read it and releases the lock.
 <br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `21.3606 ms`.
+<br/><br/>
+It is surprising to see that `warp specialization` takes more time as compared to N-stage asynchronous pipeline above. It could be due to multiple reasons.
+<br/><br/>
+
+### shared_state overhead
+Maintaining the `shared_state` buffer in shared memory by both the producer and consumer warps could be additional overhead as it requires frequent updates once producer pushes a stage or consumer consumes a stage. shared_state was absent in the previous kernel as the pipeline was local to each thread.
+<br/><br/>
+
+### Uneven speed of producer and consumer
+It could be that the consumer warps are slow to process the computations and the producer warp is waiting to push new stage or vice versa where the producer warp is slow in fetching data from global memory while consumer warps have finished the operations and waiting for new stages in the pipeline.
+<br/><br/>
+
+## Kernel 6 - WMMA
+```cpp
+__global__ 
+void gemm_wmma(
+    const half *a, 
+    const half *b, 
+    float *c, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    int lda = k;
+    int ldb = n;
+    int ldc = n;
+
+    int warpM = (blockIdx.y * blockDim.y + threadIdx.y);
+    int warpN = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
+
+    wmma::fill_fragment(acc_frag, 0.0f);
+
+    for (int i = 0; i < k; i += WMMA_K) {
+        int aRow = warpM * WMMA_M;
+        int aCol = i;
+
+        int bRow = i;
+        int bCol = warpN * WMMA_N;
+
+        if (aRow < m && aCol < k && bRow < k && bCol < n) {
+            wmma::load_matrix_sync(a_frag, a + aRow * lda + aCol, lda);
+            wmma::load_matrix_sync(b_frag, b + bRow * ldb + bCol, ldb);
+            wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+        }
+    }
+
+    int cRow = warpM * WMMA_M;
+    int cCol = warpN * WMMA_N;
+
+    if (cRow < m && cCol < n) {
+        wmma::load_matrix_sync(c_frag, c + cRow * ldc + cCol, ldc, wmma::mem_row_major);
+        #pragma unroll
+        for(int i=0; i < c_frag.num_elements; i++) c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
+        wmma::store_matrix_sync(c + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
+    }
+}
+```
+Till now we have been doing GEMM operations on the CUDA cores. From this kernel onwards we are going to leverage Tensor Cores for doing GEMM operations.
