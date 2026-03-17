@@ -600,6 +600,10 @@ It could be that the consumer warps are slow to process the computations and the
 
 ## Kernel 6 - WMMA
 ```cpp
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+
 __global__ 
 void gemm_wmma(
     const half *a, 
@@ -649,5 +653,36 @@ void gemm_wmma(
         wmma::store_matrix_sync(c + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
     }
 }
+
+float *c_gpu_fp32_wmma;
+cudaErrCheck(cudaMallocManaged(&c_gpu_fp32_wmma, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_fp32_wmma[i] = 0.0f;
+
+dim3 bd4(128, 4, 1);
+dim3 gd4((n+WMMA_N*128/32-1)/(WMMA_N*128/32), (m+WMMA_M*4-1)/(WMMA_M*4), 1);
+
+gemm_wmma<<<gd4, bd4>>>(a_fp16, b_fp16, c_gpu_fp32_wmma, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_fp32_wmma));
 ```
-Till now we have been doing GEMM operations on the CUDA cores. From this kernel onwards we are going to leverage Tensor Cores for doing GEMM operations.
+<br/><br/>
+
+Till now we have been doing GEMM operations on the CUDA cores. From this kernel onwards we are going to leverage Tensor Cores for doing GEMM operations. Tensor Cores offers a lot of performance advantage over CUDA cores with regards to GEMM operations.
+<br/><br/>
+
+### FP16/BF16, FP8 and INT8 mixed precision training
+CUDA cores is only capable of doing FP32 or 32-bit floating point operations in GEMM. Whereas Tensor Cores are capable of doing GEMM with reduced precision such as 16-bit and 8-bit.
+<br/><br/>
+
+### More TFLOPS as compared to CUDA cores
+In L4 GPU, number of tensor cores are 240 as compared to 7424 CUDA cores but Tensor Cores offer higher peak TFLOPs 120 as compared to only 30.3 TFLOPs for CUDA cores on 32-bit floats. With 16-bit floats Tensor Cores offers 242 peak TFLOPs. Tensor Cores can do FMA (Fused Multiply and Add) operations on 4x4 matrices in a single cycle wherease CUDA cores takes multiple cycles for the same.
+<br/><br/>
+
+In the above kernel, we are declaring warp level fragments a_frag, b_frag, c_frag and acc_frag. Each fragment is of shape 16x16 and of type half which is BF16 data type (16-bit floats). Each block compriises of 512 threads with 128 threads along 4 rows. Each row of 128 threads is divided up into 4 warps each of 32 threads. Thus each block comprises of 4x4=16 warps.
+Each warp computes a 16x16 tile in the output matrix. Thus with 4x4 warps, each block computes 64x64 tile in the output matrix.
+Each warp copies a 16x16 tile from matrix A in global memory into a_frag in register and a 16x16 tile from matrix B into b_frag repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy 16x16=256 elements each thread copies 8 elements from global memory to the fragments in registers. The 16x16 tile is divided into 4 8x8 tiles and per 8x8 of 16-bit elements, each thread loads 32-bits or 2 consecutive elements.
+Then 4x4 tiles are copied from each fragment into the Tensor Core for doing Fused Multiply and Add (FMA) operation using `wmma::mma_sync` command.
+```
+acc_frag.x[i] = a_frag.x[i] * b_frag.x[i] + acc_frag.x[i]
+```
