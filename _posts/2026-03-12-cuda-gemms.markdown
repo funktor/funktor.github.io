@@ -694,3 +694,6 @@ Once a warp is done with multiplying `16x16` fragments, the results of the `acc_
 <br/><br/>
 In the event we do not want GEMM but only say the product `AxB`, we can just do `wmma::store_matrix_sync(c + cRow * ldc + cCol, acc_frag, ldc, wmma::mem_row_major)`.
 <br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `14.7231 ms`.
+<br/><br/>
+A slightly better solution would be to first copy the 64x64 tile of FP16 floats from global memory to shared memory and then use `wmma::load_matrix_sync` to transfer data from shared memory to registers for each 16x16 sub-tile within the 64x64 tile.
