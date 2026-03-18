@@ -684,11 +684,24 @@ In the above kernel, we are declaring warp level fragments `a_frag`, `b_frag`, `
 Each block comprises of `512 threads` with `128 threads` along `4 rows`. Each row of 128 threads is divided up into 4 warps each of 32 threads. Thus each block comprises of `4x4=16 warps`.
 Each warp computes a `16x16` tile in the output matrix. Thus with `4x4 warps`, each block computes `64x64 tile` in the output matrix.
 <br/><br/>
-Each warp copies a `16x16 tile` from matrix A in global memory into `a_frag` register and a `16x16 tile` from matrix B into b_frag repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy `16x16=256` elements each thread copies 8 elements from global memory to the fragments in registers. The 16x16 tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread loads 32-bits or 2 consecutive elements.
+Each warp copies a `16x16 tile` from matrix A in global memory into `a_frag` register and a `16x16 tile` from matrix B into b_frag repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy `16x16=256` elements each thread copies 8 elements from global memory to the fragments in registers.
 <br/><br/>
-![Warp TC](/docs/assets/warptc.png)
+```
+Thread  0 loads 8 FP16 elements from 1st  row and 1st col.
+Thread  1 loads 8 FP16 elements from 2nd  row and 1st col.
+...
+Thread 15 loads 8 FP16 elements from 16th row and 1st col.
+Thread 16 loads 8 FP16 elements from 1st  row and 8th col.
+Thread 17 loads 8 FP16 elements from 2nd  row and 9th col.
+...
+Thread 31 loads 8 FP16 elements from 16th row and 8th col.
+```
 <br/><br/>
 Next `wmma::mma_sync` command multiplies the 16x16 tile in a_frag with a 16x8 tile in b_frag repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
+<br/><br/>
+The 16x16 tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread loads 32-bits or 2 consecutive elements.
+<br/><br/>
+![Warp TC](/docs/assets/warptc.png)
 <br/><br/>
 Once a warp is done with multiplying `16x16` fragments, the results of the `acc_frag` is updated to `c_frag`. Since it is a GEMM operation where we are computing `D = alpha * AxB + beta * C`, the results of `AxB` are stored in `acc_frag`, and instead of using two separate matrices C and D, we are updating the matrix C itself with the final result assuming that the original matrix C is not used later. Once we update the `c_frag` with elementwise multiplication and summation, we update the results in the output matrix C in global memory.
 <br/><br/>
@@ -940,12 +953,12 @@ Each block of thread is divided into 4x4 warps where each warp computes 16x16 su
 A warp or a group of 32 threads loads the 16x16 sub-tile from shared memory to registers as follows:
 <br/><br/>
 ```
-Thread  0 loads 8 FP16 elements from 1st row and 1st col.
-Thread  1 loads 8 FP16 elements from 2nd row and 1st col.
+Thread  0 loads 8 FP16 elements from 1st  row and 1st col.
+Thread  1 loads 8 FP16 elements from 2nd  row and 1st col.
 ...
 Thread 15 loads 8 FP16 elements from 16th row and 1st col.
-Thread 16 loads 8 FP16 elements from 1st row and 8th col.
-Thread 17 loads 8 FP16 elements from 2nd row and 9th col.
+Thread 16 loads 8 FP16 elements from 1st  row and 8th col.
+Thread 17 loads 8 FP16 elements from 2nd  row and 9th col.
 ...
 Thread 31 loads 8 FP16 elements from 16th row and 8th col.
 ```
@@ -960,5 +973,16 @@ asm volatile(
 );
 ```
 <br/><br/>
-Note that since `mma.sync` can mulltiply a 16x16 matrix with a 16x8 matrix at a time, so we do 2 `mma.sync` operations each multiplying a 16x16 matrix with a 16x8 matrix and then merging the results.
+Note that since `mma.sync` can only multiply a 16x16 matrix with a 16x8 matrix at a time, so we do 2 `mma.sync` operations each multiplying a 16x16 matrix with a 16x8 matrix and then merging the results.
+<br/><br/>
+Finally we update the output matrix C with the final results. Note that I am directly updating the C matrix in the global memory. A better approach here would be to use `stmatrix.sync` to write the output 16x16 matrix from registers to shared memory and then from shared memory to global memory.
+<br/><br/>
+Note the thread id to index mapping in the output matrix C. The indices corresponding to each thread id is computed based on the thread assignment to a 8x8 sub-matrix as shown in the diagram above.
+<br/><br/>
+```
+Thread  0 computes elements (0,0) (0,1) (15,0) and (15,1) for a 16x8 output submatrix.
+Thread  1 computes elements (0,2) (0,3) (15,2) and (15,3) for a 16x8 output submatrix.
+...
+Thread 31 computes elements (7,6) (7,7) (15,6) and (15,7) for a 16x8 output submatrix.
+```
 <br/><br/>
