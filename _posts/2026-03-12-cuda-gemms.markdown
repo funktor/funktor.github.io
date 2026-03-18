@@ -697,6 +697,8 @@ Thread 17 loads 8 FP16 elements from 2nd  row and 9th col.
 Thread 31 loads 8 FP16 elements from 16th row and 8th col.
 ```
 <br/><br/>
+![Warp TC](/docs/assets/ldmatrix.png)
+<br/><br/>
 Next `wmma::mma_sync` command multiplies the 16x16 tile in a_frag with a 16x8 tile in b_frag repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
 <br/><br/>
 The 16x16 tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread loads 32-bits or 2 consecutive elements.
