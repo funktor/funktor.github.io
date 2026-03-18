@@ -696,4 +696,269 @@ In the event we do not want GEMM but only say the product `AxB`, we can just do 
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `14.7231 ms`.
 <br/><br/>
-A slightly better solution would be to first copy the 64x64 tile of FP16 floats from global memory to shared memory and then use `wmma::load_matrix_sync` to transfer data from shared memory to registers for each 16x16 sub-tile within the 64x64 tile.
+A slightly better solution would be to first copy the 64x64 tile of FP16 floats from global memory to shared memory and then use `wmma::load_matrix_sync` to transfer data from shared memory to registers for each 16x16 sub-tile within the 64x64 tile. Since copying from global memory to shared memory also involves register, we can use async copy as previously seen.
+<br/><br/>
+```cpp
+__global__ 
+void gemm_wmma_shmm(
+    const half *a, 
+    const half *b, 
+    float *c, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    cuda::pipeline<cuda::thread_scope_thread> pipeline = cuda::make_pipeline();
+
+    __shared__ alignas(16) half Mds[NUM_STAGES_ASYNC_PIPELINE][TILE_WIDTH_WMMA*TILE_WIDTH_WMMA];
+    __shared__ alignas(16) half Nds[NUM_STAGES_ASYNC_PIPELINE][TILE_WIDTH_WMMA*TILE_WIDTH_WMMA];
+
+    int ldc = n;
+
+    int warpM = (blockIdx.y * blockDim.y + threadIdx.y);
+    int warpN = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
+
+    wmma::fill_fragment(acc_frag, 0.0f);
+
+    int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    int a_block_row = by * TILE_WIDTH_WMMA;
+    int b_block_col = bx * TILE_WIDTH_WMMA;
+
+    for (int s = 0; s < NUM_STAGES_ASYNC_PIPELINE; s++) {
+        int h = s*TILE_WIDTH_WMMA;
+
+        pipeline.producer_acquire();
+        #pragma unroll
+        for (int j = idx; j < TILE_WIDTH_WMMA*TILE_WIDTH_WMMA; j += blockDim.x * blockDim.y) {
+            cuda::memcpy_async(Mds[s] + j, a + (a_block_row + j/TILE_WIDTH_WMMA)*k + h + (j % TILE_WIDTH_WMMA), cuda::aligned_size_t<2>(sizeof(half)), pipeline);
+            cuda::memcpy_async(Nds[s] + j, b + (h + j/TILE_WIDTH_WMMA)*n + b_block_col + (j % TILE_WIDTH_WMMA), cuda::aligned_size_t<2>(sizeof(half)), pipeline);
+        }
+        pipeline.producer_commit();
+    }
+
+    int s = NUM_STAGES_ASYNC_PIPELINE;
+
+    for (int i = 0; i < k; i += TILE_WIDTH_WMMA) {
+        int stage = s % NUM_STAGES_ASYNC_PIPELINE;
+
+        constexpr size_t pending_batches = NUM_STAGES_ASYNC_PIPELINE - 1;
+        cuda::pipeline_consumer_wait_prior<pending_batches>(pipeline);
+        __syncthreads();
+
+        #pragma unroll
+        for (int j = 0; j < TILE_WIDTH_WMMA; j += WMMA_K) {
+            int a_warp_row = threadIdx.y * WMMA_M;
+            int a_warp_col = j;
+
+            int b_warp_row = j;
+            int b_warp_col = (threadIdx.x / 32) * WMMA_N;
+
+            if (a_warp_row < TILE_WIDTH_WMMA && a_warp_col < TILE_WIDTH_WMMA && b_warp_row < TILE_WIDTH_WMMA && b_warp_col < TILE_WIDTH_WMMA) {
+                wmma::load_matrix_sync(a_frag, Mds[stage] + a_warp_row * TILE_WIDTH_WMMA + a_warp_col, TILE_WIDTH_WMMA);
+                wmma::load_matrix_sync(b_frag, Nds[stage] + b_warp_row * TILE_WIDTH_WMMA + b_warp_col, TILE_WIDTH_WMMA);
+                wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+            }
+        }
+
+        pipeline.consumer_release();
+        __syncthreads();
+
+        pipeline.producer_acquire();
+        int h = s*TILE_WIDTH_WMMA;
+        if (h < k) {
+            #pragma unroll
+            for (int j = idx; j < TILE_WIDTH_WMMA*TILE_WIDTH_WMMA; j += blockDim.x * blockDim.y) {
+                cuda::memcpy_async(Mds[stage] + j, a + (a_block_row + j/TILE_WIDTH_WMMA)*k + h + (j % TILE_WIDTH_WMMA), cuda::aligned_size_t<2>(sizeof(half)), pipeline);
+                cuda::memcpy_async(Nds[stage] + j, b + (h + j/TILE_WIDTH_WMMA)*n + b_block_col + (j % TILE_WIDTH_WMMA), cuda::aligned_size_t<2>(sizeof(half)), pipeline);
+            }
+        }
+        pipeline.producer_commit();
+
+        s += 1;
+    }
+
+    int cRow = warpM * WMMA_M;
+    int cCol = warpN * WMMA_N;
+
+    if (cRow < m && cCol < n) {
+        wmma::load_matrix_sync(c_frag, c + cRow * ldc + cCol, ldc, wmma::mem_row_major);
+
+        #pragma unroll
+        for(int i=0; i < c_frag.num_elements; i++) c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
+
+        wmma::store_matrix_sync(c + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
+    }
+}
+```
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `14.1765 ms`. This is slightly better than the previous kernel.
+<br/><br/>
+
+## Kernel 6 - mma.sync custom
+```cpp
+__global__ 
+void gemm_mma_sync_fp16(
+    const half *a, 
+    const half *b, 
+    float *c, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    __shared__ alignas(16) half Mds[TILE_WIDTH_WMMA*TILE_WIDTH_WMMA];
+    __shared__ alignas(16) half Nds[TILE_WIDTH_WMMA*TILE_WIDTH_WMMA];
+
+    int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    int warp_row_id = idx/blockDim.x;
+    int warp_col_id = (idx % blockDim.x)/32;
+    int thread_id_in_warp = idx % 32;
+
+    for (int i = 0; i < k; i += TILE_WIDTH_WMMA) {
+        int a_row = blockIdx.y * TILE_WIDTH_WMMA;
+        int a_col = i;
+
+        for (int j = idx; j < TILE_WIDTH_WMMA*TILE_WIDTH_WMMA; j += blockDim.x * blockDim.y) {
+            Mds[j] = a[(a_row + j/TILE_WIDTH_WMMA) * k + (a_col + j % TILE_WIDTH_WMMA)];
+        }
+
+        int b_row = i;
+        int b_col = blockIdx.x * TILE_WIDTH_WMMA;
+
+        for (int j = idx; j < TILE_WIDTH_WMMA*TILE_WIDTH_WMMA; j += blockDim.x * blockDim.y) {
+            Nds[j] = b[(b_row + j/TILE_WIDTH_WMMA) * n + (b_col + j % TILE_WIDTH_WMMA)];
+        }
+
+        __syncthreads();
+
+        for (int j = 0; j < TILE_WIDTH_WMMA; j += 16) {
+            uint32_t regs_a[4];
+
+            uint32_t regs_b_1[2];
+            uint32_t regs_b_2[2];
+
+            float regs_c_1[4] = {0.0f};
+            float regs_c_2[4] = {0.0f};
+
+            int m_row = warp_row_id * 16;
+            int m_col = j;
+
+            int n_row = j;
+            int n_col_1 = warp_col_id * 16;
+            int n_col_2 = n_col_1 + 8;
+
+            uint32_t addr_a   = __cvta_generic_to_shared(&Mds[(m_row + thread_id_in_warp % 16) * TILE_WIDTH_WMMA + (thread_id_in_warp/16) * 8 + m_col]);
+            uint32_t addr_b_1 = __cvta_generic_to_shared(&Nds[(n_row + thread_id_in_warp % 16) * TILE_WIDTH_WMMA + n_col_1]);
+            uint32_t addr_b_2 = __cvta_generic_to_shared(&Nds[(n_row + thread_id_in_warp % 16) * TILE_WIDTH_WMMA + n_col_2]);
+
+            asm volatile(
+                "ldmatrix.sync.aligned.m8n8.x4.shared.b16 "
+                "{%0, %1, %2, %3}, [%4];"
+                : "=r"(regs_a[0]), "=r"(regs_a[1]), "=r"(regs_a[2]), "=r"(regs_a[3])
+                : "r"(addr_a)
+            );
+
+            asm volatile(
+                "ldmatrix.sync.aligned.m8n8.x2.shared.trans.b16 "
+                "{%0, %1}, [%2];"
+                : "=r"(regs_b_1[0]), "=r"(regs_b_1[1])
+                : "r"(addr_b_1)
+            );
+
+            asm volatile(
+                "ldmatrix.sync.aligned.m8n8.x2.shared.trans.b16 "
+                "{%0, %1}, [%2];"
+                : "=r"(regs_b_2[0]), "=r"(regs_b_2[1])
+                : "r"(addr_b_2)
+            );
+
+            asm volatile(
+                "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                "{%0, %1, %2, %3}, "
+                "{%4, %5, %6, %7}, "
+                "{%8, %9}, "
+                "{%0, %1, %2, %3};\n"
+                : "+f"(regs_c_1[0]), "+f"(regs_c_1[1]), "+f"(regs_c_1[2]),"+f"(regs_c_1[3])
+                : "r"(regs_a[0]), "r"(regs_a[1]), "r"(regs_a[2]), "r"(regs_a[3]), "r"(regs_b_1[0]), "r"(regs_b_1[1])
+            );
+
+            asm volatile(
+                "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                "{%0, %1, %2, %3}, "
+                "{%4, %5, %6, %7}, "
+                "{%8, %9}, "
+                "{%0, %1, %2, %3};\n"
+                : "+f"(regs_c_2[0]), "+f"(regs_c_2[1]), "+f"(regs_c_2[2]),"+f"(regs_c_2[3])
+                : "r"(regs_a[0]), "r"(regs_a[1]), "r"(regs_a[2]), "r"(regs_a[3]), "r"(regs_b_2[0]), "r"(regs_b_2[1])
+            );
+
+            #pragma unroll
+            for (int q = 0; q < 4; q++) {
+                int rw = (thread_id_in_warp >> 2) + 8 * (q / 2);
+                int cl = 2 * (thread_id_in_warp % 4) + (q % 2);
+                c[(a_row + m_row + rw) * n + (b_col + n_col_1 + cl)] += regs_c_1[q];
+                c[(a_row + m_row + rw) * n + (b_col + n_col_2 + cl)] += regs_c_2[q];
+            }
+        }
+
+        __syncthreads();
+    }
+}
+
+float *c_gpu_mma_sync_fp16;
+cudaErrCheck(cudaMallocManaged(&c_gpu_mma_sync_fp16, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_mma_sync_fp16[i] = 0.0f;
+
+dim3 bd6(128, 4, 1);
+dim3 gd6((n+TILE_WIDTH_WMMA-1)/TILE_WIDTH_WMMA, (m+TILE_WIDTH_WMMA-1)/TILE_WIDTH_WMMA, 1);
+
+gemm_mma_sync_fp16<<<gd6, bd6>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16));
+```
+<br/><br/>
+In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 a_frag was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
+<br/><br/>
+The next crucial part is how to make the PTX instruction for `mma.sync`. For e.g. `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` does matrix-multiply-and-add operation on a 16x16 matrix A and 16x8 matrix B where A is row-major and B is column major. A and B are both FP16 and output matrix is FP32.
+<br/><br/>
+Each block of thread is divided into 4x4 warps where each warp computes 16x16 sub-matrix of the output. Given an output matrix of shape 1024x1024, each block computes a 64x64 submatrix. In the earlier kernels, we would directly compute the 64x64 output tile by sliding horizontally across A and vertically across B and loading 64x64 tiles from global to shared memory and doing matmul on each tile and summing up the results across the tiles. In this kernel, we further divide each 64x64 tile into 16x16 sub-tiles which are handled by warps because we want to leverage the Tensor Cores.
+<br/><br/>
+A warp or a group of 32 threads loads the 16x16 sub-tile from shared memory to registers as follows:
+<br/><br/>
+```
+Thread  0 loads 8 FP16 elements from 1st row and 1st col.
+Thread  1 loads 8 FP16 elements from 2nd row and 1st col.
+...
+Thread 15 loads 8 FP16 elements from 16th row and 1st col.
+Thread 16 loads 8 FP16 elements from 1st row and 8th col.
+Thread 17 loads 8 FP16 elements from 2nd row and 9th col.
+...
+Thread 31 loads 8 FP16 elements from 16th row and 8th col.
+```
+<br/><br/>
+Each 8 FP16 elements is read into 4 FP32 registers using `ldmatrix.sync.aligned.m8n8.x4.shared.b16`
+```
+asm volatile(
+    "ldmatrix.sync.aligned.m8n8.x4.shared.b16 "
+    "{%0, %1, %2, %3}, [%4];"
+    : "=r"(regs_a[0]), "=r"(regs_a[1]), "=r"(regs_a[2]), "=r"(regs_a[3])
+    : "r"(addr_a)
+);
+```
+<br/><br/>
+Note that since `mma.sync` can mulltiply a 16x16 matrix with a 16x8 matrix at a time, so we do 2 `mma.sync` operations each multiplying a 16x16 matrix with a 16x8 matrix and then merging the results.
+<br/><br/>
