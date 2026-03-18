@@ -667,7 +667,6 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_fp32_wmma));
 ```
 <br/><br/>
-
 Till now we have been doing GEMM operations on the CUDA cores. From this kernel onwards we are going to leverage `Tensor Cores` for doing GEMM operations. Tensor Cores offers a lot of performance advantage over `CUDA cores` with regards to GEMM operations.
 <br/><br/>
 
@@ -676,13 +675,15 @@ CUDA cores is only capable of doing `FP32` or 32-bit floating point operations i
 <br/><br/>
 
 ### More TFLOPS as compared to CUDA cores
-In L4 GPU, number of tensor cores are `240` as compared to `7424` CUDA cores but Tensor Cores offer higher peak TFLOPs of `120` as compared to only `30.3 TFLOPs` for CUDA cores on 32-bit floats. With 16-bit floats Tensor Cores offers `242 peak TFLOPs`. Tensor Cores can do `FMA (Fused Multiply and Add)` operations on `4x4` matrices in a single cycle wherease CUDA cores takes multiple cycles for the same.
+In L4 GPU, number of tensor cores are `240` as compared to `7424` CUDA cores but Tensor Cores offer higher peak TFLOPs of `120` as compared to only `30.3 TFLOPs` for CUDA cores on 32-bit floats. With 16-bit floats, Tensor Cores offers `242 peak TFLOPs`. Tensor Cores can do `FMA (Fused Multiply and Add)` operations on `4x4` matrices in a single cycle wherease CUDA cores takes multiple cycles for the same.
 <br/><br/>
 
-In the above kernel, we are declaring warp level fragments `a_frag`, `b_frag`, `c_frag` and `acc_frag`. Each fragment is of shape `16x16` and of type `half` which is `FP16` data type (16-bit floats).
+In the above kernel, we are declaring warp level fragments `a_frag`, `b_frag`, `c_frag` and `acc_frag`. Each fragment is of shape `16x16` and `a_frag` and `b_frag` are of type `half` which is `FP16` data type (16-bit floats) whereas `c_frag` and `acc_frag` are of type FP32.
 <br/><br/>
-Each block comprises of `512 threads` with `128 threads` along `4 rows`. Each row of 128 threads is divided up into 4 warps each of 32 threads. Thus each block comprises of `4x4=16 warps`.
+Each block comprises of `512 threads` with `128 threads` in each of `4 rows`. Each row of 128 threads is divided up into 4 warps each of 32 threads. Thus each block comprises of `4x4=16 warps`.
 Each warp computes a `16x16` tile in the output matrix. Thus with `4x4 warps`, each block computes `64x64 tile` in the output matrix.
+<br/><br/>
+![wmma](/docs/assets/wmma.png)
 <br/><br/>
 Each warp copies a `16x16 tile` from matrix A in global memory into `a_frag` register and a `16x16 tile` from matrix B into b_frag repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy `16x16=256` elements each thread copies 8 elements from global memory to the fragments in registers.
 <br/><br/>
@@ -697,11 +698,11 @@ Thread 17 loads 8 FP16 elements from 2nd  row and 9th col.
 Thread 31 loads 8 FP16 elements from 16th row and 8th col.
 ```
 <br/><br/>
-![Warp TC](/docs/assets/ldmatrix.png)
+![Warp TC](/docs/assets/ldmatrix2.png)
 <br/><br/>
-Next `wmma::mma_sync` command multiplies the 16x16 tile in a_frag with a 16x8 tile in b_frag repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
+Next `wmma::mma_sync` command multiplies the 16x16 tile in `a_frag` with a 16x8 tile in b_frag repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
 <br/><br/>
-The 16x16 tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread loads 32-bits or 2 consecutive elements.
+The 16x16 output tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread in a warp computes 32-bits or 2 consecutive elements as shown below.
 <br/><br/>
 ![Warp TC](/docs/assets/warptc.png)
 <br/><br/>
