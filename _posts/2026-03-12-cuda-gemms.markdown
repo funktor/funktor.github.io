@@ -685,7 +685,7 @@ Each warp computes a `16x16` tile in the output matrix. Thus with `4x4 warps`, e
 <br/><br/>
 ![wmma](/docs/assets/wmma.png)
 <br/><br/>
-Each warp copies a `16x16 tile` from matrix A in global memory into `a_frag` register and a `16x16 tile` from matrix B into b_frag repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy `16x16=256` elements each thread copies 8 elements from global memory to the fragments in registers.
+Each warp copies a `16x16 tile` from matrix A in global memory into `a_frag` register and a `16x16 tile` from matrix B into `b_frag` repeated along the k-dimension using `wmma::load_matrix_sync` command. Since a warp contains 32 threads thus to copy `16x16=256` elements each thread copies 8 elements from global memory to the fragments in registers.
 <br/><br/>
 ```
 Thread  0 loads 8 FP16 elements from 1st  row and 1st col.
@@ -700,7 +700,7 @@ Thread 31 loads 8 FP16 elements from 16th row and 8th col.
 <br/><br/>
 ![Warp TC](/docs/assets/ldmatrix2.png)
 <br/><br/>
-Next `wmma::mma_sync` command multiplies the 16x16 tile in `a_frag` with a 16x8 tile in b_frag repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
+Next `wmma::mma_sync` command multiplies the 16x16 tile in `a_frag` with a 16x8 tile in `b_frag` repeated 2 times horizontally (because b_frag is 16x16) using Tensor Cores. The results of the matmul operations are stored in `acc_frag`. Tensor Cores does `FMA (Fused Multiply and Add)` operation on the fragments.
 <br/><br/>
 The 16x16 output tile is divided into 4 `8x8` tiles and per 8x8 of 16-bit elements, each thread in a warp computes 32-bits or 2 consecutive elements as shown below.
 <br/><br/>
@@ -947,7 +947,7 @@ cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16));
 ```
 <br/><br/>
-In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 a_frag was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
+In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 `a_frag` was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
 <br/><br/>
 The next crucial part is how to make the PTX instruction for `mma.sync`. For e.g. `mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32` does matrix-multiply-and-add operation on a 16x16 matrix A and 16x8 matrix B where A is row-major and B is column major. A and B are both FP16 and output matrix is FP32.
 <br/><br/>
@@ -967,23 +967,175 @@ asm volatile(
 <br/><br/>
 Note that since `mma.sync` can only multiply a 16x16 matrix with a 16x8 matrix at a time, so we do 2 `mma.sync` operations each multiplying a 16x16 matrix with a 16x8 matrix and then merging the results.
 <br/><br/>
+![mma matmul](/docs/assets/mma1.png)
+<br/><br/>
 Finally we update the output matrix C with the final results. Note that I am directly updating the C matrix in the global memory. A better approach here would be to use `stmatrix.sync` to write the output 16x16 matrix from registers to shared memory and then from shared memory to global memory.
 <br/><br/>
-Note the thread id to index mapping in the output matrix C. The indices in the 16x16 matrix corresponding to each thread id is computed as follows.
+Note the thread id to index mapping corresponding to each `16x8` matrix. Since a warp of 32 threads computes 128 FP32 elements in the output, thus each thread computes 4 elements. Hence each `reg_c_1` and `regs_c_2` is an array of 4 elements. The 4 indices in the 16x8 matrix corresponding to each thread id is computed as follows.
 <br/><br/>
 ```
-Thread  0 computes elements (0,0) (15,0) (0,8)  and (15, 8) for a 16x16 output submatrix.
-Thread  1 computes elements (0,2) (15,2) (0,10) and (15,10) for a 16x16 output submatrix.
+Thread  0 computes elements (0,0) (0,1)  (8,0) and  (8,1) for a 16x8 output submatrix.
+Thread  1 computes elements (0,2) (0,3)  (8,2) and  (8,3) for a 16x8 output submatrix.
 ...
-Thread 31 computes elements (7,6) (15,6) (7,14) and (15,14) for a 16x16 output submatrix.
+Thread 31 computes elements (7,6) (7,7) (15,6) and (15,7) for a 16x8 output submatrix.
 ```
 <br/><br/>
-For thread id `tid` and element index `q` (where q ranges from 0 to 3), then `row(tid, q) = (tid >> 2) + 8 * (q / 2)` and `col=2 * (tid % 4) + (q % 2)`
+For thread id `tid` and element index `q` (where q ranges from 0 to 3), then we have:
+<br/><br/>
+```
+row(tid, q) = (tid >> 2) + 8 * (q / 2)
+col(tid, q) = 2 * (tid % 4)  + (q % 2)
+
 For e.g. for tid=31
+
+row(tid,0)=7   col(tid,0)=6
+row(tid,1)=7   col(tid,1)=7
+row(tid,2)=15  col(tid,2)=6
+row(tid,3)=15  col(tid,3)=7
 ```
-row(tid,0)=7  col(tid,0)=6
-row(tid,1)=15 col(tid,1)=6
-row(tid,2)=7  col(tid,1)=14
-row(tid,3)=15 col(tid,1)=14
+<br/><br/>
+Note that instead of `ldmatrix` to load the matrix from shared memory to registers, one can also directly use the thread id to index mapping corresponding to the shared memory matrices `Mds` and `Nds` similar to how we are using for the output matrix. But `ldmatrix` is usually faster.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `27.6931 ms`.
+<br/><br/>
+The performance significantly improves if instead of each warp computing a `16x16` sub-tile in the output, each warp computes a `2D tile of 8x8 tiles each of 16x16` values i.e. each warp computes `128x128` tile in the output and thus each block of 2x2 warps computes `256x256` tile in the output as follows:
+<br/><br/>
+```cpp
+__global__ 
+void gemm_mma_sync_fp16_2d_tiled(
+    half *a, 
+    half *b, 
+    float *c, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    __shared__ alignas(16) half Mds[32*32];
+    __shared__ alignas(16) half Nds[32*32];
+
+    int idx = threadIdx.y * blockDim.x + threadIdx.x;
+
+    int warp_row_id = idx/blockDim.x;
+    int warp_col_id = (idx % blockDim.x)/32;
+    int thread_id_in_warp = idx % 32;
+
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < 8; j++) {
+
+            float regs_c_1[4] = {0.0f};
+            float regs_c_2[4] = {0.0f};
+
+            for (int k1 = 0; k1 < k; k1 += 32) {
+                int a_row = (8 * blockIdx.y + i) * 32;
+                int a_col = k1;
+
+                int b_row = k1;
+                int b_col = (8 * blockIdx.x + j) * 32;
+
+                #pragma unroll
+                for (int j1 = idx; j1 < 32*32; j1 += blockDim.x * blockDim.y) {
+                    int row = j1/32;
+                    int col = j1 % 32;
+
+                    Mds[row*32 + col] = a[(a_row + row) * k + (a_col + col)];
+                    Nds[row*32 + col] = b[(b_row + row) * n + (b_col + col)];
+                }
+
+                __syncthreads();
+
+                for (int k2 = 0; k2 < 32; k2 += 16) {
+                    uint32_t regs_a[4];
+
+                    uint32_t regs_b_1[2];
+                    uint32_t regs_b_2[2];
+
+                    int m_row = warp_row_id * 16;
+                    int m_col = k2;
+
+                    int n_row = k2;
+                    int n_col_1 = warp_col_id * 16;
+                    int n_col_2 = n_col_1 + 8;
+
+                    uint32_t addr_a   = __cvta_generic_to_shared(&Mds[(m_row + thread_id_in_warp % 16) * 32 + (thread_id_in_warp/16) * 8 + m_col]);
+                    uint32_t addr_b_1 = __cvta_generic_to_shared(&Nds[(n_row + thread_id_in_warp % 16) * 32 + n_col_1]);
+                    uint32_t addr_b_2 = __cvta_generic_to_shared(&Nds[(n_row + thread_id_in_warp % 16) * 32 + n_col_2]);
+
+                    asm volatile(
+                        "ldmatrix.sync.aligned.m8n8.x4.shared.b16 "
+                        "{%0, %1, %2, %3}, [%4];"
+                        : "=r"(regs_a[0]), "=r"(regs_a[1]), "=r"(regs_a[2]), "=r"(regs_a[3])
+                        : "r"(addr_a)
+                    );
+
+                    asm volatile(
+                        "ldmatrix.sync.aligned.m8n8.x2.shared.trans.b16 "
+                        "{%0, %1}, [%2];"
+                        : "=r"(regs_b_1[0]), "=r"(regs_b_1[1])
+                        : "r"(addr_b_1)
+                    );
+
+                    asm volatile(
+                        "ldmatrix.sync.aligned.m8n8.x2.shared.trans.b16 "
+                        "{%0, %1}, [%2];"
+                        : "=r"(regs_b_2[0]), "=r"(regs_b_2[1])
+                        : "r"(addr_b_2)
+                    );
+
+                    asm volatile(
+                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                        "{%0, %1, %2, %3}, "
+                        "{%4, %5, %6, %7}, "
+                        "{%8, %9}, "
+                        "{%0, %1, %2, %3};\n"
+                        : "+f"(regs_c_1[0]), "+f"(regs_c_1[1]), "+f"(regs_c_1[2]),"+f"(regs_c_1[3])
+                        : "r"(regs_a[0]), "r"(regs_a[1]), "r"(regs_a[2]), "r"(regs_a[3]), "r"(regs_b_1[0]), "r"(regs_b_1[1])
+                    );
+
+                    asm volatile(
+                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+                        "{%0, %1, %2, %3}, "
+                        "{%4, %5, %6, %7}, "
+                        "{%8, %9}, "
+                        "{%0, %1, %2, %3};\n"
+                        : "+f"(regs_c_2[0]), "+f"(regs_c_2[1]), "+f"(regs_c_2[2]),"+f"(regs_c_2[3])
+                        : "r"(regs_a[0]), "r"(regs_a[1]), "r"(regs_a[2]), "r"(regs_a[3]), "r"(regs_b_2[0]), "r"(regs_b_2[1])
+                    );
+                }
+                __syncthreads();
+            }
+
+            int a_row = (8 * blockIdx.y + i) * 32;
+            int b_col = (8 * blockIdx.x + j) * 32;
+
+            int m_row   = warp_row_id * 16;
+            int n_col_1 = warp_col_id * 16;
+            int n_col_2 = n_col_1 + 8;
+
+            #pragma unroll
+            for (int q = 0; q < 4; q++) {
+                int rw = (thread_id_in_warp >> 2) + 8 * (q / 2);
+                int cl = 2 * (thread_id_in_warp % 4) + (q % 2);
+                c[(a_row + m_row + rw) * n + (b_col + n_col_1 + cl)] += regs_c_1[q];
+                c[(a_row + m_row + rw) * n + (b_col + n_col_2 + cl)] += regs_c_2[q];
+            }
+        }
+    }
+}
+
+float *c_gpu_mma_sync_fp16_2d_tiled;
+cudaErrCheck(cudaMallocManaged(&c_gpu_mma_sync_fp16_2d_tiled, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) c_gpu_mma_sync_fp16_2d_tiled[i] = 0.0f;
+
+dim3 bd7(64, 2, 1);
+dim3 gd7((n+256-1)/256, (m+256-1)/256, 1);
+
+gemm_mma_sync_fp16_2d_tiled<<<gd7, bd7>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16_2d_tiled, 1.0, 0.0, m, n, k);
+cudaDeviceSynchronize();
+cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16_2d_tiled));
 ```
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `13.1082 ms`
 <br/><br/>
