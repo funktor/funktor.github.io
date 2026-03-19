@@ -712,7 +712,7 @@ In the event we do not want GEMM but only say the product `AxB`, we can just do 
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `14.7231 ms`.
 <br/><br/>
-A slightly better solution would be to first copy the 64x64 tile of FP16 floats from global memory to shared memory and then use `wmma::load_matrix_sync` to transfer data from shared memory to registers for each 16x16 sub-tile within the 64x64 tile. Since copying from global memory to shared memory also involves register, we can use async copy as previously seen.
+A slightly better solution would be to first copy the `64x64 tile` of FP16 floats from global memory to shared memory and then use `wmma::load_matrix_sync` to transfer data from shared memory to registers for each 16x16 sub-tile within the 64x64 tile. Since copying from global memory to shared memory also involves register, we can use async copy (which does not use registers) as previously seen.
 <br/><br/>
 ```cpp
 __global__ 
@@ -953,18 +953,7 @@ The next crucial part is how to make the PTX instruction for `mma.sync`. For e.g
 <br/><br/>
 Each block of thread is divided into 4x4 warps where each warp computes 16x16 sub-matrix of the output. Given an output matrix of shape 1024x1024, each block computes a 64x64 submatrix. In the earlier kernels, we would directly compute the 64x64 output tile by sliding horizontally across A and vertically across B and loading 64x64 tiles from global to shared memory and doing matmul on each tile and summing up the results across the tiles. In this kernel, we further divide each 64x64 tile into 16x16 sub-tiles which are handled by warps because we want to leverage the Tensor Cores.
 <br/><br/>
-A warp or a group of 32 threads loads the 16x16 sub-tile from shared memory to registers as follows:
-<br/><br/>
-```
-Thread  0 loads 8 FP16 elements from 1st  row and 1st col.
-Thread  1 loads 8 FP16 elements from 2nd  row and 1st col.
-...
-Thread 15 loads 8 FP16 elements from 16th row and 1st col.
-Thread 16 loads 8 FP16 elements from 1st  row and 8th col.
-Thread 17 loads 8 FP16 elements from 2nd  row and 9th col.
-...
-Thread 31 loads 8 FP16 elements from 16th row and 8th col.
-```
+A warp or a group of 32 threads loads the 16x16 sub-tile from shared memory to registers as seen above.
 <br/><br/>
 Each 8 FP16 elements is read into 4 FP32 registers using `ldmatrix.sync.aligned.m8n8.x4.shared.b16`
 ```
@@ -980,12 +969,21 @@ Note that since `mma.sync` can only multiply a 16x16 matrix with a 16x8 matrix a
 <br/><br/>
 Finally we update the output matrix C with the final results. Note that I am directly updating the C matrix in the global memory. A better approach here would be to use `stmatrix.sync` to write the output 16x16 matrix from registers to shared memory and then from shared memory to global memory.
 <br/><br/>
-Note the thread id to index mapping in the output matrix C. The indices corresponding to each thread id is computed based on the thread assignment to a 8x8 sub-matrix as shown in the diagram above.
+Note the thread id to index mapping in the output matrix C. The indices in the 16x16 matrix corresponding to each thread id is computed as follows.
 <br/><br/>
 ```
-Thread  0 computes elements (0,0) (0,1) (15,0) and (15,1) for a 16x8 output submatrix.
-Thread  1 computes elements (0,2) (0,3) (15,2) and (15,3) for a 16x8 output submatrix.
+Thread  0 computes elements (0,0) (15,0) (0,8)  and (15, 8) for a 16x16 output submatrix.
+Thread  1 computes elements (0,2) (15,2) (0,10) and (15,10) for a 16x16 output submatrix.
 ...
-Thread 31 computes elements (7,6) (7,7) (15,6) and (15,7) for a 16x8 output submatrix.
+Thread 31 computes elements (7,6) (15,6) (7,14) and (15,14) for a 16x16 output submatrix.
+```
+<br/><br/>
+For thread id `tid` and element index `q` (where q ranges from 0 to 3), then `row(tid, q) = (tid >> 2) + 8 * (q / 2)` and `col=2 * (tid % 4) + (q % 2)`
+For e.g. for tid=31
+```
+row(tid,0)=7  col(tid,0)=6
+row(tid,1)=15 col(tid,1)=6
+row(tid,2)=7  col(tid,1)=14
+row(tid,3)=15 col(tid,1)=14
 ```
 <br/><br/>
