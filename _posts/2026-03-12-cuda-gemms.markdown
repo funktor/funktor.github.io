@@ -836,7 +836,6 @@ Time taken to multiply two 4096x4096 matrices is around `14.1765 ms`. This is sl
 <br/><br/>
 
 ## Kernel 8 - mma.sync custom
-{% raw %}
 ```cpp
 __global__ 
 void gemm_mma_sync_fp16(
@@ -961,7 +960,6 @@ gemm_mma_sync_fp16<<<gd6, bd6>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16, 1.0, 0.0, 
 cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16));
 ```
-{% endraw %}
 <br/><br/>
 In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 `a_frag` was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
 <br/><br/>
