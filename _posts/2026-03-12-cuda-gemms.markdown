@@ -1139,3 +1139,47 @@ cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16_2d_tiled));
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `13.1082 ms`
 <br/><br/>
+
+## Kernel 7 - mma.sync with swizzling
+Before deep diving into this kernel it is important to understand how shared memory bank conflicts affects performance. The shared memory is divided up into memory banks so that multiple threads can concurrently access different memory bank and access is not serialized. Usually shared memory is divided into 32 memory banks meaning that at a time 32 threads can access 32 different memory addresses concurrently. Given a warp also has 32 threads, if all the threads in a warp accesses different memory banks, then in a single cycle one can read upto 32 values from the shared memory. But if two or more threads in same warp or different warps accesses the same memory bank, then access is serialized for that memory bank and multiple cycles would be required.
+<br/><br/>
+Each address corresponding to a memory bank is 32-bit i.e. for 16-bit floats the same memory bank can serve 2 FP16 values instead of one FP32.
+<br/><br/>
+In a row-major layout, consecutive elements in a row of a matrix (FP32) are assigned to consecutive memory banks in a round robin fashion. For e.g. if a matrix is of shape 32x32 then the 1st 32 elements (from 1st row) will be assigned to the 32 memory banks. The next 32 elements (in the next row) would again be assigned to the 32 memory banks and so on. Thus each memory bank serves 32 values. If a warp of 32 threads access 32 elements from shared memory at a time in row-major order, then there will be no memory bank conflict because in the 1st cycle, each thread reads from one bank without conflict, in the next cycle again each thread reads from one bank without conflict and so on.
+<br/><br/>
+But if the same warp accesses the elements in a column-major order i.e. T0 accessess (0,0), T1 accessess (1,0), T2 accesses (2,0) and so on, given that `(0,0), (1,0), (2,0), ... (31,0)` all are assigned to the same memory bank, we see that there is 32-way memory bank conflict. Thus reading each column takes 32 cycles as compared to 1 cycle in row-major order access.
+<br/><br/>
+Even if the threads accesses the elements in row-major order, but assume that each thread accesses 2 consecutive FP32 values from the matrix:
+```
+TO  accessess (0,0)  and  (0,1)   (memory banks - 0 and 1)
+T1  accessess (0,2)  and  (0,3)   (memory banks - 2 and 3)
+...
+T15 accessess (0,30) and (0,31) (memory banks - 30 and 31)
+T16 accessess (1,0)  and  (1,1)   (memory banks - 0 and 1)
+T17 accessess (1,2)  and  (1,3)   (memory banks - 2 and 3)
+...
+T31 accessess (1,30) and (1,31) (memory banks - 30 and 31)
+```
+Thus each thread in a warp now accesses 2 distinct memory banks and we see that threads `Ti` and `Ti+16` are accessing the same 2 memory banks. Thus each memory is accesses by 2 threads and thus a 2-way shared memory bank conflict arises. If each thread accesses 4 elements, we would have 4-way conflict and 8-way conflict for 8 elements and so on.
+<br/><br/>
+In our `ldmatrix.sync` instruction above, each thread loads 8 consecutive FP16 values thus each thread accessess 4 consecutive memory banks (each bank is 32-bit) and thus `ldmatrix.sync` would have 4-way memory bank conflict.
+<br/><br/>
+There are 2 ways to handle memory bank conflicts:
+<br/><br/>
+### Padding
+In the column-major access seen above we are facing 32 way memory bank conflict. Now if instead of 32x32 matrix in shared memory we have 32x33 matrix, then note that each thread in warp acesses a different memory bank per column and we have removed any memory bank conflict. We can use a padding value for the new last column added to prevent memory bank conflicts.
+<br/><br/>
+But it doesn't resolve the 2-way conflict where each threads accesses 2 consecutive FP32 values. Still each memory bank is accessed by 2 different threads.
+<br/><br/>
+```
+TO  accessess (0,0)  and  (0,1)   (memory banks - 0 and 1)
+T1  accessess (0,2)  and  (0,3)   (memory banks - 2 and 3)
+...
+T15 accessess (0,30) and (0,31) (memory banks - 30 and 31)
+T16 accessess (0,32) and  (1,0)   (memory banks - 0 and 1)
+T17 accessess  (1,1) and  (1,2)   (memory banks - 2 and 3)
+...
+T31 accessess (1,29) and (1,30) (memory banks - 28 and 29)
+```
+<br/><br/>
+### Swizzling
