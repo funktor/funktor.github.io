@@ -1349,3 +1349,31 @@ void gemm_mma_sync_fp16_2d_tiled_swizzled(
     }
 }
 ```
+<br/><br/>
+Let's try to understand how we compute the swizzled indices in the `__device__` kernel `get_swizzled_index`.
+<br/><br/>
+As seen earlier, when `ldmatrix.sync` is used to copy from shared memory to registers, each thread in a warp copies 8 consecutive FP16 values. Each shared memory matrix `Mds` and `Nds` is of shape `32x32`. A block of 2x2 warps loads from 32x32 Mds and Nds matrices since each warp loads 16x16 sub-tile. Since each element is FP16 thus 2 consecutive elements in Mds/Nds are assigned to same memory bank and as a result, all threads accessing the 1st two rows of Mds/Nds do not have conflicts but threads in every alternate row have bank conflicts with each other.
+<br/><br/>
+If we look at onlt warp 0 i.e. warp loading the 1st 16x16 sub-tile.
+<br/><br/>
+```
+Warp (0,0)
+
+T0  loads (0,0)  to (0,7)
+T1  loads (1,0)  to (1,7)
+...
+T15 loads (15,0) to (15,7)
+T16 loads (0,8)  to (0,15)
+T17 loads (1,8)  to (1,15)
+...
+T31 loads (15,8) to (15,15)
+```
+<br/><br/>
+Threads `T0, T2, ... T14` accesses the same bank similarly threads `T1, T3, ... T15` accesses the same bank thus a 8-way bank conflict happens during the load. The same is true for thread group `T16, T18, ... T30` and thread group `T17, T19, ..., T31`.
+<br/><br/>
+Since each thread needs to access 8 consecutive values, thus during permutation we must take care that we permute using groups of 8 columns and since two consecutive rows do not cause bank conflicts we can take care that permutation does not happen between set of two consecutive rows. Thus, we are grouping the values in the 32x32 matrix by 2 rows and 8 columns or in other words we are doing swizzling of columns on 16x4 matrix where each element of the 16x4 matrix is a block of 2x8 FP16 elements. That is why in the `XOR` operation in the function `get_swizzled_index` we are dividing the row by 2 and column by 8. The exact formula is derived to take care of different dimensions of matrices.
+<br/><br/>
+We will deep dive into swizzling in the next post to understand the proofs behind why this works and how the exact formula is derived step by step.
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `13.3683 ms`
+<br/><br/>
