@@ -612,7 +612,7 @@ Maintaining the `shared_state` buffer in shared memory by both the producer and 
 It could be that the consumer warps are slow to process the computations and the producer warp is waiting to push new stage or vice versa where the producer warp is slow in fetching data from global memory while consumer warps have finished the operations and waiting for new stages in the pipeline.
 <br/><br/>
 
-## Kernel 6 - WMMA
+## Kernel 7 - WMMA
 ```cpp
 #define WMMA_M 16
 #define WMMA_N 16
@@ -835,7 +835,8 @@ void gemm_wmma_shmm(
 Time taken to multiply two 4096x4096 matrices is around `14.1765 ms`. This is slightly better than the previous kernel.
 <br/><br/>
 
-## Kernel 6 - mma.sync custom
+## Kernel 8 - mma.sync custom
+{% raw %}
 ```cpp
 __global__ 
 void gemm_mma_sync_fp16(
@@ -960,6 +961,7 @@ gemm_mma_sync_fp16<<<gd6, bd6>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16, 1.0, 0.0, 
 cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16));
 ```
+{% endraw %}
 <br/><br/>
 In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 `a_frag` was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
 <br/><br/>
@@ -1154,7 +1156,7 @@ cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16_2d_tiled));
 Time taken to multiply two 4096x4096 matrices is around `13.1082 ms`
 <br/><br/>
 
-## Kernel 7 - mma.sync with swizzling
+## Kernel 9 - mma.sync with swizzling
 Before deep diving into this kernel it is important to understand how `shared memory bank conflicts` affects performance. The shared memory is divided up into `memory banks` so that multiple threads can concurrently access different memory bank and access is parallelized. Usually shared memory is divided into `32 memory banks` meaning that at a time 32 threads can access 32 different memory addresses concurrently. Given a warp also has 32 threads, if all the threads in a warp accesses different memory banks, then in a single cycle one can read upto 32 values from the shared memory. But if two or more threads in the same warp or different warps accesses the same memory bank, then access is serialized for that memory bank and multiple cycles would be required affecting performance.
 <br/><br/>
 Each address corresponding to a memory bank is `32-bit` i.e. for 16-bit floats the same memory bank can serve `2 FP16` values instead of one `FP32`.
@@ -1392,7 +1394,7 @@ We will deep dive into swizzling in the next post to understand the proofs behin
 Time taken to multiply two 4096x4096 matrices is around `13.3683 ms`
 <br/><br/>
 
-## Kernel 8 - cuBLAS
+## Kernel 10 - cuBLAS
 Lastly for the sake of completion, we are going to show a FP16 matrix multiplication using cuBLAS library in CUDA.
 ```cpp
 // Define some error checking macros.
