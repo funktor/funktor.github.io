@@ -4,7 +4,9 @@ title:  "CUDA GEMMS"
 date:   2026-03-20 18:50:11 +0530
 categories: software-engineering
 ---
-Matrix multiplication is the building block of Deep Neural Networks which in turn are the building blocks of all AI models and applications. In order to scale AI models to billions of parameters, one must thus scale matrix multiplication. Given matrices A and B of shapes `MxK` and `KxM`, the dot product `C=A.B` is of shape `MxN`. This is what probably 90% of neural networks do. Time complexity of computing `C=A.B` is `O(MxNxK)` or if all dimensions are same then it is `O(M^3)`. Algorithmically, one cannot improve the time complexity much although some algorithms exists such as `Strassen's Algorithm` which does matrix multiplication in `O(M^2.8)` operations. Even the advanced algorithms today cannot achieve better than `O(M^2.371)`.<br/><br/>
+Matrix multiplication is the building block of Deep Neural Networks which in turn are the building blocks of all AI models and applications. In order to scale AI models to billions of parameters, one must thus scale matrix multiplication. Given matrices A and B of shapes `MxK` and `KxM`, the dot product `C=A.B` is of shape `MxN`. This is what probably 90% of neural networks do.
+<br/><br/>
+Time complexity of computing `C=A.B` is `O(MxNxK)` or if all dimensions are same then it is `O(M^3)`. Algorithmically, one cannot improve the time complexity much although some algorithms exists such as `Strassen's Algorithm` which does matrix multiplication in `O(M^2.8)` operations. Even the advanced algorithms today cannot achieve better than `O(M^2.371)`.<br/><br/>
 [Strassen's Algorithm for Matrix Multiplication](https://en.wikipedia.org/wiki/Strassen_algorithm)
 <br/><br/>
 [CopperSmith-Winnograd Matrix Multiplication](https://www-auth.cs.wisc.edu/lists/theory-reading/2009-December/pdfmN6UVeUiJ3.pdf)
