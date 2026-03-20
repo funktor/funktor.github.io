@@ -1145,6 +1145,8 @@ Before deep diving into this kernel it is important to understand how `shared me
 <br/><br/>
 Each address corresponding to a memory bank is `32-bit` i.e. for 16-bit floats the same memory bank can serve `2 FP16` values instead of one `FP32`.
 <br/><br/>
+![memory bank](/docs/assets/membank.png)
+<br/><br/>
 In a row-major layout, consecutive elements in a row of a matrix (FP32) are assigned to consecutive memory banks in a round robin fashion. For e.g. if a matrix is of shape 32x32 then the 1st 32 elements (from 1st row) will be assigned to the 32 memory banks. The next 32 elements (in the next row) would again be assigned to the 32 memory banks and so on. Thus each memory bank serves 32 values. If a warp of 32 threads access 32 elements from shared memory at a time in row-major order, then there will be no memory bank conflict because in the 1st cycle, each thread reads from one bank without conflict, in the next cycle again each thread reads from one bank without conflict and so on.
 <br/><br/>
 But if the same warp accesses the elements in a column-major order i.e. T0 accessess (0,0), T1 accessess (1,0), T2 accesses (2,0) and so on, given that `(0,0), (1,0), (2,0), ... (31,0)` all are assigned to the same memory bank, we see that there is `32-way` memory bank conflict. Thus reading each column takes 32 cycles as compared to 1 cycle in row-major order access.
@@ -1184,9 +1186,13 @@ T31 accessess (1,30) (memory bank = 31)
 <br/><br/>
 We see that each thread now accesses a different memory bank. The first 16 threads accesses the even numbered banks while the next 16 threads accesses the odd numbered banks because the last padded column shifts the bank assignment by 1.
 <br/><br/>
+![padding](/docs/assets/padding.png)
+<br/><br/>
 
 ### Swizzling
 In `swizzling` instead of adding an extra column with a padding value, each `(row, col)` index is transformed into `(row, row^col)` where `row^col` is `XOR` of row and col. Basically this transformation permutes the values in a `row`. Depending on how we permute the values, we can avoid shared memory bank conflicts. The exact mathematical proof of why permutation of a row works in solving bank conflicts will be dealt with in the next post.
+<br/><br/>
+![swizzle](/docs/assets/swizzle.png)
 <br/><br/>
 Taking the example of 2-way conflict scenario above, the thread to index assignment looks as follows with swizzling.
 <br/><br/>
