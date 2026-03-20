@@ -1394,12 +1394,12 @@ Time taken to multiply two 4096x4096 matrices is around `13.3683 ms`
 
 ## Kernel 8 - cuBLAS
 Lastly for the sake of completion, we are going to show a FP16 matrix multiplication using cuBLAS library in CUDA.
+```cpp
 // Define some error checking macros.
 #define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
 #define cublasErrCheck(stat) { cublasErrCheck_((stat), __FILE__, __LINE__); }
 #define curandErrCheck(stat) { curandErrCheck_((stat), __FILE__, __LINE__); }
 
-```cpp
 void gemm_fp16_cublas(
     const __half *a_fp16, 
     const __half *b_fp16, 
