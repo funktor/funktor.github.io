@@ -836,6 +836,7 @@ Time taken to multiply two 4096x4096 matrices is around `14.1765 ms`. This is sl
 <br/><br/>
 
 ## Kernel 8 - mma.sync custom
+{% raw %}
 ```cpp
 __global__ 
 void gemm_mma_sync_fp16(
@@ -960,6 +961,7 @@ gemm_mma_sync_fp16<<<gd6, bd6>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16, 1.0, 0.0, 
 cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16));
 ```
+{% endraw %}
 <br/><br/>
 In this kernel we show how to write the `Tensor Core GEMM` without using `WMMA`. The crucial parts of understanding the above kernel is understanding how `ldmatrix` PTX instruction is used to copy from shared memory to registers. For e.g. the instruction `ldmatrix.sync.aligned.m8n8.x4.shared.b16` is used to copy `4 8x8` submatrices of 16-bit data types from shared memory to registers. We saw this earlier with WMMA too where the 16x16 `a_frag` was divided up into 4 8x8 sub-tiles and each thread in a warp then copies 8 FP16 elements.
 <br/><br/>
@@ -970,6 +972,7 @@ Each block of thread is divided into 4x4 warps where each warp computes 16x16 su
 A warp or a group of 32 threads loads the 16x16 sub-tile from shared memory to registers as seen above.
 <br/><br/>
 Each 8 FP16 elements is read into 4 FP32 registers using `ldmatrix.sync.aligned.m8n8.x4.shared.b16`
+{% raw %}
 ```
 asm volatile(
     "ldmatrix.sync.aligned.m8n8.x4.shared.b16 "
@@ -978,6 +981,7 @@ asm volatile(
     : "r"(addr_a)
 );
 ```
+{% endraw %}
 <br/><br/>
 Note that since `mma.sync` can only multiply a 16x16 matrix with a 16x8 matrix at a time, so we do 2 `mma.sync` operations each multiplying a 16x16 matrix with a 16x8 matrix and then merging the results.
 <br/><br/>
@@ -1014,6 +1018,7 @@ Time taken to multiply two 4096x4096 matrices is around `27.6931 ms`.
 <br/><br/>
 The performance significantly improves if instead of each warp computing a `16x16` sub-tile in the output, each warp computes a `2D tile of 8x8 tiles each of 16x16` values i.e. each warp computes `128x128` tile in the output and thus each block of 2x2 warps computes `256x256` tile in the output as follows:
 <br/><br/>
+{% raw %}
 ```cpp
 __global__ 
 void gemm_mma_sync_fp16_2d_tiled(
@@ -1150,6 +1155,7 @@ gemm_mma_sync_fp16_2d_tiled<<<gd7, bd7>>>(a_fp16, b_fp16, c_gpu_mma_sync_fp16_2d
 cudaDeviceSynchronize();
 cudaErrCheck(cudaFree(c_gpu_mma_sync_fp16_2d_tiled));
 ```
+{% endraw %}
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `13.1082 ms`
 <br/><br/>
@@ -1225,6 +1231,7 @@ As similar to the above solution with padding, the first 16 threads accesses the
 <br/><br/>
 We modify the above `mma.sync 2D tiled kernel` with swizzling below.
 <br/><br/>
+{% raw %}
 ```cpp
 __device__
 int get_swizzled_index(int row, int col, int k, int u, int v) {
@@ -1363,6 +1370,7 @@ void gemm_mma_sync_fp16_2d_tiled_swizzled(
     }
 }
 ```
+{% endraw %}
 <br/><br/>
 Let's try to understand how we compute the swizzled indices in the `__device__` kernel `get_swizzled_index`.
 <br/><br/>
