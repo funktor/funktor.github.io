@@ -4,7 +4,11 @@ title:  "CUDA GEMMS"
 date:   2026-03-20 18:50:11 +0530
 categories: software-engineering
 ---
-Matrix multiplication is the building block of Deep Neural Networks which in turn are the building blocks of all AI models and applications. In order to scale AI models to billions of parameters, one must thus scale matrix multiplication. Given matrices A and B of shapes `MxK` and `KxM`, the dot product `C=A.B` is of shape `MxN`. This is what 90% of neural networks do. Time complexity of computing `C=A.B` is `O(MxNxK)` or if all dimensions are same then it is `O(M^3)`. Algorithmically, one cannot improve the time complexity much although some algorithms exists such as `Strassen's Algorithm` which does matrix multiplication in `O(M^2.8)` operations. Even the advanced algorithms today cannot achieve better than `O(M^2.371)`.<br/><br/>
+Matrix multiplication is the building block of Deep Neural Networks which in turn are the building blocks of all AI models and applications. In order to scale AI models to billions of parameters, one must thus scale matrix multiplication. Given matrices A and B of shapes `MxK` and `KxM`, the dot product `C=A.B` is of shape `MxN`. This is what probably 90% of neural networks do. Time complexity of computing `C=A.B` is `O(MxNxK)` or if all dimensions are same then it is `O(M^3)`. Algorithmically, one cannot improve the time complexity much although some algorithms exists such as `Strassen's Algorithm` which does matrix multiplication in `O(M^2.8)` operations. Even the advanced algorithms today cannot achieve better than `O(M^2.371)`.<br/><br/>
+[Strassen's Algorithm for Matrix Multiplication](https://en.wikipedia.org/wiki/Strassen_algorithm)
+<br/><br/>
+[CopperSmith-Winnograd Matrix Multiplication](https://www-auth.cs.wisc.edu/lists/theory-reading/2009-December/pdfmN6UVeUiJ3.pdf)
+<br/><br/>
 So algorithmically one cannot improve the run-time performance too much. The other strategy is to use massive parallelization.<br/><br/>
 On CPU, one can use multiple threads to calculate multiple output elements of C in parallel. For e.g. multithreading using `openmp` in C++ improves the run-time of multiplying 2 matrices of shapes `1024x1024` from `2688 ms` to `555 ms` using `8 threads` i.e. an improvement of around 5x.<br/><br/>
 ```cpp
@@ -33,8 +37,8 @@ void gemm_cpu(
 The above function computes the `GEMM` (General Matrix Multiply) where `D=alpha*A.B + beta*C`. For standard matrix multiplication A.B we can consider `alpha=1.0` and `beta=0.0`.<br/><br/>
 CPU is limited by the number of threads because CPUs are optimized for lowering the latency of a single process instead of solving problems in parallel. Most commercially available CPUs have at-most `64 cores`. On the other hand modern GPUs have thousands of cores or threads to perform GEMM in parallel (`SIMD` or `SIMT` Single Instruction Multiple Data/Threads) and that would be the topic of this post. We will try to optimize GEMM on GPUs by leveraging different CUDA kernel optimization strategies.<br/><br/>
 Before we begin exploring kernels, one should keep in mind that not all GPU architectures are built same and the same kernel A that performs better than kernel B on a GPU arch X, may perform worse than kernel B on another GPU arch Y. Importantly you should write your kernels keeping in mind the GPU architecture of your compute nodes or pods.<br/><br/>
-Also, for the same architecture matrices of different dimensions shows different relative performance for different kernels. For e.g. say on L4 GPU, if kernel 1 performs better than kernel 2 on 1024x1024 matrices it does not imply that kernel 1 will still perform better than kernel 2 on 4096x4096 matrices.<br/><br/>
-All of the kernels I am going to show here are written on `L4 GPUs` and so the performance numbers are w.r.t. the L4 GPUs only. The numbers might change drastically if you run the same kernel on say `H100` or `A100` or `RTX`.<br/><br/>
+Also for the same architecture, matrices of different dimensions shows different relative performance for different kernels. For e.g. say on L4 GPU, if kernel 1 performs better than kernel 2 on 1024x1024 matrices it does not imply that kernel 1 will still perform better than kernel 2 on 4096x4096 matrices due to various factors such as availability of resources.<br/><br/>
+All of the kernels I am going to show here are written on `L4 GPUs` and so the performance numbers are w.r.t. the L4 GPUs only. The numbers might change drastically if you run the same kernel on say `H100` or `A100` or `RTX`. Also the kernels are written very specific towards particuar shapes for e.g. matrix dimensions with powers of 2. The kernels do not handle edge cases for incomplete blocks.<br/><br/>
 All the codes are available at my [github repository](https://github.com/funktor/gemm).
 
 ## Kernel 1 - Standard CUDA
@@ -81,7 +85,17 @@ Time taken to multiply two 4096x4096 matrices is around `40.4367 ms`.
 <br/><br/>
 To compile all the CUDA kernels on `L4 GPU`, I use the following command from the terminal. Make sure you have the necessary libraries such as TBB or OpenMP installed.<br/><br/>
 ```
-nvcc -rdc=true *.cu -Xcompiler -fopenmp -o my_gemm -O3 -Xcompiler -O3 --gpu-code=sm_89 -arch=compute_89 -lcublas -lcurand -ltbb
+nvcc \
+    -rdc=true *.cu \
+    -Xcompiler -fopenmp \
+    -o my_gemm \
+    -O3 \
+    -Xcompiler -O3 \
+    --gpu-code=sm_89 \
+    -arch=compute_89 \
+    -lcublas \
+    -lcurand \
+    -ltbb
 ```
 <br/><br/>
 
@@ -351,7 +365,7 @@ reinterpret_cast<float4 *>(&Nds[ty*TILE_WIDTH + tx*4])[0] = reinterpret_cast<flo
 <br/><br/>
 In order to work with `float4` vectorization the x-dimension for each block of thread is reduced by a factor of 4 from the previous kernel i.e. instead of each thread computing `4x4=16` elements of the output matrix, now each each thread computes `4x4x4=64` elements.
 <br/><br/>
-Note that having many threads per block is not always good because GPU has what is known as the `occupancy problem`. Basically the resources such as number of registers, number of warps that can be simulataneously scheduled, maximum shared memory per block, maximum registers per thread are limited. When number of threads are higher, it can lead to smaller concurrency due to exceeding number of registers per thread or shared mempry size etc. So often you would see that lesser number of threads perform better than more number of threads.<br/><br/>
+Note that having many threads per block is not always good because GPU has what is known as the `occupancy problem`. Basically the resources such as number of registers, number of warps that can be simulataneously scheduled, maximum shared memory per block, maximum registers per thread are limited. When number of threads are higher, it can lead to smaller concurrency due to exceeding number of registers per thread or shared memory size etc. So often you would see that lesser number of threads perform better than more number of threads.<br/><br/>
 Note that the shared memory addresses needs to be 16 byte or 128-bit aligned using `alignas(16)`.
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `15.1583 ms`.
@@ -1354,7 +1368,7 @@ Let's try to understand how we compute the swizzled indices in the `__device__` 
 <br/><br/>
 As seen earlier, when `ldmatrix.sync` is used to copy from shared memory to registers, each thread in a warp copies 8 consecutive FP16 values. Each shared memory matrix `Mds` and `Nds` is of shape `32x32`. A block of 2x2 warps loads from 32x32 Mds and Nds matrices since each warp loads 16x16 sub-tile. Since each element is FP16 thus 2 consecutive elements in Mds/Nds are assigned to same memory bank and as a result, all threads accessing the 1st two rows of Mds/Nds do not have conflicts but threads in every alternate row have bank conflicts with each other.
 <br/><br/>
-If we look at onlt warp 0 i.e. warp loading the 1st 16x16 sub-tile.
+If we look at only warp 0 i.e. warp loading the 1st 16x16 sub-tile.
 <br/><br/>
 ```
 Warp (0,0)
@@ -1376,4 +1390,56 @@ Since each thread needs to access 8 consecutive values, thus during permutation 
 We will deep dive into swizzling in the next post to understand the proofs behind why this works and how the exact formula is derived step by step.
 <br/><br/>
 Time taken to multiply two 4096x4096 matrices is around `13.3683 ms`
+<br/><br/>
+
+## Kernel 8 - cuBLAS
+Lastly for the sake of completion, we are going to show a FP16 matrix multiplication using cuBLAS library in CUDA.
+// Define some error checking macros.
+#define cudaErrCheck(stat) { cudaErrCheck_((stat), __FILE__, __LINE__); }
+#define cublasErrCheck(stat) { cublasErrCheck_((stat), __FILE__, __LINE__); }
+#define curandErrCheck(stat) { curandErrCheck_((stat), __FILE__, __LINE__); }
+
+```cpp
+void gemm_fp16_cublas(
+    const __half *a_fp16, 
+    const __half *b_fp16, 
+    float *c_fp32, 
+    const float alpha, 
+    const float beta, 
+    const int m, 
+    const int n, 
+    const int k
+) {
+    cublasHandle_t handle;
+    cublasErrCheck(cublasCreate(&handle));
+    // Use tensor cores
+    cublasErrCheck(cublasSetMathMode(handle, CUBLAS_TENSOR_OP_MATH));
+
+    cublasErrCheck(
+        cublasGemmEx(
+            handle, 
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            m, n, k,
+            &alpha,
+            b_fp16, CUDA_R_16F, n,
+            a_fp16, CUDA_R_16F, k,
+            &beta,
+            c_fp32, CUDA_R_32F, n,
+            CUDA_R_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP
+        )
+    );
+
+    cublasDestroy(handle);
+}
+
+float *d_gpu_fp32;
+cudaErrCheck(cudaMallocManaged(&d_gpu_fp32, m * n * sizeof(float)));
+
+for (auto i = 0; i < m*n; i++) d_gpu_fp32[i] = 0.0f;
+
+gemm_fp16_cublas(a_fp16, b_fp16, d_gpu_fp32, 1.0, 0.0, m, n, k);
+cudaErrCheck(cudaFree(d_gpu_fp32));
+```
+<br/><br/>
+Time taken to multiply two 4096x4096 matrices is around `47.3037 ms`
 <br/><br/>
