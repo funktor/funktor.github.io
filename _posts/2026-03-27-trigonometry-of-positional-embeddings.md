@@ -47,3 +47,8 @@ Then we compute the absolute distance between embeddings distance k apart as fol
 <br/><br/>
 ![peposcosd](/docs/assets/pe_pos_cos_sin_d.png)
 <br/><br/>
+In the original Transformer paper, the values of the frequency are as follows:
+<br/><br/>
+![freq](/docs/assets/freq.png)
+<br/><br/>
+Now we know why the positional embeddings used in Transformer uses `sin` and `cosine` functions and why alternate values in each embedding are sin and cosine.
