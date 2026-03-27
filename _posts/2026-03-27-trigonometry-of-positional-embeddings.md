@@ -17,7 +17,7 @@ The last condition implies that the absolute distance of the positional embeddin
 <br/><br/>
 The last condition implies that the function `f` should be some form of `rotation` or `linear transformation`. For e.g. given the linear transformation `f(x) = ax + b`, we see that it satisfies the last condition where `a` and `b` can be learnable parameters. For Transformer use case, `x` must be a tensor of shape `(batch, seq_len, emb_dim)`. Thus the learnable parameter `a` must be a weight matrix of shape `(seq_len, seq_len)`. But note that this formulation violates condition 1 above because if `a` is of shape `(100, 100)` for a sequence length of 100 encoutered during training then we cannot use this to compute `f(x)` when x is of shape `(200, 16)` encountered during inference because the last dimension of `a` must match with the 1st dimension of `x` for dot product calculations.
 <br/><br/>
-The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length. Let's prove that this formulation satisfies condition 3 above.
+The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=-1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length. Let's prove that this formulation satisfies condition 3 above.
 <br/><br/>
 ![Proof](/docs/assets/pe_diff.png)
 <br/><br/>
@@ -47,8 +47,15 @@ Then we compute the absolute distance between embeddings distance k apart as fol
 <br/><br/>
 ![peposcosd](/docs/assets/pe_pos_cos_sin_d.png)
 <br/><br/>
-In the original Transformer paper, the values of the frequency are as follows:
+Thus, we can see that the absolute difference is independent of the position `p` within the sequence when we use both sine and cosine alternately. In the original Transformer paper, the values of the frequency are as follows:
 <br/><br/>
 ![freq](/docs/assets/freq.png)
 <br/><br/>
-Now we know why the positional embeddings used in Transformer uses `sin` and `cosine` functions and why alternate values in each embedding are sin and cosine.
+One can also write the Euler's formula in terms of matrix notation as follows:
+<br/><br/>
+![exp_mat](/docs/assets/exp_mat.png)
+<br/><br/>
+If you observe, in the matrix notation, there are no imaginary terms in the rotation matrix. The matrix notation comes handy for computing the positional embedding vector for different positions in the sequence. If you observe, then we see that one can obtain PE(p+k) from PE(p) above by multipying a block diagonal rotation matrix with PE(p) as follows:
+<br/><br/>
+![matpe](/docs/assets/matpe.png)
+<br/><br/>
