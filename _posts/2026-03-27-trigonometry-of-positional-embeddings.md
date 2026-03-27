@@ -19,7 +19,7 @@ The last condition implies that the function `f` should be some form of `rotatio
 <br/><br/>
 The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length. Let's prove that this formulation satisfies condition 3 above.
 <br/><br/>
-![Proof](/docs/assets/lagrida_latex_editor.png)
+![Proof](/docs/assets/pe_diff.png)
 <br/><br/>
 Thus, we see that the absolute distance between the positional embeddings separated by a distance `k` when f is a rotation, is agnostic of the positions `p` or `q`, which implies that:
 <br/><br/>
@@ -27,23 +27,23 @@ Thus, we see that the absolute distance between the positional embeddings separa
 <br/><br/>
 Now, let us represent the positional embedding vector of dimension `d` for position `p` as follows:
 <br/><br/>
-```
-PE(pos) = [e^(i*w(pos, 0)*0), e^(i*w(pos, 1)*1), ... e^(i*w(pos, d-1)*(d-1)]
-```
+![pepos](/docs/assets/pe_pos2.png)
 <br/><br/>
-where `w(pos, j)` is the frequency of rotation for `pos`-th token and `j`-th value in the d-dimensional embedding i.e. each dimension of the positional embedding represents a different rotation.
+where `w_{p,j}` is the frequency of rotation for `p`-th token in the sequence and `j` is the index within the d-dimensional embedding i.e. each dimension of the positional embedding represents a rotation with a different frequency.
 <br/><br/>
 But now we have another problem, the positional embeddings are all a bunch of complex numbers. If we take only the real part out of each rotation as follows i.e.
-```
-PE(p) = [cos(w(p, 0)*0), cos(w(p, 1)*1), ... cos(w(p, d-1)*(d-1)]
-```
-Then if we take something like:
-```
-PE(p+k) = [cos(w(p+k, 0)*0), cos(w(p+k, 1)*1), ... cos(w(p+k, d-1)*(d-1)]
-```
-and take the distance between these 2 vectors as the L2 norm:
-```
-|PE(p+k)-PE(p)|^2 = (cos(w(p+k, 0)*0)-cos(w(p, 0)*0))^2 + (cos(w(p+k, 1)*1)-cos(w(p, 1)*1))^2 + ...
-```
-We cannot reduce the above into an expression that is independent of p.
-One way to resolve this is to group the embedding values in groups of 2.
+<br/><br/>
+![peposcos](/docs/assets/pe_pos_cos3.png)
+<br/><br/>
+and we compute the absolute distance between embeddings distance k apart as follows:
+<br/><br/>
+![peposcosd](/docs/assets/pe_pos_cos_d3.png)
+<br/><br/>
+We cannot reduce the above into an expression that is independent of p as we saw above when we used the full complex representation instead of just the real part. One way to resolve this is to group the embedding values in groups of 2 i.e. assuming that the embedding dimension is divisible 2, then for each group of 2, we alternate between the `cosine` or the real part and the `sine` part or the imaginary part, and the embedding vector looks as follows:
+<br/><br/>
+![peposcossin](/docs/assets/pe_pos_cos_sin2.png)
+<br/><br/>
+Then we compute the absolute distance between embeddings distance k apart as follows:
+<br/><br/>
+![peposcosd](/docs/assets/pe_pos_cos_sin_d.png)
+<br/><br/>
