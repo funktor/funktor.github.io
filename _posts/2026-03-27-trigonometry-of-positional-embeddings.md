@@ -4,7 +4,9 @@ title:  "Trigonometry of Positional Embeddings"
 date:   2026-03-27 18:50:11 +0530
 categories: math
 ---
-It is well known fact that `Transformer` models uses `positional embeddings` to encode positional information during the attention calculation for each pair of token embeddings. Prior to Transformers, we had `RNN` and `LSTM` which intrinsically handled the sequence information. But with Transformers and `attention` mechanism, standard dot product between pairs of token embeddings do not maintain the position information. For e.g. given a sentence such as "The apple fell from the tree on my apple macbook". The token embedding for "apple" at position 2 is the same as the token embedding at position 9 but they imply different objects given the sequence of words. Without positional encodings, attention mechanism will give the same dot product (query and key) for position 2 and 9 when we compute `Q.K^T`.
+It is well known fact that `Transformer` models uses `positional embeddings` to encode positional information during the attention calculation for each pair of token embeddings. Prior to Transformers, we had `RNN` and `LSTM` which intrinsically handled the sequence information. But with Transformers and `attention` mechanism, standard dot product between pairs of token embeddings do not maintain the position information.
+<br/><br/>
+For e.g. given a sentence such as "The apple fell from the tree on my apple macbook". The token embedding for "apple" at position 2 is the same as the token embedding at position 9 but they imply different objects given the sequence of words. Without positional encodings, attention mechanism will give the same dot product (query and key) for position 2 and 9 when we compute `Q.K^T`.
 <br/><br/>
 But how does one design "good" positional embeddings that meets the following conditions:
 <br/><br/>
@@ -15,7 +17,9 @@ But how does one design "good" positional embeddings that meets the following co
 
 The last condition implies that the absolute distance of the positional embeddings between 2 positions separated by distance of `k` should remain same irrespective of which position in the sequence we are looking at. This is important because it implies that words or tokens are only affected by its neighboring words.
 <br/><br/>
-The last condition implies that the function `f` should be some form of `rotation` or `linear transformation`. For e.g. given the linear transformation `f(x) = ax + b`, we see that it satisfies the last condition where `a` and `b` can be learnable parameters. For Transformer use case, `x` must be a tensor of shape `(batch, seq_len, emb_dim)`. Thus the learnable parameter `a` must be a weight matrix of shape `(seq_len, seq_len)`. But note that this formulation violates condition 1 above because if `a` is of shape `(100, 100)` for a sequence length of 100 encoutered during training then we cannot use this to compute `f(x)` when x is of shape `(200, 16)` encountered during inference because the last dimension of `a` must match with the 1st dimension of `x` for dot product calculations.
+The last condition implies that the function `f` should be some form of `rotation` or `linear transformation`. For e.g. given the linear transformation `f(x) = ax + b`, we see that it satisfies the last condition where `a` and `b` can be learnable parameters. For Transformer use case, `x` must be a tensor of shape `(batch, seq_len, emb_dim)`. Thus the learnable parameter `a` must be a weight matrix of shape `(seq_len, seq_len)`.
+<br/><br/>
+But note that this formulation violates condition 1 above because if `a` is of shape `(100, 100)` for a sequence length of 100 encoutered during training then we cannot use this to compute `f(x)` when x is of shape `(200, 16)` encountered during inference because the last dimension of `a` must match with the 1st dimension of `x` for dot product calculations.
 <br/><br/>
 The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=-1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length. Let's prove that this formulation satisfies condition 3 above.
 <br/><br/>
