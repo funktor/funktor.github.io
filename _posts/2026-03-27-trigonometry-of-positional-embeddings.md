@@ -33,7 +33,7 @@ Now, let us represent the positional embedding vector of dimension `d` for posit
 <br/><br/>
 ![pepos](/docs/assets/pe_pos2.png)
 <br/><br/>
-where `w_j` is the frequency of rotation for the `j` is the index within the d-dimensional embedding i.e. each dimension of the positional embedding represents a rotation with a different frequency.
+where `w_j` is the frequency of rotation and `j` is the index within the d-dimensional embedding i.e. each dimension of the positional embedding represents a rotation with a different frequency.
 <br/><br/>
 But now we have another problem, the positional embeddings are all a bunch of complex numbers. If we take only the real part out of each rotation as follows i.e.
 <br/><br/>
