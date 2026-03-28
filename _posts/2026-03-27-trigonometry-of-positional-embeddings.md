@@ -12,22 +12,24 @@ But how does one design "good" positional embeddings that meets the following co
 <br/><br/>
 1. Should be able to handle arbitrary sequence lengths. Not just the maximum sequence length encoutered during training.
 2. Same token at different positions should have different positional embeddings.
-3. For any two positions `p` and `q` in the sequence, if `f` is the function for computing the positional embedding and `k` is some distance, then `|f(p+k)-f(p)| = |f(q+k)-f(q)|`
+3. For any two positions `p` and `q` in the sequence, if `f` is the function for computing the positional embedding and `k` is some distance, then `|f(p+k)-f(q+k)|=|f(p)-f(q)|` or `|f(p+k)-f(p)| = |f(q+k)-f(q)|`
 <br/><br/>
 
-The last condition implies that the absolute distance of the positional embeddings between 2 positions separated by distance of `k` should remain same irrespective of which position in the sequence we are looking at. This is important because it implies that words or tokens are only affected by its neighboring words.
+The last condition implies that the absolute difference of the positional embeddings between 2 positions is only dependent on the distance between the positions in the sequence. This is important because it implies that words or tokens are only affected by its neighboring words.
 <br/><br/>
 The last condition implies that the function `f` should be some form of `rotation` or `linear transformation`. For e.g. given the linear transformation `f(x) = ax + b`, we see that it satisfies the last condition where `a` and `b` can be learnable parameters. For Transformer use case, `x` must be a tensor of shape `(batch, seq_len, emb_dim)`. Thus the learnable parameter `a` must be a weight matrix of shape `(seq_len, seq_len)`.
 <br/><br/>
 But note that this formulation violates condition 1 above because if `a` is of shape `(100, 100)` for a sequence length of 100 encoutered during training then we cannot use this to compute `f(x)` when x is of shape `(200, 16)` encountered during inference because the last dimension of `a` must match with the 1st dimension of `x` for dot product calculations.
 <br/><br/>
-The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=-1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length. Let's prove that this formulation satisfies condition 3 above.
+The other possibility is `rotation` i.e. `f(x)=e^(iwx)` where `i` is the imaginary square root of unity `i*i=-1` and `w` is the frequency of rotation. Expanding using Euler's formula, we can also write it as `e^(iwx) = cos(wx) + i*sin(wx)`. Note that none of the parameters in the equation of rotation depends on the sequence length.
+<br/><br/>
+Let's prove the equation `|f(p+k)-f(q+k)|=|f(p)-f(q)|`.
+<br/><br/>
+![Proof1](/docs/assets/proof1.png)
+<br/><br/>
+We can also show that the rearranged quantity `|f(p+k)-f(p)|` is independent of the position `p` as follows:
 <br/><br/>
 ![Proof](/docs/assets/pe_diff.png)
-<br/><br/>
-Thus, we see that the absolute distance between the positional embeddings separated by a distance `k` when f is a rotation, is agnostic of the positions `p` or `q`, which implies that:
-<br/><br/>
-`|f(p+k)-f(p)| = |f(q+k)-f(q)|` for any `p` and `q`
 <br/><br/>
 Now, let us represent the positional embedding vector of dimension `d` for position `p` as follows:
 <br/><br/>
