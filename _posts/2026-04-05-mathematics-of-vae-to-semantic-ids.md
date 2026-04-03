@@ -10,14 +10,37 @@ Given the input features `X=[x_0, x_1, ..., x_{m-1}]`, our goal is to find a lat
 <br/><br/>
 ![mse](/docs/assets/loss_mse.png)
 <br/><br/>
-In variational autoencoders, instead of learning the latent space Z, we learn the probability distribution `P(Z|X, {w})` where `{w}` are the parameters of the probability distribution. Once we learn `{w}`, we can then determine `P(Z|X, {w})`. Z can be sampled from this distribution and decoded to get back X or some X' close to X. This enables one to learn variations in the input data and generate samples in the output with 
+In variational autoencoders, instead of learning the latent space Z, we learn the probability distribution `P(Z|X, {w})` where `{w}` are the parameters of the probability distribution. Once we learn `{w}`, we can then determine `P(Z|X, {w})`. Z can be sampled from this distribution and decoded to get back X or some X' close to X. This enables us to generate samples in the output with variations, unlike autoencoder where we construct X' directly from Z. 
 <br/><br/>
-Note that the loss function cannot simply be the MSE between X and X' because in that case the network might learn arbitrary `{w}` that may not actually represent the distribution of the latent space Z or close to the actual distribution of Z given X. We will see how to formulate the loss function that handles both the encoder loss i.e. difference between actual and estimated distribution of Z and the decoder loss i.e. difference between the predicted X' and actual X.
+Note that the loss function cannot simply be the MSE between X and X' because in that case the network might learn arbitrary `{w}` that may not actually represent the distribution of the latent space Z or close to the actual distribution of Z. We will see how to formulate the loss function that handles both the encoder loss i.e. difference between actual and estimated distribution of Z and the decoder loss i.e. difference between the predicted X' and actual X.
+<br/><br/>
+To make the network learn one must ensure that the likelihood of the output is maximized (`Maximum Likelihood Estimation`). Usually one uses the `negative log likelihood (NLL)` of the output distribution as the loss function. For eg. assuming that the output is normally distributed with a constant variance, the NLL of the normal distribution would look like:
+<br/><br/>
+![mle_norm](/docs/assets/mle_norm.png)
+<br/><br/>
+Thus, we see that the MSE loss function is actually derived from the negative log likelihood value of the normal distribution where the variance is assumed to be a constant.
+<br/><br/>
+In our example since the input and output from VAE are the same i.e. `x`, one must maximize `p(x)`. We can write `p(x)` in terms of z as follows:
+<br/><br/>
+![px](/docs/assets/px.png)
+<br/><br/>
+But the above integral is difficult to compute since it is over all possible latent states `z`. It is even analytically difficult to compute the integral for simpler distributions. Hence we need a better method to approximate the negative log likelihood of `p(x)`. Let's see if we can come up with some easy to compute expression for `p(x)`.
 <br/><br/>
 Using Bayes' Theorem to compute the conditional probability of `z` given `x` as follows:
 <br/><br/>
-![cond](/docs/assets/cond.png)
+![cond](/docs/assets/cond2.png)
 <br/><br/>
-The denominator is an integration over all possible `z`, which is intractable to compute analytically for most probability distributions. Instead of computing `p(z|x,{w})` using the Bayes' Theorem as above, we use some known and easy to compute probability distribution `q(z|x,{u})` as a proxy and then we minimize the difference between `p(z|x,{w})` and `q(z|x,{u})` in the loss function. Note that it is not necessary for `p(z|x,{w})` and `q(z|x,{u})` to be from the same family of distribution.
+The denominator is `p(x)` which we saw above is intractable to compute. Instead of computing `p(z|x;{w})` using the Bayes' Theorem as above, we use some known and easy to compute probability distribution `q(z|x;{u})` as a proxy and then we minimize the difference between `p(z|x;{w})` and `q(z|x;{u})` in the loss function. Note that it is not necessary for `p(z|x;{w})` and `q(z|x;{u})` to be from the same family of distribution.
 <br/><br/>
 The difference between the probability distributions `p(z|x,{w})` and `q(z|x,{u})` can be captured using the KL Divergence as follows:
+<br/><br/>
+![kld](/docs/assets/kld.png)
+<br/><br/>
+The last inequality implies that the log likelihood of `p(x)` has a lower bound also famously known as `ELBO (Evidence Lower Bound)` which implies that maximizing the ELBO will also maximize the likelihood of `p(x)` which we means we can substitute the integration:
+<br/><br/>
+![px](/docs/assets/px.png)
+<br/><br/>
+with the following:
+<br/><br/>
+![elbo](/docs/assets/elbo.png)
+<br/><br/>
