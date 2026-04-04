@@ -44,5 +44,15 @@ with the following:
 <br/><br/>
 ![elbo](/docs/assets/elbo.png)
 <br/><br/>
-As mentioned earlier, we don't need `q(z|x)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x)` to be normal distribution:
+As mentioned earlier, we don't need `q(z|x)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x)` to be normal distribution `N(z;mu, var)` where `mu` and `var` are the mean and variance of the normal distribution and these parameters are learnt using a neural network. The KL divergence term can be expanded as follows:
+<br/><br/>
+![kl](/docs/assets/kl.png)
+<br/><br/>
+It is not very apparent given the above derivation using the expectation terms. We can also show the proff of how the expectation terms are derived as follows:
+<br/><br/>
+![ibp](/docs/assets/ibp.png)
+<br/><br/>
+<br/><br/>
+![proof](/docs/assets/proof.png)
+<br/><br/>
 
