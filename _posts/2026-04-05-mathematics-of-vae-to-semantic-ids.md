@@ -44,3 +44,5 @@ with the following:
 <br/><br/>
 ![elbo](/docs/assets/elbo.png)
 <br/><br/>
+As mentioned earlier, we don't need `q(z|x)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x)` to be normal distribution:
+
