@@ -56,4 +56,15 @@ It is not apparent how the expectation terms are derived in the above derivation
 <br/><br/>
 ![proof](/docs/assets/proof.png)
 <br/><br/>
-
+We have derived the expression for the KL divergence term in the ELBO equation above pertaining to the log likelihood of `p(x)`. Thus the substitited equation looks like below:
+<br/><br/>
+![logl](/docs/assets/logl.png)
+<br/><br/>
+Coming to the next part of the equation, `E[log(p(x|z)]` i.e. the expectation of the log likelihood of the output given the latent state `z`. If we assume a normal distribution with a constant variance, then the log likelihood translates into `MSE` loss function whereas if we assume a `Bernoulli distribution`, then the log likelihood translates into `Binary Cross Entropy (BCE)` loss function.
+<br/><br/>
+![msel](/docs/assets/msel.png)
+<br/><br/>
+The above term is assuming a normal distribution wherease the below term is assuming a bernoulli distribution.
+<br/><br/>
+![bcel](/docs/assets/bcel.png)
+<br/><br/>
