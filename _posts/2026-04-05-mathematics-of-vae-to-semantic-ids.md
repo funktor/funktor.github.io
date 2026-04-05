@@ -46,9 +46,10 @@ with the following:
 <br/><br/>
 As mentioned earlier, we don't need `q(z|x)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x)` to be normal distribution `N(z;mu, var)` where `mu` and `var` are the mean and variance of the normal distribution and these parameters are learnt using a neural network. The KL divergence term can be expanded as follows:
 <br/><br/>
-![kl](/docs/assets/kl.png)
+![kl](/docs/assets/kl2.png)
 <br/><br/>
-It is not very apparent given the above derivation using the expectation terms. We can also show the proff of how the expectation terms are derived as follows:
+Note that `z`, `mu` and `var` are h-dimensional vectors/tensors. We assume that each dimension of the latent space `z` is independently sampled from the probability distribution `q(z|x)`.
+It is not apparent how the expectation terms are derived in the above derivation. We can show the proof of how the expectation terms are derived as follows:
 <br/><br/>
 ![ibp](/docs/assets/ibp.png)
 <br/><br/>
