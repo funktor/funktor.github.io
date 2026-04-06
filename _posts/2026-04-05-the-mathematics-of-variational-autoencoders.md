@@ -74,5 +74,5 @@ The above term is assuming a normal distribution wherease the below term is assu
 <br/><br/>
 Thus the loss function to learn for training the variational autoencoder is the negative log likelihood of `p(x)`, which is as follows (for BCE loss):
 <br/><br/>
-![loss](/docs/assets/loss.png)
+![loss](/docs/assets/loss2.png)
 <br/><br/>
