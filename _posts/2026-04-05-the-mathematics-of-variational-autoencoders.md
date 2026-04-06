@@ -62,17 +62,17 @@ We have derived the expression for the KL divergence term in the ELBO equation a
 <br/><br/>
 Coming to the next part of the equation, `E[log(p(x|z)]` i.e. the expectation of the log likelihood of the output given the latent state `z`. If we assume a `normal distribution` with a constant variance, then the log likelihood translates into `MSE` loss function whereas if we assume a `Bernoulli distribution`, then the log likelihood translates into `Binary Cross Entropy (BCE)` loss function.
 <br/><br/>
-![msel](/docs/assets/msel2.png)
+![msel](/docs/assets/msel5.png)
 <br/><br/>
 If we do not assume a constant variance in the above equation, then we have another parameter to learn and the log likelihood function should be accordingly modified as follows:
 <br/><br/>
-![msel](/docs/assets/msel3.png)
+![msel](/docs/assets/msel6.png)
 <br/><br/>
 The above term is assuming a normal distribution wherease the below term is assuming a bernoulli distribution.
 <br/><br/>
-![bcel](/docs/assets/bcel2.png)
+![bcel](/docs/assets/bcel4.png)
 <br/><br/>
 Thus the loss function to learn for training the variational autoencoder is the negative log likelihood of `p(x)`, which is as follows (for BCE loss):
 <br/><br/>
-![loss](/docs/assets/loss2.png)
+![loss](/docs/assets/loss3.png)
 <br/><br/>
