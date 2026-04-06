@@ -14,6 +14,9 @@ In variational autoencoders, instead of learning the latent space Z, we learn th
 <br/><br/>
 Note that the loss function cannot simply be the MSE between X and X' because in that case the network might learn arbitrary `{w}` that may not actually represent the distribution of the latent space Z or close to the actual distribution of Z. We will see how to formulate the loss function that handles both the encoder loss i.e. difference between actual and estimated distribution of Z and the decoder loss i.e. difference between the predicted X' and actual X.
 <br/><br/>
+<br/><br/>
+![vae](/docs/assets/vae.png)
+<br/><br/>
 To make the network learn one must ensure that the likelihood of the output is maximized (`Maximum Likelihood Estimation`). Usually one uses the `negative log likelihood (NLL)` of the output distribution as the loss function. For eg. assuming that the output is normally distributed with a constant variance, the NLL of the normal distribution would look like:
 <br/><br/>
 ![mle_norm](/docs/assets/mle_norm.png)
