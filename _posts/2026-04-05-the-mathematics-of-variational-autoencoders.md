@@ -4,7 +4,7 @@ title:  "The Mathematics of Variational Autoencoders"
 date:   2026-04-05 18:50:11 +0530
 categories: math
 ---
-Autoencoders are a commonly used technique to do dimensionality reduction or find a latent space. 
+Autoencoders are a commonly used technique to do `dimensionality reduction` or find a latent space. The latent space find usefulness in different ML related problems such as classification/regression with high dimensional sparse data or doing matrix factorization in recommender systems.
 <br/><br/>
 Given the input features `X=[x_0, x_1, ..., x_{m-1}]`, our goal is to find a latent space `Z=[z_0, z_1, ..., z_{h-1}]` where h < m, such that when we decode Z we should get back X or some X' which is very similar to X. Minimizing the difference between input X and output X' is handled by the MSE loss function `|X-X'|^2`. 
 <br/><br/>
@@ -14,6 +14,7 @@ In variational autoencoders, instead of learning the latent space Z, we learn th
 <br/><br/>
 Note that the loss function cannot simply be the MSE between X and X' because in that case the network might learn arbitrary `{w}` that may not actually represent the distribution of the latent space Z or close to the actual distribution of Z. We will see how to formulate the loss function that handles both the encoder loss i.e. difference between actual and estimated distribution of Z and the decoder loss i.e. difference between the predicted X' and actual X.
 <br/><br/>
+The neural network architecture for a VAE looks similar to the below architecture where you can add multiple layers in between as well.
 <br/><br/>
 ![vae](/docs/assets/vae.png)
 <br/><br/>
