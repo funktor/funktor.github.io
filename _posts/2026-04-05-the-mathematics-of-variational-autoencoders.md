@@ -42,7 +42,9 @@ Observe that the problem of estimating the probability distribution `p(z|x;theta
 <br/><br/>
 Using a neural network with `phi` and `gamma` as weights, we can find the expectation value in the forward pass and do the maximization step in the loss calculation and backpropagation step. We saw the E-step above. Next we will see the M-step.
 <br/><br/>
-As mentioned earlier, we don't need `q(z|x;phi)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x;phi)` to be normal distribution `N(z;mu, var)` where `mu` and `var` are the mean and variance of the normal distribution and these parameters are learnt using a neural network (this is also known as the `reparameterization trick`). The KL divergence term can be expanded as follows:
+As mentioned earlier, we don't need `q(z|x;phi)` to be of the same family as the original distribution of `z`, which means we can assume `q(z|x;phi)` to be normal distribution `N(z;mu, var)` where `mu` and `var` are the mean and variance of the normal distribution and these parameters are learnt using a neural network. Note that during actual training, we do not directly sample `z` from `q` instead we sample from a constant distribution `epsilon ~ N(0,1)` and then `re-parameterize` z as `z=mu + epsilon*var` which is same as sampling from `N(mu, var)`. This is also known as the `reparameterization trick` as it allows backpropagation to flow backwards. 
+<br/><br/>
+The KL divergence term can be expanded as follows:
 <br/><br/>
 ![kl](/docs/assets/kld3.png)
 <br/><br/>
