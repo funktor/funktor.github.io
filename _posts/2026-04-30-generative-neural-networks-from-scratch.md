@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Generative Neural Networks From Scratch"
-date:   2026-04-30 18:50:11 +0530
+date:   2026-05-30 18:50:11 +0530
 categories: ml
 ---
 In this post, we are going to deep dive and implement some of the most commonly used generative neural net architectures starting from `GANs (Generative Adversarial Networks)`. In the process we will also understand the differences between each architecture and their pros and cons. 
