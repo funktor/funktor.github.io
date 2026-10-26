@@ -12,7 +12,9 @@ In this post, I show that building a neural network from scratch is more of a de
 <br/><br/>
 The core ideas behind designing a neural network are as follows:
 ```
-1. Functions are 1st class citizens. Everything in a neural network is considered to be a function : outputs, loss, gradients etc. In fact functions are 1st class citizens for any ML modelling problem.
+1. Functions are 1st class citizens.
+Everything in a neural network is considered to be a function : outputs, loss, gradients etc.
+In fact functions are 1st class citizens for any ML modelling problem.
 
 2. Functions are modelled as graphs. For e.g. f(g,h) = g*h, g(x,y) = 5x+2y, h(x,y) = 6x.
 Can be modelled as a root node f, having 2 children nodes g and h and each of g and h having x and y as their children nodes.
