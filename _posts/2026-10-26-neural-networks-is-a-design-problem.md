@@ -166,22 +166,24 @@ class sine_node(node):
         return np.array([[math.cos(u_f)]]) @ a # s = sin(u_f), ds/du_f = cos(u_f)
 ```
 <br/><br/>
-For each operation, define a class with its own forward and backward method. Note that we defined classes for parameters and constants too. This design makes it simpler and intuitive to work with variables and constants instead of explicitly tagging them in the class methods. Note that, each backward method just computes the derivative of its forward value w.r.t. each of its input values. For e.g. `f=g*h` then we compute df/dg and df/dh in the backward method without expanding g or h. In order to call the above operations, we can simply do as follows:
+For each operation, define a class with its own forward and backward method. Note that we defined classes for parameters and constants too. This design makes it simpler and intuitive to work with variables and constants instead of explicitly tagging them in the class methods. Note that, each backward method just computes the derivative of its forward value w.r.t. each of its input values. Correlating against the matrix multiplication operation shown above, in `prod_node backward()` method `np.array([[v_f, u_f]])` corresponds to the left 1x2 matrix on the R.H.S and `np.concatenate((a, b), axis=0)` corresponds to the right 2x2 matrix on R.H.S.
+<br/><br/>
+For e.g. in `f=g*h` we just compute `df/dg` and `df/dh` in the backward method without expanding g or h. In order to call the above operations, we can simply do as follows:
 <br/><br/>
 ```python
 nn_context.init()
 
 x = param_node()
 y = param_node()
-g = sum_node(prod_node(constant_node(5.0), x), prod_node(constant_node(2.0), y))
-h = prod_node(y, sine_node(x))
-f = prod_node(g, h)
+g = sum_node(prod_node(constant_node(5.0), x), prod_node(constant_node(2.0), y)) # g = 5x + 2y
+h = prod_node(y, sine_node(x)) # h = y*sin(x)
+f = prod_node(g, h) # f = g*h
 
 print(f.forward([1.0, 2.0]))
 print(f.backward())
 ```
 <br/><br/>
-The need for the static methods in nn_context is to maintain global variables for the parameters. One can also tweak the parameter class to do that but the api interface is more clean with the current approach. The call to f.backward() returns an array where the 1st element corresponds to the gradient df/dx and the 2nd element corresponds to df/dy. One can also verify these numbers by running a 1st order approximation.
+The need for the static methods in `nn_context` is to maintain global variables for the parameters. One can also tweak the parameter class to do that but the api interface is more clean with the current approach. The call to `f.backward()` returns an array where the 1st element corresponds to the gradient `df/dx` and the 2nd element corresponds to `df/dy`. One can also verify these numbers by running a 1st order approximation.
 <br/><br/>
 ```python
 h = 1e-7
