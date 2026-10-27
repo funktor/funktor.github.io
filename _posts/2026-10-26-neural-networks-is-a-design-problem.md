@@ -300,15 +300,24 @@ class uDotvNode(Node):
         u_f = self.fwd_cache['u']
         v_f = self.fwd_cache['v']
 
-        a = np.kron(np.eye(u_f.shape[0], u_f.shape[0], dtype=np.float32), v_f.T)
-        b = np.kron(u_f, np.eye(v_f.shape[1], v_f.shape[1], dtype=np.float32))
+        n_u = get_total_shape(u_f.shape)
+        m_u = u_f.shape[-1]
+        p_u = int(n_u/m_u)
+
+        v_ft = np.swapaxes(v_f, -2, -1)
+        n_v = get_total_shape(v_ft.shape)
+        m_v = v_ft.shape[-1]
+        p_v = int(n_v/m_v)
+
+        a = np.kron(np.eye(p_u, p_u, dtype=np.float32), v_ft)
+        b = np.kron(u_f, np.eye(p_v, p_v, dtype=np.float32))
 
         arr = [[a, b]]
 
         u_b = self.u.backward()
         v_b = self.v.backward()
 
-        out = u_b + v_b # This is list concatenation not addition.
+        out = u_b + v_b
 
         return tensor_prod(arr, out)
 
@@ -514,4 +523,59 @@ Basically, we flatten the forward output matrix f having number of elements as `
 Below image shows an example of the derivative matrices where u, v, and f are assumed to be 2D tensors of shapes (32,32), (32,7) and (64,64) respectively. Note that we have not defined how f is expressed in terms of inputs u and v.
 <br/><br/>
 ![Tensor gradients](/docs/assets/grad3.png)
+<br/><br/>
+We are going to deep dive into one of the operations - `uDotvNode`. This operation is basically dot product of tensors u and v. For scalars u and v, the backward pass is pretty straightforward as seen earlier. For tensors, the derivatives follow the above rules of differentiation. Algebraically, one could find the elements of the tensor (matrix) as follows:
+<br/><br/>
+![Tensor gradients](/docs/assets/grad4.png)
+<br/><br/>
+In the above schema, we can make the following substitutions and get a more simplified versions of the equations as follows. The tensor v' is just v with the last 2 axes swapped:
+<br/><br/>
+![Tensor gradients](/docs/assets/grad5.png)
+<br/><br/>
+We can either compute the derivatives using a for-loop or use tensor operations such as the ones implemented in the code above. The tensor operations can be written as follows:
+<br/><br/>
+![Tensor gradients](/docs/assets/grad5.png)
+<br/><br/>
+It will not be apparent immediately as to how one can write the above derivatives in terms of the kronecker product of tensors but one can verify this is indeed true with small 2D tensors.
+<br/><br/>
+Now, we have all the required classes to build a toy neural network from scratch. For that we will generate some dummy data for a regression problem as well as a multi-class classification problem. For the regression problem, here is how one would usually generate some dummy data.
+<br/><br/>
+```python
+num_examples = 64
+num_features = 32
+
+features = np.random.normal(loc=0.0, scale=1.0, size=(num_examples, num_features))
+target = np.random.normal(loc=0.0, scale=1.0, size=(num_examples,))
+```
+<br/><br/>
+Finally, we build and train a small neural network with the MSE loss function as follows:
+<br/><br/>
+```python
+NNContext.init()
+
+w1 = ParameterNode(shape=(num_features, 16))
+w2 = ParameterNode(shape=(16, 1))
+inp = ConstantNode()
+oup = ConstantNode()
+l1 = uDotvNode(inp, w1)
+l2 = LeakyReluNode(l1)
+l3 = uDotvNode(l2, w2)
+l4 = MSENode(l3, oup)
+
+learning_rate = 1e-4
+num_epochs = 500
+
+w1v = np.random.normal(loc=0.0, scale=1.0, size=w1.shape)
+w2v = np.random.normal(loc=0.0, scale=1.0, size=w2.shape)
+
+for epoch in range(num_epochs):
+    inp.set_value(features)
+    oup.set_value(target)
+    loss = l4.forward([w1v, w2v])
+    print(epoch, loss)
+    grads = l4.backward()[0]
+    w1v = w1v - learning_rate*grads[0].reshape(w1.shape)
+    w2v = w2v - learning_rate*grads[1].reshape(w2.shape)
+
+```
 <br/><br/>
