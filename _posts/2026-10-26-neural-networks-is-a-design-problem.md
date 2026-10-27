@@ -464,7 +464,7 @@ class CategoricalCrossEntropyNode(Node):
         return tensor_prod(arr, out)
 
 
-class MSENode(Node):
+class MSENode(Node): # MSE loss function
     def __init__(self, u:Node, y:Node):
         self.u = u
         self.y = y
@@ -501,4 +501,11 @@ class MSENode(Node):
         return tensor_prod(arr, out)
 ```
 <br/><br/>
-Above we define all basic and necessary neural network operations and their corresponding forward and backward methods assuming that the inputs are tensors and not scalars.
+Above we define all basic and necessary neural network operations and their corresponding forward and backward methods assuming that the inputs are tensors (matrices here) and not scalars. I will not go through each and every operation and their forward() and backward() method implementations but just give a high level overview. Assuming a given operation or function f takes inputs u and v which are both tensors of shapes (u0, u1, ...) and (v0, v1, ...) respectively and f computes a tensor of shape (f0, f1, ...). The forward function is quite intuitive as the output is of shape (f0, f1, ...) but what is the shape of the output in the backward pass?
+<br/><br/>
+What we are computing in the backward pass are df/du and df/dv, so df/du here is a 2-D matrix or tensor where each element is `df[i0,i1,...]/du[j0,j1,...]`. Basically, we flatten the forward output matrix f having number of elements as `n=f0*f1*f2....` and similarly flatten the input matrix u having number of elements as `m_u=u0*u1*...` and then find the derivative of each element of flattened f w.r.t. each element of flattened u. Each row of the derivative matrix df/du consists of same f element and each column consist of same u, thus number of rows equals `n=f0*f1*f2....` and number of rows equals `m_u=u0*u1*...`. Same computations repeat for df/dv too but now we flatten the tensor v instead of tensor u. Thus although the forward pass matrix is of shape `n=f0*f1*f2....` but each backward pass matrix are of shapes `n*m_u` and `n*m_v` respectively.
+<br/><br/>
+Below image shows an example of the derivative matrices where u, v, and f are assumed to be 2D tensors of shapes (32,32), (32,7) and (64,64) respectively. Note that we have not defined how f is expressed in terms of inputs u and v.
+<br/><br/>
+![Tensor gradients](/docs/assets/grad3.png)
+<br/><br/>
