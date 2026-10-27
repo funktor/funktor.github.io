@@ -34,6 +34,10 @@ Each node of the graph (point no. 2 above) can be assumed to implement 2 functio
 The forward function computes the value of the function for a set of values provided for the variables. For e.g. f(g,h) at (x,y)=(1,2) can be implemented as:<br/><br/>
 `f(g(1,2), h(1,2)) = (5*1+2*2)*(2*sin(1))`
 <br/><br/>
+The graph structure:
+<br/><br/>
+![Autograd graph](/docs/assets/grad2.png)
+<br/><br/>
 On the other hand, the backward function is assumed to implement the gradient calculations. But you might ask, how's the graph structure useful in all of these. Here's the trick, both the forward and backward pass (functions) leverage the graph structure to simplify the calculations. In the case of forward pass, this is more clear. For a given node e.g. Node f above, in order to compute the forward pass for f, it recursively calls the forward pass of its child nodes g and h, collects the results and just runs the multiplication operation g*h. Node f does not need to bother about how nodes g and h implements their own forward passes or what are the functional forms of g and h. Node f just implements `f=g*h` recursively.
 <br/><br/>
 The backward pass also leverages the recursive nature of the graph structure but is a bit more involved. Similar to the forward pass, the backward pass for a node f also need not bother about the derivatives of g and h w.r.t. the variables. Since we can represent the gradient i.e. the derivatives of f w.r.t. the variables x and y as matrix multiplication operations as shown above, thus the backward pass for node f only needs to know what are the derivatives of f w.r.t. g and h which is much more simpler than knowing the derivative for a full chain of operations. Once we know the derivative of f w.r.t. to g and h, we can use recursion to compute the gradients of g and h and then compute the dot product as shown above.
