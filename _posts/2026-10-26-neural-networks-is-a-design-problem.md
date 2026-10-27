@@ -195,3 +195,310 @@ h = 1e-7
 (f.forward([1.0, 2.0+h]) - f.forward([1.0, 2.0]))/h # df/dy = (f(x,y+h)-f(x,y))/h
 ```
 <br/><br/>
+So far we have been working with scalar variables x and y and scalar functions such as `f=g*h` or `g=5x+2y` and so on. But in practise, neural networks works with vectors, matrices and tensors. Here is an updated version of the classes which works with Numpy arrays as inputs instead of scalars. The core design principles remains unchanged, only how each class implements its own forward and backward methods gets changed. How the derivatives and gradients are computed are explained below.
+<br/><br/>
+```python
+import numpy as np
+
+def get_total_shape(shape:tuple):
+    # returns product of all dimensions or in other words total number of elements
+    n = 1
+    for j in range(len(shape)):
+        n *= shape[j]
+
+    return n
+
+
+def tensor_prod(a:list, b:list):
+    # Custom dot product implementation with tensors/matrices of different shapes.
+    # Numpy requires an array to have all elements of the same shape, but instead if we use a python list,
+    # then we can use arrays of varying shapes in same list.
+    n = len(a)
+    m = len(a[0])
+    p = len(b[0])
+
+    out = []
+
+    for i in range(n):
+        r = []
+        for j in range(p):
+            x = a[i][0].shape[0]
+            y = b[0][j].shape[1]
+            w = np.zeros(shape=(x, y), dtype=np.float32)
+            for k in range(m):
+                u = a[i][k]
+                v = b[k][j]
+                w += np.dot(u, v)
+
+            r += [w]
+        out += [r]
+
+    return out
+
+
+class ParameterNode(Node):
+    def __init__(self, shape:tuple):
+        self.shape = shape
+        nn_context.add_param_node(self)
+        self.param_id = nn_context.get_param_node_id(self)
+
+    def forward(self, param_vals:np.ndarray):
+        return param_vals[self.param_id] if self.param_id is not None else None
+
+    def backward(self):
+        n = get_total_shape(self.shape)
+
+        out = []
+        for node in nn_context.param_nodes:
+            m = get_total_shape(node.shape)
+
+            if nn_context.param_nodes[node] == self.param_id: # self parameter return identity matrix.
+                out += [np.eye(n, m, dtype=np.float32)]
+            else: # others parameters return zero matrix.
+                out += [np.zeros(shape=(n,m), dtype=np.float32)]
+
+        return [out]
+
+
+class ConstantNode(Node):
+    def __init__(self):
+        self.value = None
+
+    def set_value(self, value:np.ndarray):
+        self.value = value
+
+    def forward(self, param_vals:np.ndarray):
+        return self.value
+
+    def backward(self):
+        n = get_total_shape(self.value.shape)
+
+        out = []
+        for node in nn_context.param_nodes:
+            m = get_total_shape(node.shape)
+            out += [np.zeros(shape=(n,m), dtype=np.float32)]
+
+        return [out]
+
+
+class uDotvNode(Node):
+    def __init__(self, u:Node, v:Node):
+        self.u = u
+        self.v = v
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+        v_f = self.v.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+        self.fwd_cache['v'] = v_f
+
+        return np.dot(u_f, v_f)
+
+    def backward(self):
+        u_f = self.fwd_cache['u']
+        v_f = self.fwd_cache['v']
+
+        a = np.kron(np.eye(u_f.shape[0], u_f.shape[0], dtype=np.float32), v_f.T)
+        b = np.kron(u_f, np.eye(v_f.shape[1], v_f.shape[1], dtype=np.float32))
+
+        arr = [[a, b]]
+
+        u_b = self.u.backward()
+        v_b = self.v.backward()
+
+        out = u_b + v_b # This is list concatenation not addition.
+
+        return tensor_prod(arr, out)
+
+
+class SumNode(Node):
+    def __init__(self, u:Node, v:Node):
+        self.u = u
+        self.v = v
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+        v_f = self.v.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+        self.fwd_cache['v'] = v_f
+
+        return u_f + v_f
+
+    def backward(self):
+        u_f:np.ndarray = self.fwd_cache['u']
+
+        n = get_total_shape(u_f.shape)
+
+        a = np.eye(n, n, dtype=np.float32)
+        b = np.eye(n, n, dtype=np.float32)
+
+        arr = [[a, b]]
+
+        u_b = self.u.backward()
+        v_b = self.v.backward()
+
+        out = u_b + v_b # This is list concatenation not addition.
+
+        return tensor_prod(arr, out)
+
+
+class LeakyReluNode(Node):
+    def __init__(self, u:Node, alpha:float=0.01):
+        self.u = u
+        self.alpha = alpha
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+        out = np.where(u_f <= 0, self.alpha*u_f, u_f)
+
+        return out
+
+    def backward(self):
+        u_f:np.ndarray = self.fwd_cache['u']
+
+        n = get_total_shape(u_f.shape)
+
+        a = np.eye(n, n, dtype=np.float32)
+        b = np.ones(shape=u_f.shape, dtype=np.float32)
+        b[u_f <= 0] = self.alpha
+
+        np.fill_diagonal(a, b.flatten())
+
+        arr = [[a]]
+        out = self.u.backward()
+
+        return tensor_prod(arr, out)
+
+
+class SoftmaxNode(Node):
+    def __init__(self, u:Node):
+        self.u = u
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+
+        max_vals = np.max(u_f, axis=-1, keepdims=True)
+        u_f = np.exp(u_f - max_vals)
+        sum_vals = np.sum(u_f, axis=-1, keepdims=True)
+        out = u_f/sum_vals
+
+        self.fwd_cache['out'] = out
+
+        return out
+
+    def backward(self):
+        u_f:np.ndarray = self.fwd_cache['u']
+        v:np.ndarray = self.fwd_cache['out']
+        v = v.flatten()
+
+        n = get_total_shape(u_f.shape)
+
+        m = u_f.shape[-1]
+        p = int(n/m)
+
+        a = np.zeros(shape=(n, n), dtype=np.float32)
+
+        for i in range(p):
+            for j in range(m):
+                for k in range(m):
+                    h = i*m + j
+                    g = i*m + k
+
+                    if j == k:
+                        a[h,g] = v[h]*(1.0 - v[g])
+                    else:
+                        a[h,g] = -v[h]*v[g]
+
+        arr = [[a]]
+        out = self.u.backward()
+
+        return tensor_prod(arr, out)
+
+
+class CategoricalCrossEntropyNode(Node):
+    def __init__(self, u:Node, y:Node, epsilon:float=1e-10):
+        self.u = u
+        self.y = y
+        self.epsilon = epsilon
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+        y_f = self.y.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+        self.fwd_cache['y'] = y_f
+
+        a = -y_f * np.log(u_f + self.epsilon)
+        out = np.sum(a)
+
+        return out
+
+    def backward(self):
+        u_f:np.ndarray = self.fwd_cache['u']
+        y_f:np.ndarray = self.fwd_cache['y']
+
+        y_f = y_f.flatten()
+        u_f = u_f.flatten()
+
+        a = np.expand_dims(-y_f/(u_f + self.epsilon), axis=0)
+        b = np.expand_dims(-np.log(u_f + self.epsilon), axis=0)
+
+        arr = [[a, b]]
+
+        u_b = self.u.backward()
+        y_b = self.y.backward()
+
+        out = u_b + y_b # This is list concatenation not addition.
+
+        return tensor_prod(arr, out)
+
+
+class MSENode(Node):
+    def __init__(self, u:Node, y:Node):
+        self.u = u
+        self.y = y
+        self.fwd_cache = {}
+
+    def forward(self, param_vals:np.ndarray):
+        u_f = self.u.forward(param_vals)
+        y_f = self.y.forward(param_vals)
+
+        self.fwd_cache['u'] = u_f
+        self.fwd_cache['y'] = y_f
+
+        out = 0.5*np.sum((u_f-y_f)**2)
+
+        return out
+
+    def backward(self):
+        u_f:np.ndarray = self.fwd_cache['u']
+        y_f:np.ndarray = self.fwd_cache['y']
+
+        y_f = y_f.flatten()
+        u_f = u_f.flatten()
+
+        a = np.expand_dims(u_f - y_f, axis=0)
+        b = np.expand_dims(y_f - u_f, axis=0)
+
+        arr = [[a, b]]
+
+        u_b = self.u.backward()
+        y_b = self.y.backward()
+
+        out = u_b + y_b # This is list concatenation not addition.
+
+        return tensor_prod(arr, out)
+```
+<br/><br/>
+Above we define all basic and necessary neural network operations and their corresponding forward and backward methods assuming that the inputs are tensors and not scalars.
