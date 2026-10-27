@@ -346,7 +346,7 @@ class SumNode(Node):
         return tensor_prod(arr, out)
 
 
-class LeakyReluNode(Node):
+class LeakyReluNode(Node): # Leaky ReLU function
     def __init__(self, u:Node, alpha:float=0.01):
         self.u = u
         self.alpha = alpha
@@ -366,7 +366,7 @@ class LeakyReluNode(Node):
         n = get_total_shape(u_f.shape)
 
         a = np.eye(n, n, dtype=np.float32)
-        b = np.ones(shape=u_f.shape, dtype=np.float32)
+        b = np.ones(shape=u_f.shape, dtype=np.float32) # df/du = 1.0 if u > 0 else alpha
         b[u_f <= 0] = self.alpha
 
         np.fill_diagonal(a, b.flatten())
@@ -377,7 +377,7 @@ class LeakyReluNode(Node):
         return tensor_prod(arr, out)
 
 
-class SoftmaxNode(Node):
+class SoftmaxNode(Node): # Softmax function
     def __init__(self, u:Node):
         self.u = u
         self.fwd_cache = {}
@@ -408,6 +408,10 @@ class SoftmaxNode(Node):
 
         a = np.zeros(shape=(n, n), dtype=np.float32)
 
+        # df_ij/du_kl = u_ij*(1-u_ij) if ij == kl
+        # df_ij/du_kl = -u_ij*u_kl if i == k and j != l
+        # else df_ij/du_kl = 0
+
         for i in range(p):
             for j in range(m):
                 for k in range(m):
@@ -425,7 +429,7 @@ class SoftmaxNode(Node):
         return tensor_prod(arr, out)
 
 
-class CategoricalCrossEntropyNode(Node):
+class CategoricalCrossEntropyNode(Node): # Categorical Cross Entropy loss function
     def __init__(self, u:Node, y:Node, epsilon:float=1e-10):
         self.u = u
         self.y = y
@@ -451,8 +455,8 @@ class CategoricalCrossEntropyNode(Node):
         y_f = y_f.flatten()
         u_f = u_f.flatten()
 
-        a = np.expand_dims(-y_f/(u_f + self.epsilon), axis=0)
-        b = np.expand_dims(-np.log(u_f + self.epsilon), axis=0)
+        a = np.expand_dims(-y_f/(u_f + self.epsilon), axis=0) # df/du = -y/(u+eps)
+        b = np.expand_dims(-np.log(u_f + self.epsilon), axis=0) # df/dy = -log(u+eps)
 
         arr = [[a, b]]
 
@@ -488,8 +492,8 @@ class MSENode(Node): # MSE loss function
         y_f = y_f.flatten()
         u_f = u_f.flatten()
 
-        a = np.expand_dims(u_f - y_f, axis=0)
-        b = np.expand_dims(y_f - u_f, axis=0)
+        a = np.expand_dims(u_f - y_f, axis=0) # df/du = u-y
+        b = np.expand_dims(y_f - u_f, axis=0) # df/dy = y-u
 
         arr = [[a, b]]
 
@@ -503,7 +507,9 @@ class MSENode(Node): # MSE loss function
 <br/><br/>
 Above we define all basic and necessary neural network operations and their corresponding forward and backward methods assuming that the inputs are tensors (matrices here) and not scalars. I will not go through each and every operation and their forward() and backward() method implementations but just give a high level overview. Assuming a given operation or function f takes inputs u and v which are both tensors of shapes (u0, u1, ...) and (v0, v1, ...) respectively and f computes a tensor of shape (f0, f1, ...). The forward function is quite intuitive as the output is of shape (f0, f1, ...) but what is the shape of the output in the backward pass?
 <br/><br/>
-What we are computing in the backward pass are df/du and df/dv, so df/du here is a 2-D matrix or tensor where each element is `df[i0,i1,...]/du[j0,j1,...]`. Basically, we flatten the forward output matrix f having number of elements as `n=f0*f1*f2....` and similarly flatten the input matrix u having number of elements as `m_u=u0*u1*...` and then find the derivative of each element of flattened f w.r.t. each element of flattened u. Each row of the derivative matrix df/du consists of same f element and each column consist of same u, thus number of rows equals `n=f0*f1*f2....` and number of rows equals `m_u=u0*u1*...`. Same computations repeat for df/dv too but now we flatten the tensor v instead of tensor u. Thus although the forward pass matrix is of shape `n=f0*f1*f2....` but each backward pass matrix are of shapes `n*m_u` and `n*m_v` respectively.
+What we are computing in the backward pass are `df/du` and `df/dv`, so `df/du` here is a 2-D matrix or tensor where each element is `df[i0,i1,...]/du[j0,j1,...]`.
+<br/><br/>
+Basically, we flatten the forward output matrix f having number of elements as `n=f0*f1*f2....` and similarly flatten the input matrix u having number of elements as `m_u=u0*u1*...` and then find the derivative of each element of flattened f w.r.t. each element of flattened u. Each row of the derivative matrix `df/du` consists of same f element and each column consist of same u, thus number of rows equals `n=f0*f1*f2....` and number of rows equals `m_u=u0*u1*...`. Same computations repeat for df/dv too but now we flatten the tensor v instead of tensor u. Thus although the forward pass matrix is of shape `n=f0*f1*f2....` but each backward pass matrix are of shapes `n*m_u` and `n*m_v` respectively.
 <br/><br/>
 Below image shows an example of the derivative matrices where u, v, and f are assumed to be 2D tensors of shapes (32,32), (32,7) and (64,64) respectively. Note that we have not defined how f is expressed in terms of inputs u and v.
 <br/><br/>
