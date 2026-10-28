@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Neural Networks is a Design Problem"
-date:   2026-10-28 18:50:11 +0530
+date:   2026-10-27 18:50:11 +0530
 categories: ml
 ---
 You might find a lot of well-written posts over the internet and popular books teaching how to build a neural network from scratch. Most of them treat neural networks as a special category of ML problem (tool or a framework whatever you want to call it). Implementing a neural network from scratch is basically equivalent to implementing backpropagation algorithm. That is how, I learnt it initially and that is how most tutorials teach it. As a matter of fact, that is not completely incorrect but the way it is taught makes one feel that backpropagation is some special algorithm and a one-off technique. But after implementing a series of ML models from scratch, it came to realisation that the common pattern across all ML models is finding the derivative of the loss function w.r.t. the variables.
@@ -538,7 +538,7 @@ We can either compute the derivatives using a for-loop or use tensor operations 
 <br/><br/>
 It will not be apparent immediately as to how one can write the above derivatives in terms of the kronecker product of tensors but one can verify this is indeed true with small 2D tensors.
 <br/><br/>
-Now, we have all the required classes to build a toy neural network from scratch. For that we will generate some dummy data for a regression problem as well as a multi-class classification problem. For the regression problem, here is how one would usually generate some dummy data.
+Now, we have all the required classes to build a simple neural network from scratch. For that, we will generate some dummy data (inputs and targets) for a regression problem as well as a multi-class classification problem. First, we tackle a regression problem. Here is how I would generate some dummy data.
 <br/><br/>
 ```python
 num_examples = 64
@@ -555,8 +555,10 @@ NNContext.init()
 
 w1 = ParameterNode(shape=(num_features, 16))
 w2 = ParameterNode(shape=(16, 1))
+
 inp = ConstantNode()
 oup = ConstantNode()
+
 l1 = uDotvNode(inp, w1)
 l2 = LeakyReluNode(l1)
 l3 = uDotvNode(l2, w2)
@@ -571,11 +573,61 @@ w2v = np.random.normal(loc=0.0, scale=1.0, size=w2.shape)
 for epoch in range(num_epochs):
     inp.set_value(features)
     oup.set_value(target)
-    loss = l4.forward([w1v, w2v])
+    loss = l4.forward([w1v, w2v]) # forward pass
     print(epoch, loss)
-    grads = l4.backward()[0]
+    grads = l4.backward()[0] # backward pass
+    w1v = w1v - learning_rate*grads[0].reshape(w1.shape) # update weights using gradient descent
+    w2v = w2v - learning_rate*grads[1].reshape(w2.shape) # update weights using gradient descent
+
+```
+<br/><br/>
+Once we run the above code, it will print the epoch and its corresponding loss value. If the loss decrease over epochs, it means that the model is learning and implementation is (mostly) correct. Although it is a small and a dummy example but still one can verify if the neural network is implemented correctly because neural networks are universal function approximators and even if the data is bad or concocted, it will still learn the pattern and loss will decrease (assuming the loss function is implemented correctly).
+<br/><br/>
+Similar to the regression problem, we can also create a dummy multi-class classification problem as shown below:
+<br/><br/>
+```python
+num_classes = 5 # we have 5 class classification problem.
+num_examples = 64
+num_features = 32
+
+features = np.random.normal(loc=0.0, scale=1.0, size=(num_examples, num_features))
+labels = np.random.randint(0, num_classes, size=(num_examples,)) # assign a random class label from [0,4] to each instance
+target = np.zeros(shape=(num_examples, num_classes), dtype=np.float32)
+target[np.arange(num_examples), labels] = 1.0 # do one hot encoding
+
+NNContext.init()
+
+w1 = ParameterNode(shape=(num_features, 16))
+w2 = ParameterNode(shape=(16, num_classes))
+
+inp = ConstantNode()
+oup = ConstantNode()
+
+l1 = uDotvNode(inp, w1)
+l2 = LeakyReluNode(l1)
+l3 = uDotvNode(l2, w2)
+l4 = SoftmaxNode(l3)
+l5 = CategoricalCrossEntropyNode(l4, oup)
+
+learning_rate = 1e-4
+num_epochs = 500
+
+w1v = np.random.normal(loc=0.0, scale=1.0, size=w1.shape)
+w2v = np.random.normal(loc=0.0, scale=1.0, size=w2.shape)
+
+for epoch in range(num_epochs):
+    inp.set_value(features)
+    oup.set_value(target)
+    loss = l5.forward([w1v, w2v]) # forward pass
+    print(epoch, loss)
+    grads = l5.backward()[0] # backward pass
     w1v = w1v - learning_rate*grads[0].reshape(w1.shape)
     w2v = w2v - learning_rate*grads[1].reshape(w2.shape)
 
 ```
 <br/><br/>
+The above neural network is similar to the regression one above with minor differences such as adding a softmax layer and using a categorical cross entropy loss function instead of a MSE loss function. In this example too, we see that the loss decreases over epoch implying that the neural network is learning.
+<br/><br/>
+So far we have only focussed on the designing aspects of the neural network and a bit on the tensor operations for gradient calculations. But a production grade neural networks would require much more than that, but that is not the goal of this post. This post was primarily targeted towards software engineers who would like to extend their system design skills to the machine learning domain. As a side not, the design is not neural network specific and it should work with all kinds of ML modelling algorithms. For the enthusiastic readers, I would urge them to extend the design and implementation to more operations such as adding different loss functions such as BCE, Pinball Loss etc., adding more non-linear functions such as GeLU, Tanh etc., experiment with complicated neural networks such as CNN or LSTM by extending the design, add residual layers and so on.
+<br/><br/>
+Also, note that on the performance side, the above implementation is not scalable or fast. Use PyTorch for all production grade requirements. As an exercise, one can take up the task to make the implementation faster and scalable by leveraging GPU and/or re-implementing the same with C/C++.
