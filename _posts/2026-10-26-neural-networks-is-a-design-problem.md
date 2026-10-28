@@ -291,12 +291,16 @@ class uDotvNode(Node):
         u_f = self.u.forward(param_vals)
         v_f = self.v.forward(param_vals)
 
+        assert u_f.shape[-1] == v_f.shape[-2], "Shape mismatch for dot product"
+
         self.fwd_cache['u'] = u_f
         self.fwd_cache['v'] = v_f
 
         return np.dot(u_f, v_f)
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
+
         u_f = self.fwd_cache['u']
         v_f = self.fwd_cache['v']
 
@@ -338,6 +342,7 @@ class SumNode(Node):
         return u_f + v_f
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
         u_f:np.ndarray = self.fwd_cache['u']
 
         n = get_total_shape(u_f.shape)
@@ -370,6 +375,7 @@ class LeakyReluNode(Node): # Leaky ReLU function
         return out
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
         u_f:np.ndarray = self.fwd_cache['u']
 
         n = get_total_shape(u_f.shape)
@@ -406,6 +412,7 @@ class SoftmaxNode(Node): # Softmax function
         return out
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
         u_f:np.ndarray = self.fwd_cache['u']
         v:np.ndarray = self.fwd_cache['out']
         v = v.flatten()
@@ -458,6 +465,7 @@ class CategoricalCrossEntropyNode(Node): # Categorical Cross Entropy loss functi
         return out
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
         u_f:np.ndarray = self.fwd_cache['u']
         y_f:np.ndarray = self.fwd_cache['y']
 
@@ -495,6 +503,7 @@ class MSENode(Node): # MSE loss function
         return out
 
     def backward(self):
+        assert len(self.fwd_cache) > 0, "Forward pass should be called first"
         u_f:np.ndarray = self.fwd_cache['u']
         y_f:np.ndarray = self.fwd_cache['y']
 
