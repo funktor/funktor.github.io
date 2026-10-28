@@ -560,7 +560,7 @@ target = np.random.normal(loc=0.0, scale=1.0, size=(num_examples,))
 Finally, we build and train a small neural network with the MSE loss function as follows:
 <br/><br/>
 ```python
-NNContext.init()
+nn_context.init()
 
 w1 = ParameterNode(shape=(num_features, 16))
 w2 = ParameterNode(shape=(16, 1))
@@ -604,7 +604,7 @@ labels = np.random.randint(0, num_classes, size=(num_examples,)) # assign a rand
 target = np.zeros(shape=(num_examples, num_classes), dtype=np.float32)
 target[np.arange(num_examples), labels] = 1.0 # do one hot encoding
 
-NNContext.init()
+nn_context.init()
 
 w1 = ParameterNode(shape=(num_features, 16))
 w2 = ParameterNode(shape=(16, num_classes))
