@@ -33,4 +33,11 @@ Adding more lag terms to the equation, uses more number of historical observatio
 <br/><br/>
 ![arima4](/docs/assets/arima4.png)
 <br/><br/>
-But note that now the derivative of the loss L w.r.t. the parameters, theta and phi are not simple, because each moving average term (or the error terms) are also dependent on the same parameters and cannot be treated as constants unlike the past observation terms. The modified partial derivatives are as follows:
+But note that, now the derivative of the loss L w.r.t. the parameters, theta and phi are not simple, because each moving average term (or the error terms) are also dependent on the same parameters and cannot be treated as constants unlike the past observation terms. The modified partial derivatives are as follows:
+<br/><br/>
+![arima5](/docs/assets/arima5.png)
+<br/><br/>
+The above set of partial derivatives can be simplified by using recurrence relations F and G corresponding to the partial derivatives of the error at timestep t w.r.t. the parameters theta and phi respectively as follows:
+<br/><br/>
+![arima7](/docs/assets/arima7.png)
+<br/><br/>
