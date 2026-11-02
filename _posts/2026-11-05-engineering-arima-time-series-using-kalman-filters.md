@@ -169,35 +169,15 @@ class prod_node(node):
             nn_context.bwd_cache[self] = np.array([[v_f, u_f]]) @ np.concatenate((a, b), axis=0) # s = u_f * v_f, ds/du_f = v_f and ds/dv_f = u_f
 
         return nn_context.bwd_cache[self]
-
-
-class sine_node(node):
-    def __init__(self, u:node):
-        self.u = u
-
-    def forward(self, param_values):
-        if self not in nn_context.fwd_cache:
-            u_f = self.u.forward(param_values)
-            nn_context.fwd_cache[self] = math.sin(u_f)
-
-        return nn_context.fwd_cache[self]
-
-    def backward(self):
-        if self not in nn_context.bwd_cache:
-            u_f = nn_context.fwd_cache[self.u]
-            a:np.ndarray = self.u.backward()
-            nn_context.bwd_cache[self] = np.array([[math.cos(u_f)]]) @ a # s = sin(u_f), ds/du_f = cos(u_f)
-
-        return nn_context.bwd_cache[self]
 ```
 <br/><br/>
-Using caching, the exponential complexity gets down to a quadratic time complexity algorithm.  To compute the loss function, and the gradient updates we need to write the routine to build the graph as follows:
+Using caching, the exponential complexity gets down to a quadratic time complexity algorithm.  To compute the loss function and the gradient updates, we need to write the routine to build the graph as follows:
 <br/><br/>
 ```python
 def get_predictions(inp, ser_len, p, q):
     # get the prediction nodes corresponding to each timestep
-    p_params = [param_node() for _ in range(p)] # theta corresponding to lag
-    q_params = [param_node() for _ in range(q)] # phi corresponding to moving averages
+    theta = [param_node() for _ in range(p)] # theta corresponding to lag
+    phi = [param_node() for _ in range(q)] # phi corresponding to moving averages
     bias = param_node()
 
     err_nodes = []
@@ -208,14 +188,14 @@ def get_predictions(inp, ser_len, p, q):
 
         for j in range(1, p+1): # contribution of the lagged observations.
             if t-j >= 0:
-                g = prod_node(p_params[j-1], constant_node(inp[t-j]))
+                g = prod_node(theta[j-1], constant_node(inp[t-j]))
                 pred = sum_node(pred, g)
             else:
                 break
 
         for k in range(1, q+1): # contribution of the moving averages.
             if t-k >= 0:
-                h = prod_node(q_params[k-1], err_nodes[-k])
+                h = prod_node(phi[k-1], err_nodes[-k])
                 pred = sum_node(pred, h)
             else:
                 break
@@ -226,7 +206,6 @@ def get_predictions(inp, ser_len, p, q):
 
     return pred_nodes, err_nodes
 
-
 nn_context.init()
 pred_nodes, err_nodes = get_predictions(inp, ser_len, p, q)
 
@@ -236,7 +215,7 @@ for err_node in err_nodes:
     cost = sum_node(cost, prod_node(constant_node(1.0/ser_len), prod_node(err_node, err_node)))
 ```
 <br/><br/>
-Let' generate a dummy time series data of size 1000 and use lag=10 i.e. 10 past observations are used to predict current observation and number of moving average terms (q=3) and then run the training and predictions as follows:
+Let's generate a dummy time series of size 1000 and use lag=10 i.e. 10 past observations are used to predict current observation and number of moving average terms (q=3) and then run the training and predictions as follows:
 <br/><br/>
 ```python
 ser_len = 1000
@@ -251,17 +230,22 @@ random_walk = np.cumsum(steps)
 inp = 1 / (1 + np.exp(-random_walk / 3))
 
 # training for parameters.
-p_val = np.random.normal(0.0, 1e-3, size=(p,))
-q_val = np.random.normal(0.0, 1e-3, size=(q,))
-b_val = np.array([0.0])
+theta_v = np.random.normal(0.0, 1e-3, size=(p,)) # initial theta
+phi_v = np.random.normal(0.0, 1e-3, size=(q,)) # initial phi
+bias_v = np.array([0.0]) # initial bias term
 
 for epoch in range(num_epochs):
+    # reset the fwd and bwd caches after each epoch so as to not use incorrect values.
     nn_context.reset_cache()
-    d = cost.forward(np.concatenate((p_val, q_val, b_val)))
+    d = cost.forward(np.concatenate((theta_v, phi_v, bias_v)))
     print(epoch, d)
+
+    # compute the gradients
     grads = cost.backward()[0]
-    p_val -= learning_rate*grads[:p]
-    q_val -= learning_rate*grads[p:p+q]
-    b_val -= learning_rate*grads[p+q:]
+
+    # update the parameters
+    theta_v -= learning_rate*grads[:p]
+    phi_v -= learning_rate*grads[p:p+q]
+    bias_v -= learning_rate*grads[p+q:]
 ```
 <br/><br/>
