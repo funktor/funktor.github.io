@@ -249,3 +249,7 @@ for epoch in range(num_epochs):
     bias_v -= learning_rate*grads[p+q:]
 ```
 <br/><br/>
+Our above approach to solve the ARIMA model with both lag and moving average term has a few drawbacks:
+<br/><br/>
+1. In the above training algorithm, if we set the initial values for theta and phi to be N(0, 1) instead of N(0, 1e-3), most of the time, the loss goes to NaN. This is because the error term at timestep T is a function of the historical error terms weighted by the parameters phi. Based on the equations, e(t) is phi(1) time e(t-1), (phi(1))^2 times e(t-2) and so on. Thus is |phi(1)| is > 1, the error terms diverges across timesteps and thus the loss becomes infinite. In literature, these are the known as the stationarity and invertibility conditions of time series forecasting.
+2. 
