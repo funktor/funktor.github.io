@@ -41,3 +41,227 @@ The above set of partial derivatives can be simplified by using recurrence relat
 <br/><br/>
 ![arima7](/docs/assets/arima7.png)
 <br/><br/>
+Either we explicitly compute the recurrence relations F and G and then the partial derivatives for gradient descent algorithm, or re-use the automatic differentiation implementation from the previous post. Using the automatic differentiation routine for scalars, we can very easily compute the loss as well as the updates to the parameters theta and phi corresponding to the lags and moving averages. But there was a gotcha in the prior implementation. In the ARIMA equation with moving average terms, each error term at timestep T is dependent recursively on the error terms from the last q timesteps. Thus a plain recursion implementation will have an exponential time complexity for automatic differentiation. Modified version shown below, caches all the node's forward and backward results for re-use.
+<br/><br/>
+```python
+import numpy as np
+import math
+
+class node:
+    def __init__(self):
+        pass
+    def forward(self, param_values):
+        pass
+    def backward(self):
+        pass
+
+class nn_context:
+    param_nodes = {} # parameters node to id
+    num_params = 0 # number of parameters
+    fwd_cache = {}
+    bwd_cache = {}
+
+    @staticmethod
+    def init():
+        # init the settings
+        nn_context.param_nodes = {}
+        nn_context.num_params = 0
+        nn_context.fwd_cache = {}
+        nn_context.bwd_cache = {}
+
+    @staticmethod
+    def add_param_node(node:node):
+        # add parameter node, increment id by 1
+        nn_context.param_nodes[node] = nn_context.num_params
+        nn_context.num_params += 1
+
+    @staticmethod
+    def get_param_node_id(node:node):
+        # get node id for node
+        return nn_context.param_nodes[node] if node in nn_context.param_nodes else None
+
+    @staticmethod
+    def get_num_params():
+        # get number of parameters
+        return nn_context.num_params
+
+    @staticmethod
+    def reset_cache():
+        # reset fwd and bwd caches
+        nn_context.fwd_cache = {}
+        nn_context.bwd_cache = {}
+
+
+class param_node(node):
+    def __init__(self):
+        nn_context.add_param_node(self)
+        self.param_id = nn_context.get_param_node_id(self)
+
+    def forward(self, param_vals):
+        nn_context.fwd_cache[self] = param_vals[self.param_id] if self.param_id is not None else None
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        n = nn_context.get_num_params()
+        out = np.zeros(shape=(1,n))
+        out[0,self.param_id] = 1.0 # 1.0 only for self, 0.0 for all other parameters.
+        nn_context.bwd_cache[self] = out
+        return nn_context.bwd_cache[self]
+
+
+class constant_node(node):
+    def __init__(self, value):
+        self.value = value
+
+    def forward(self, param_vals):
+        nn_context.fwd_cache[self] = self.value
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        n = nn_context.get_num_params() # all leaf nodes need to access nn_context
+        nn_context.bwd_cache[self] = np.zeros(shape=(1,n))
+        return nn_context.bwd_cache[self]
+
+
+class sum_node(node):
+    def __init__(self, u:node, v:node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_values):
+        if self not in nn_context.fwd_cache:
+            u_f = self.u.forward(param_values)
+            v_f = self.v.forward(param_values)
+            nn_context.fwd_cache[self] = u_f + v_f
+
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        if self not in nn_context.bwd_cache:
+            a:np.ndarray = self.u.backward()
+            b:np.ndarray = self.v.backward()
+            nn_context.bwd_cache[self] = np.array([[1.0, 1.0]]) @ np.concatenate((a, b), axis=0) # s = u_f + v_f, ds/du_f = 1 and ds/dv_f = 1
+
+        return nn_context.bwd_cache[self]
+
+
+class prod_node(node):
+    def __init__(self, u:node, v:node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_values):
+        if self not in nn_context.fwd_cache:
+            u_f = self.u.forward(param_values)
+            v_f = self.v.forward(param_values)
+            nn_context.fwd_cache[self] = u_f * v_f
+
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        if self not in nn_context.bwd_cache:
+            u_f = nn_context.fwd_cache[self.u]
+            v_f = nn_context.fwd_cache[self.v]
+
+            a:np.ndarray = self.u.backward()
+            b:np.ndarray = self.v.backward()
+
+            nn_context.bwd_cache[self] = np.array([[v_f, u_f]]) @ np.concatenate((a, b), axis=0) # s = u_f * v_f, ds/du_f = v_f and ds/dv_f = u_f
+
+        return nn_context.bwd_cache[self]
+
+
+class sine_node(node):
+    def __init__(self, u:node):
+        self.u = u
+
+    def forward(self, param_values):
+        if self not in nn_context.fwd_cache:
+            u_f = self.u.forward(param_values)
+            nn_context.fwd_cache[self] = math.sin(u_f)
+
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        if self not in nn_context.bwd_cache:
+            u_f = nn_context.fwd_cache[self.u]
+            a:np.ndarray = self.u.backward()
+            nn_context.bwd_cache[self] = np.array([[math.cos(u_f)]]) @ a # s = sin(u_f), ds/du_f = cos(u_f)
+
+        return nn_context.bwd_cache[self]
+```
+<br/><br/>
+Using caching, the exponential complexity gets down to a quadratic time complexity algorithm.  To compute the loss function, and the gradient updates we need to write the routine to build the graph as follows:
+<br/><br/>
+```python
+def get_predictions(inp, ser_len, p, q):
+    # get the prediction nodes corresponding to each timestep
+    p_params = [param_node() for _ in range(p)] # theta corresponding to lag
+    q_params = [param_node() for _ in range(q)] # phi corresponding to moving averages
+    bias = param_node()
+
+    err_nodes = []
+    pred_nodes = []
+
+    for t in range(ser_len):
+        pred = sum_node(constant_node(0.0), bias)
+
+        for j in range(1, p+1): # contribution of the lagged observations.
+            if t-j >= 0:
+                g = prod_node(p_params[j-1], constant_node(inp[t-j]))
+                pred = sum_node(pred, g)
+            else:
+                break
+
+        for k in range(1, q+1): # contribution of the moving averages.
+            if t-k >= 0:
+                h = prod_node(q_params[k-1], err_nodes[-k])
+                pred = sum_node(pred, h)
+            else:
+                break
+
+        pred_nodes += [pred]
+        err = sum_node(constant_node(-inp[t]), pred) # error node
+        err_nodes += [err]
+
+    return pred_nodes, err_nodes
+
+
+nn_context.init()
+pred_nodes, err_nodes = get_predictions(inp, ser_len, p, q)
+
+# compute the cost (loss) due to all the error terms. 
+cost = constant_node(0.0)
+for err_node in err_nodes:
+    cost = sum_node(cost, prod_node(constant_node(1.0/ser_len), prod_node(err_node, err_node)))
+```
+<br/><br/>
+Let' generate a dummy time series data of size 1000 and use lag=10 i.e. 10 past observations are used to predict current observation and number of moving average terms (q=3) and then run the training and predictions as follows:
+<br/><br/>
+```python
+ser_len = 1000
+p = 10
+q = 3
+learning_rate = 1e-3
+num_epochs = 500
+
+# generate time series data
+steps = np.random.normal(loc=0, scale=0.5, size=ser_len)
+random_walk = np.cumsum(steps)
+inp = 1 / (1 + np.exp(-random_walk / 3))
+
+# training for parameters.
+p_val = np.random.normal(0.0, 1e-3, size=(p,))
+q_val = np.random.normal(0.0, 1e-3, size=(q,))
+b_val = np.array([0.0])
+
+for epoch in range(num_epochs):
+    nn_context.reset_cache()
+    d = cost.forward(np.concatenate((p_val, q_val, b_val)))
+    print(epoch, d)
+    grads = cost.backward()[0]
+    p_val -= learning_rate*grads[:p]
+    q_val -= learning_rate*grads[p:p+q]
+    b_val -= learning_rate*grads[p+q:]
+```
+<br/><br/>
