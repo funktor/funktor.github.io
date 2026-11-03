@@ -251,5 +251,10 @@ for epoch in range(num_epochs):
 <br/><br/>
 Our above approach to solve the ARIMA model with both lag and moving average term has a few drawbacks:
 <br/><br/>
-1. In the above training algorithm, if we set the initial values for theta and phi to be N(0, 1) instead of N(0, 1e-3), most of the time, the loss goes to NaN. This is because the error term at timestep T is a function of the historical error terms weighted by the parameters phi. Based on the equations, e(t) is phi(1) time e(t-1), (phi(1))^2 times e(t-2) and so on. Thus is |phi(1)| is > 1, the error terms diverges across timesteps and thus the loss becomes infinite. In literature, these are the known as the stationarity and invertibility conditions of time series forecasting.
-2. 
+1. In the above training algorithm, if we set the initial values for `theta` and `phi` to be `N(0, 1)` instead of `N(0, 1e-3)`, most of the time, the loss goes to NaN. This is because the error term at timestep T is a function of the historical error terms weighted by the parameters `phi`. Based on the equations, `e(t)` is proportional to `phi(1)` time `e(t-1)`, `(phi(1))^2` times `e(t-2)` and so on. Thus if `|phi(1)|` is > 1, the error terms diverges across timesteps and thus the loss becomes infinite. Similarly analysis for the `theta` terms as well. In literature, these are the known as the `stationarity` and `invertibility` conditions of time series forecasting.
+
+2. The moving average terms i.e. historical error terms `e(t-k)` are not observed directly unlike the historical observations `y(t-j)`. The gradient of the error `e(t)` w.r.t. the parameters i.e. `F(t,j)` and `G(t,j)` above, are dependent on all the previous gradients. Thus any error in the estimation of the error terms for the initial timesteps will propagate to all the later timesteps. For the initial timesteps, we do not have enough historical data to estimate the prediction and error terms correctly and thus it is highly likely that the later timesteps will also have incorrect estimations for the error terms.
+<br/><br/>
+
+In order to overcome the above problems.
+<br/><br/>
