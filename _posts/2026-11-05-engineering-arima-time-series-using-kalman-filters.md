@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Engineering ARIMA for Time Series using Kalman Filters"
-date:   2026-11-05 18:50:11 +0530
+date:   2026-11-06 18:50:11 +0530
 categories: ml
 ---
 As a ML engineer, when I started working with time series modelling, popularity of ARIMA and similar class of algorithms/models were overshadowed by Recurrent Neural Networks (RNN) and its variants such as GRU and the more popular LSTM. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
