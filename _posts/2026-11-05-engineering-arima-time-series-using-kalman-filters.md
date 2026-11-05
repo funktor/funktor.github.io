@@ -281,7 +281,7 @@ Finally, we also update the co-variance `P(t|t)` based on the observations.
 <br/><br/>
 Note, that in the above set of equations, we do not have explicit error terms that we can minimize using a loss function. In order to learn the optimum set of parameters (`F(t), Q(t), H(t), R(t)`) of the Kalman Filter, we maximize the log-likelihood of the observations. Without going through the derivations, here is the log-likelihood expression that we want to maximize.
 <br/><br/>
-![arima11](/docs/assets/arima11.png)
+![arima11](/docs/assets/arima15.png)
 <br/><br/>
 Next, we come to the part where we express our ARIMA equations above as a Kalman Filter model. Note that the Kalman filter equations only ties `x(t)` to `x(t-1)`. How do we express the lag terms and the moving average terms here? This is exactly what Harvey's representation solves for. It decomposes multi-lag and multi-MA ARIMA expressions into multi-dimension hidden state as follows. If the lag=p and number of MA terms are q, then the dimensionality of the hidden state is `n=max(p, q+1)` and the shape of the transition matrix F(t) is `nxn`. Below shows 2 examples with (p,q)=(5,2) and (p,q)=(2,3) as follows:
 <br/><br/>
@@ -290,4 +290,12 @@ Next, we come to the part where we express our ARIMA equations above as a Kalman
 and
 <br/><br/>
 ![arima11](/docs/assets/arima13.png)
+<br/><br/>
+Expanding the matrix products and expanding the hidden state variables will give rise to the same ARIMA equation as in above:
+<br/><br/>
+![arima4](/docs/assets/arima4.png)
+<br/><br/>
+The updated Kalman filter steps for the ARIMA equation above are as follows:
+<br/><br/>
+![arima14](/docs/assets/arima16.png)
 <br/><br/>
