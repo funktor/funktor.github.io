@@ -297,5 +297,5 @@ Expanding the matrix products and expanding the hidden state variables will give
 <br/><br/>
 The updated Kalman filter steps for the ARIMA equation above are as follows:
 <br/><br/>
-![arima14](/docs/assets/arima16.png)
+![arima14](/docs/assets/arima17.png)
 <br/><br/>
