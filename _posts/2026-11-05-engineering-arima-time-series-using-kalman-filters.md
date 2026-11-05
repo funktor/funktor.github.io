@@ -256,5 +256,21 @@ Our above approach to solve the ARIMA model with both lag and moving average ter
 2. The moving average terms i.e. historical error terms `e(t-k)` are not observed directly unlike the historical observations `y(t-j)`. The gradient of the error `e(t)` w.r.t. the parameters i.e. `F(t,j)` and `G(t,j)` above, are dependent on all the previous gradients. Thus any error in the estimation of the error terms for the initial timesteps will propagate to all the later timesteps. For the initial timesteps, we do not have enough historical data to estimate the prediction and error terms correctly and thus it is highly likely that the later timesteps will also have incorrect estimations for the error terms.
 <br/><br/>
 
-In order to overcome the above problems.
+In order to overcome the above problems, Kalman Filters are used to estimate the moving average terms per timestep. In the above approach, the past error terms `e(t-k)` are only estimated based on the previous observations but not updated based on the current observation, which causes the errors in estimation to propagate. In Kalman Filters, the moving average terms are the hidden state of the model and at each timestep T, the hidden state is estimated based on the previous state at T-1 as well as the true observation at T.
 <br/><br/>
+The Kalman Filter model at a high level looks like:
+<br/><br/>
+![arima8](/docs/assets/arima8.png)
+<br/><br/>
+The state space model is used to predict the hidden state at time t based on the hidden state at time t-1. In the state space model, `F(t)` is the state transition matrix and `w(t)` is the additional noise term. The measurement equation models the observations `y(t)` as a function of the hidden states `x(t)`. `H(t)` is a projection matrix that projects hidden state to observed state. `u(t)` is the additional noise term in predicting observed state from hidden state. 
+Note that the in both the state space model and the measurement equation, the noise terms are Gaussian with a mean of 0.
+<br/><br/>
+The hidden states are predicted using the following algorithm, step by step:
+<br/><br/>
+![arima9](/docs/assets/arima10.png)
+<br/><br/>
+In the 1st step, we compute the predicted hidden state at timestep t using the updated hidden state at timestep t-1. Note that we use the words predicted and updated against hidden state estimations because the overall idea is that the hidden states are first predicted i.e. `x(t|t-1)` and then updated i.e. `x(t|t)` based on the observations `y(t)`. In the prediction step (step 1), the mean of the noise term `w(t)` is 0.
+<br/><br/>
+In the 2nd step, we estimate the variance of the predictions in step 1. The variance of `w(t)` is non-zero and hence the additional term `Q(t)` is there which is the variance of w(t). `P(t|t-1)` is the covariance matrix of the predicted hidden states at time t. The variance of the prediction decides how much weight to give to the predictions vs how much weight to give to the observations when the hidden states are updated.
+<br/><br/>
+In the 3rd step, the hidden states are updated. It is the sum of the predicted hidden states and the error in predictions `y(t)-H(t)x(t|t-1)`
