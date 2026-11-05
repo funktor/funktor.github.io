@@ -283,3 +283,11 @@ Note, that in the above set of equations, we do not have explicit error terms th
 <br/><br/>
 ![arima11](/docs/assets/arima11.png)
 <br/><br/>
+Next, we come to the part where we express our ARIMA equations above as a Kalman Filter model. Note that the Kalman filter equations only ties `x(t)` to `x(t-1)`. How do we express the lag terms and the moving average terms here? This is exactly what Harvey's representation solves for. It decomposes multi-lag and multi-MA ARIMA expressions into multi-dimension hidden state as follows. If the lag=p and number of MA terms are q, then the dimensionality of the hidden state is `n=max(p, q+1)` and the shape of the transition matrix F(t) is `nxn`. Below shows 2 examples with (p,q)=(5,2) and (p,q)=(2,3) as follows:
+<br/><br/>
+![arima11](/docs/assets/arima12.png)
+<br/><br/>
+and
+<br/><br/>
+![arima11](/docs/assets/arima13.png)
+<br/><br/>
