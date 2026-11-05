@@ -271,6 +271,15 @@ The hidden states are predicted using the following algorithm, step by step:
 <br/><br/>
 In the 1st step, we compute the predicted hidden state at timestep t using the updated hidden state at timestep t-1. Note that we use the words predicted and updated against hidden state estimations because the overall idea is that the hidden states are first predicted i.e. `x(t|t-1)` and then updated i.e. `x(t|t)` based on the observations `y(t)`. In the prediction step (step 1), the mean of the noise term `w(t)` is 0.
 <br/><br/>
-In the 2nd step, we estimate the variance of the predictions in step 1. The variance of `w(t)` is non-zero and hence the additional term `Q(t)` is there which is the variance of w(t). `P(t|t-1)` is the covariance matrix of the predicted hidden states at time t. The variance of the prediction decides how much weight to give to the predictions vs how much weight to give to the observations when the hidden states are updated.
+In the 2nd step, we estimate the co-variance of the predictions in step 1. The variance of `w(t)` is non-zero and hence the additional term `Q(t)` is there which is the variance of `w(t)`. `P(t|t-1)` is the covariance matrix of the predicted hidden states at time t. The variance of the prediction decides how much weight to give to the predictions vs how much weight to give to the observations when the hidden states are updated.
 <br/><br/>
-In the 3rd step, the hidden states are updated. It is the sum of the predicted hidden states and the error in predictions `y(t)-H(t)x(t|t-1)`
+In the 3rd step, the hidden states are updated. It is the sum of the predicted hidden states and the error in predictions `y(t) - H(t)x(t|t-1)` weighted by the Kalman Gain K(t). Higher value of Kalman gain imply that the predictions are noisy and higher weightage is given to the observations. This facility is missing from our earlier model. 
+<br/><br/>
+The `R(t)` term in the Kalman gain equation is the variance of `u(t)` in the measurement equation above.
+<br/><br/>
+Finally, we also update the co-variance `P(t|t)` based on the observations.
+<br/><br/>
+Note, that in the above set of equations, we do not have explicit error terms that we can minimize using a loss function. In order to learn the optimum set of parameters (`F(t), Q(t), H(t), R(t)`) of the Kalman Filter, we maximize the log-likelihood of the observations. Without going through the derivations, here is the log-likelihood expression that we want to maximize.
+<br/><br/>
+![arima11](/docs/assets/arima11.png)
+<br/><br/>
