@@ -4,7 +4,7 @@ title:  "Engineering ARIMA for Time Series using Kalman Filters"
 date:   2026-11-08 18:50:11 +0530
 categories: ml
 ---
-As a ML engineer, when I started working with time series modelling, popularity of ARIMA and similar class of algorithms/models were overshadowed by Recurrent Neural Networks (RNN) and its variants such as GRU and the more popular LSTM. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
+As a ML engineer, when I started working with time series modelling, popularity of `ARIMA` and similar class of algorithms/models were overshadowed by `Recurrent Neural Networks (RNN)` and its variants such as `GRU` and the more popular `LSTM`. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
 <br/><br/>
 But that does not mean that ARIMA does not have its share of problems. Some of them are:
 ```
@@ -19,7 +19,7 @@ to train the model to learn the 2.5% and 97.5% quantile values without assuming 
 4. ARIMA needs different seasonal and non-seasonal parameters - (lag, differencing, moving average). RNN/LSTM only needs the lag parameter.
 ```
 <br/><br/>
-Working extensively with ARIMA for the past few months and scaling training and predictions for millions of time series, made me probe in details the math and engineering behind ARIMA. Contrary to my earlier notion, ARIMA is not just a simple regression problem.
+Working extensively with ARIMA for the past few months and scaling training and predictions for millions of time series, made me probe in details the math and engineering behind ARIMA. Contrary to my earlier belief, ARIMA is not just a simple regression problem.
 <br/><br/>
 Let's start off by describing a simple ARIMA equation with a lag=1 i.e. the target at time T is only dependent on the observation at time T-1.
 <br/><br/>
@@ -29,19 +29,19 @@ This indeed looks like a simple regression problem. The loss function and the up
 <br/><br/>
 ![arima3](/docs/assets/arima2.png)
 <br/><br/>
-Adding more lag terms to the equation, uses more number of historical observations and the same update equation for each parameter, theta holds. Thus, we can see that with only lagged series, the equation is equivalent to a linear regression problem which we can either solve using matrix operations or iteratively using gradient descent as shown above. Apart from the lag terms, ARIMA also can have the moving average terms. The moving average terms are nothing but simply the error terms from the previous timesteps similar to the previous observations, and can be expressed as follows:
+Adding more lag terms to the equation, uses more number of historical observations and the same update equation for each parameter, `theta` holds. Thus, we can see that with only lagged series, the equation is equivalent to a linear regression problem which we can either solve using matrix operations or iteratively using gradient descent as shown above. Apart from the lag terms, ARIMA also can have the moving average terms. The moving average terms are nothing but simply the error terms from the previous timesteps similar to the previous observations, and can be expressed as follows:
 <br/><br/>
 ![arima4](/docs/assets/arima4.png)
 <br/><br/>
-But note that, now the derivative of the loss L w.r.t. the parameters, theta and phi are not simple, because each moving average term (or the error terms) are also dependent on the same parameters and cannot be treated as constants unlike the past observation terms. The modified partial derivatives are as follows:
+But note that, now the derivative of the loss L w.r.t. the parameters, `theta` and `phi` are not simple, because each moving average term (or the error terms) are also dependent on the  parameters and cannot be treated as constants unlike the past observation terms. The modified partial derivatives are as follows:
 <br/><br/>
 ![arima5](/docs/assets/arima5.png)
 <br/><br/>
-The above set of partial derivatives can be simplified by using recurrence relations F and G corresponding to the partial derivatives of the error at timestep t w.r.t. the parameters theta and phi respectively as follows:
+The above set of partial derivatives can be simplified by using recurrence relations `F` and `G` corresponding to the partial derivatives of the error at timestep t w.r.t. the parameters `theta` and `phi` respectively as follows:
 <br/><br/>
 ![arima7](/docs/assets/arima7.png)
 <br/><br/>
-Either we explicitly compute the recurrence relations F and G and then the partial derivatives for gradient descent algorithm, or re-use the automatic differentiation implementation from the previous post. Using the automatic differentiation routine for scalars, we can very easily compute the loss as well as the updates to the parameters theta and phi corresponding to the lags and moving averages. But there was a gotcha in the prior implementation. In the ARIMA equation with moving average terms, each error term at timestep T is dependent recursively on the error terms from the last q timesteps. Thus a plain recursion implementation will have an exponential time complexity for automatic differentiation. Modified version shown below, caches all the node's forward and backward results for re-use.
+Either we explicitly compute the recurrence relations F and G and then the partial derivatives for gradient descent algorithm, or re-use the automatic differentiation implementation from the previous post. Using the automatic differentiation routine for scalars, we can very easily compute the loss as well as the updates to the parameters. But there was a gotcha in the prior implementation. In the ARIMA equation with moving average terms, each error term at timestep T is dependent recursively on the error terms from the last q timesteps. Thus a plain recursion implementation will have an exponential time complexity for automatic differentiation. Modified version shown below, caches all the node's forward and backward results for re-use.
 <br/><br/>
 ```python
 import numpy as np
