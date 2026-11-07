@@ -322,8 +322,6 @@ class div_node(node):
 
             a:np.ndarray = self.u.backward()
             b:np.ndarray = self.v.backward()
-
-            # s = u_f / v_f, ds/du_f = 1/v_f and ds/dv_f = -u_f/v_f**2
             nn_context.bwd_cache[self] = np.array([[1.0/v_f, -u_f/(v_f**2)]]) @ np.concatenate((a, b), axis=0)
 
         return nn_context.bwd_cache[self]
@@ -343,9 +341,8 @@ class log_node(node):
     def backward(self):
         if self not in nn_context.bwd_cache:
             u_f = nn_context.fwd_cache[self.u]
-            a:np.ndarray = self.u.backward()
 
-            # s = ln(u_f), ds/du_f = 1/u_f
+            a:np.ndarray = self.u.backward()
             nn_context.bwd_cache[self] = np.array([[1.0/u_f]]) @ a
 
         return nn_context.bwd_cache[self]
@@ -404,7 +401,7 @@ def pred_var(f, r, v, prev_pu_node):
     return pp_node
 
 
-def get_error(y, h, xp_node):
+def get_innovation_error(y, h, xp_node):
     # Compute the innovation error terms v(t) = y(t) - H.x(t|t-1)
     n, m, p = len(h), len(h[0]), len(xp_node[0])
     err_node = [[None for _ in range(p)] for _ in range(n)]
@@ -420,8 +417,8 @@ def get_error(y, h, xp_node):
     return err_node
 
 
-def get_var_obsv(h, pp_node):
-    # Compute the variance of the the observations S(t) = H.P(t|t-1).H^T
+def get_innovation_var(h, pp_node):
+    # Compute the innovation variance S(t) = H.P(t|t-1).H^T
     n, m, p = len(h), len(h[0]), len(pp_node[0])
     g = [[None for _ in range(p)] for _ in range(n)]
 
@@ -514,21 +511,18 @@ def get_likelihood(inp, pu_init, f, r, v, h, seq_len, n):
     prev_xu_node = [[constant_node(0.0)] for _ in range(n)]
     prev_pu_node = [[constant_node(pu_init[i,j]) for j in range(n)] for i in range(n)]
 
-    pred_nodes = []
-
     for t in range(seq_len):
         # get hidden state predictions
         xp_node = pred_hidden(f, prev_xu_node)
-        pred_nodes += [xp_node]
 
         # get hidden state variance
         pp_node = pred_var(f, r, v, prev_pu_node)
 
         # get innovation errors
-        err_node = get_error(inp[t], h, xp_node)
+        err_node = get_innovation_error(inp[t], h, xp_node)
 
         # get innovation error variance
-        var_obsv = get_var_obsv(h, pp_node)
+        var_obsv = get_innovation_var(h, pp_node)
 
         # get kalman gain
         kalman_gain = get_kalman_gain(h, pp_node, var_obsv)
@@ -557,6 +551,174 @@ def get_likelihood(inp, pu_init, f, r, v, h, seq_len, n):
         # update hidden state variance
         prev_pu_node = update_var(kalman_gain, pp_node, h)
 
-    return s, pred_nodes
+    return s
+```
+<br/><br/>
+Once we have the functions to generate the graphs for the operations and negative log likelihood calculations, we can go ahead and run the forward and backward passes across multiple epochs to train the negative log likelihood model using the Kalman Filter. Similar to before we generate a dummy time series data as follows (we are using lag=3 and MA terms q=2):
+<br/><br/>
+```python
+seq_len = 100
+p = 3
+q = 2
+n = max(p, q+1)
+
+# Generate random time series data of length seq_len.
+steps = np.random.normal(loc=0, scale=0.5, size=seq_len)
+random_walk = np.cumsum(steps)
+inp = 1 / (1 + np.exp(-random_walk / 3))
+```
+<br/><br/>
+Next we init the context graph and setup the parameters which we want to learn from the model. In our ARIMA model, we want to learn the lag parameters phi and the moving average parameters theta. Apart from these, we also want to learn the variance of the error terms. The transition matrix F contains the lag parameters in its 1st column and the column matrix R contains the MA parameters. Thus, we initialise F and R as parameters along with v which is the variance of the error terms. The matrix H is a row vector with 1 as its 1st entry and remaining zeros:
+<br/><br/>
+```python
+nn_context.init()
+
+f = [[param_node() for _ in range(n)] for _ in range(n)]
+r = [[param_node()] for _ in range(n)]
+v = [[param_node()]]
+
+h = [[constant_node(0.0) for _ in range(n)]]
+h[0][0].value = 1.0
+```
+<br/><br/>
+Note that, in `f` above, we declare all the elements of the `nxn` matrix as a `param_node()` but in reality only the 1st column contains the lag parameters, all other entries are either 0 or 1. This is handled within the training code, where the gradient updates are only applied to the actual `phi` entries. Remaining entries are not updated. Same for the `r` matrix. We initialise the `phi` and `theta` values from a normal `N(0, 1e-3)` distribution as follows:
+<br/><br/>
+```python
+phi = np.random.normal(0.0, 1e-3, size=(p,))
+theta = np.random.normal(0.0, 1e-3, size=(q,))
+
+# Initialise F matrix 
+f_ini = np.zeros(shape=(n,n), dtype=np.float32)
+
+for i in range(p):
+    # only these entries are updated.
+    f_ini[i,0] = phi[i]
+
+for i in range(q):
+    f_ini[i,i+1] = 1.0
+
+# Initialise R matrix 
+r_ini = np.zeros(shape=(n,1), dtype=np.float32)
+r_ini[0,0] = 1.0
+
+for i in range(1, q+1):
+    # only these entries are updated.
+    r_ini[i,0] = theta[i-1]
+
+# Variance of error terms e(t) ~ N(0, v**2)
+v_ini = np.array([[1.0]])
+
+f_ini = f_ini.flatten()
+r_ini = r_ini.flatten()
+v_ini = v_ini.flatten()
+```
+<br/><br/>
+The training module that runs the forward and backward pass for multiple epochs and updates the parameters using gradient descent:
+<br/><br/>
+```python
+n_epochs = 100
+learning_rate = 1e-4
+
+# Initialise the co-variance matrix P(0|0)
+pu_init = np.random.normal(0.0, 1e-3, size=(n,n))
+
+# Get the cost node in the graph.
+cost = get_likelihood(inp, pu_init, f, r, v, h, seq_len, n)
+param_values = np.concatenate((f_ini, r_ini, v_ini))
+
+# Indices to update during gradient descent
+indices = [i*n for i in range(p)] + [n*n + i for i in range(1, q+1)] + [n*n + n]
+
+for epoch in range(n_epochs):
+    nn_context.reset_cache()
+    loss = cost.forward(param_values)
+    print(epoch, loss)
+
+    grads = cost.backward()[0]
+    param_values[indices] -= learning_rate*grads[indices]
+```
+<br/><br/>
+Once you run the above training module, you will observe that the loss either explodes to NaN or stays constant throughout. This is because, if the innovation covariance term S(t)=H.P(t|t-1).H^T becomes arbitrarily large, the loss becomes large. Also, the gradients w.r.t. parameters have S(t) in the denominator which implies that any updates to the parameters phi and theta will be infinitesimal if S(t) is very large, thus model won't learn anything. 
+<br/><br/>
+The innovation covariance term S(t) is dependent on the prediction covariance P(t|t-1) and if this term diverges across timesteps, then S(t) also diverges so do the loss. To correct this behaviour, the initial values of the prediction covariance matrix P(0|0) is chosen in such a way so as to make the series stationary i.e.
+<br/><br/>
+![arima14](/docs/assets/arima18.png)
+<br/><br/>
+The above equation is known as the Lyapunov equation and is solved using the below strategy. Below the `vec` operator is the vectorization operator that flattens a N-D tensor/vector into a 1-D tensor/vector and using the vectorization property that `vec(AXB)=(B^T kron_prod A).vec(X)` we transform the above equation into a linear solver as below:
+<br/><br/>
+![arima14](/docs/assets/arima19.png)
+<br/><br/>
+In Python:
+<br/><br/>
+```python
+def init_pu(f:np.ndarray, r:np.ndarray, v:np.ndarray, n:int):
+    """
+    Computes P_0|0 using Kronecker products.
+    """
+
+    V = v[0][0]**2 * (r @ r.T)
+
+    I_n2 = np.eye(n * n)
+    f_kron_f = np.kron(f, f)
+
+    vec_V = V.flatten()
+    vec_P = np.linalg.solve(I_n2 - f_kron_f, vec_V)
+
+    P_0 = vec_P.reshape(n, n)
+    return P_0
+
+```
+<br/><br/>
+Apart from the above change, changing gradient descent to Adam optimizer helps stabilize the learning. Using gradient descent, the loss starts to diverge after some epoch indicating that the learning rate is too high. Adam optimizer class implementation in Python (the algorithm is pretty simple and can be implemented in few lines of python):
+<br/><br/>
+```python
+class AdamOptim:
+    def __init__(self, num_params, learning_rate=0.001):
+        self.num_params = num_params
+        self.m = [0.0]*num_params
+        self.v = [0.0]*num_params
+        self.beta_1 = 0.9
+        self.beta_2 = 0.999
+        self.epsilon = 1e-8
+        self.iter = 1
+        self.alpha = learning_rate
+
+    def optimize(self, curr_values, indices, gradients):
+        # indices indicates which all parameters we want to update and which to mask.
+        for i in indices:
+            self.m[i] = self.beta_1*self.m[i] + (1-self.beta_1)*gradients[i]
+            self.v[i] = self.beta_2*self.v[i] + (1-self.beta_2)*gradients[i]*gradients[i]
+
+            m_alt = self.m[i]/(1-self.beta_1**self.iter)
+            v_alt = self.v[i]/(1-self.beta_2**self.iter)
+
+            curr_values[i] -= (self.alpha*m_alt)/(np.sqrt(v_alt) + self.epsilon)
+
+        self.iter += 1
+        return curr_values
+```
+<br/><br/>
+The final training loop:
+<br/><br/>
+```python
+n_epochs = 500
+# Adam optimizer
+optim = AdamOptim(nn_context.num_params, learning_rate=1e-3)
+
+# P(0|0) solve using Lyapunov equation
+pu_init = init_pu(f_ini, r_ini, v_ini, n)
+
+cost, pred_nodes = get_likelihood(inp, pu_init, f, r, v, h, seq_len, n)
+param_values = np.concatenate((f_ini, r_ini, v_ini))
+
+indices = [i*n for i in range(p)] + [n*n + i for i in range(1, q+1)] + [n*n + n]
+
+for epoch in range(n_epochs):
+    nn_context.reset_cache()
+    res = cost.forward(param_values)
+    print(epoch, res)
+
+    grads = cost.backward()[0]
+    param_values = optim.optimize(param_values, indices, grads)
 ```
 <br/><br/>
