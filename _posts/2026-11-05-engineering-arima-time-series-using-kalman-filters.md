@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Engineering ARIMA for Time Series using Kalman Filters"
-date:   2026-11-06 18:50:11 +0530
+date:   2026-11-08 18:50:11 +0530
 categories: ml
 ---
 As a ML engineer, when I started working with time series modelling, popularity of ARIMA and similar class of algorithms/models were overshadowed by Recurrent Neural Networks (RNN) and its variants such as GRU and the more popular LSTM. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
@@ -298,4 +298,265 @@ Expanding the matrix products and expanding the hidden state variables will give
 The updated Kalman filter steps for the ARIMA equation above are as follows:
 <br/><br/>
 ![arima14](/docs/assets/arima17.png)
+<br/><br/>
+Coming to the implementation part, as before, we can express the above operations and the loss function as nodes in a graph. On top of the existing node classes as implemented above, we add a few more of the node classes corresponding to logarithm and division operations as follows:
+<br/><br/>
+```python
+class div_node(node):
+    def __init__(self, u:node, v:node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_values):
+        if self not in nn_context.fwd_cache:
+            u_f = self.u.forward(param_values)
+            v_f = self.v.forward(param_values)
+            nn_context.fwd_cache[self] = u_f / v_f
+
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        if self not in nn_context.bwd_cache:
+            u_f = nn_context.fwd_cache[self.u]
+            v_f = nn_context.fwd_cache[self.v]
+
+            a:np.ndarray = self.u.backward()
+            b:np.ndarray = self.v.backward()
+
+            # s = u_f / v_f, ds/du_f = 1/v_f and ds/dv_f = -u_f/v_f**2
+            nn_context.bwd_cache[self] = np.array([[1.0/v_f, -u_f/(v_f**2)]]) @ np.concatenate((a, b), axis=0)
+
+        return nn_context.bwd_cache[self]
+
+
+class log_node(node):
+    def __init__(self, u:node):
+        self.u = u
+
+    def forward(self, param_values):
+        if self not in nn_context.fwd_cache:
+            u_f = self.u.forward(param_values)
+            nn_context.fwd_cache[self] = math.log(u_f)
+
+        return nn_context.fwd_cache[self]
+
+    def backward(self):
+        if self not in nn_context.bwd_cache:
+            u_f = nn_context.fwd_cache[self.u]
+            a:np.ndarray = self.u.backward()
+
+            # s = ln(u_f), ds/du_f = 1/u_f
+            nn_context.bwd_cache[self] = np.array([[1.0/u_f]]) @ a
+
+        return nn_context.bwd_cache[self]
+```
+<br/><br/>
+Then we define the operations corresponding to predicting and updating the hidden states and predicting and updating the prediction variances along with minimizing the negative log likelihood objective.
+<br/><br/>
+```python
+def pred_hidden(f, prev_xu_node):
+    # Predict the hidden state x(t|t-1) from previous updated state x(t-1|t-1)
+    n, m, p = len(f), len(f[0]), len(prev_xu_node[0])
+    xp_node = [[None] for _ in range(n)]
+
+    # Dot product of nodes F and x(t-1|t-1): F.x(t|t-1)
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(f[i][k], prev_xu_node[k][j]))
+            xp_node[i][j] = s
+
+    return xp_node
+
+
+def pred_var(f, r, v, prev_pu_node):
+    # Compute the variance of prediction of hidden state x(t|t-1) as P(t|t-1) from previous updated variance P(t-1|t-1)
+    n, m, p = len(f), len(f[0]), len(prev_pu_node[0])
+    g = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product G=F.P(t-1|t-1)
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(f[i][k], prev_pu_node[k][j]))
+            g[i][j] = s
+
+    n, m, p = len(g), len(g[0]), len(f)
+    pp_node = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product G.F^T
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(g[i][k], f[j][k]))
+            pp_node[i][j] = s
+
+    n, p = len(pp_node), len(pp_node[0])
+
+    # Computes P(t|t-1) = F.P(t-1|t-1).F^T + v^2 * RR^T
+    for i in range(n):
+        for j in range(p):
+            pp_node[i][j] = sum_node(pp_node[i][j], prod_node(prod_node(v[0][0], v[0][0]), prod_node(r[i][0], r[j][0])))
+
+    return pp_node
+
+
+def get_error(y, h, xp_node):
+    # Compute the innovation error terms v(t) = y(t) - H.x(t|t-1)
+    n, m, p = len(h), len(h[0]), len(xp_node[0])
+    err_node = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product H.x(t|t-1)
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(h[i][k], xp_node[k][j]))
+            err_node[i][j] = sub_node(constant_node(y), s)
+
+    return err_node
+
+
+def get_var_obsv(h, pp_node):
+    # Compute the variance of the the observations S(t) = H.P(t|t-1).H^T
+    n, m, p = len(h), len(h[0]), len(pp_node[0])
+    g = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product G=H.P(t|t-1)
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(h[i][k], pp_node[k][j]))
+            g[i][j] = s
+
+    n, m, p = len(g), len(g[0]), len(h)
+    var_obsv = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product G.H^T
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(g[i][k], h[j][k]))
+            var_obsv[i][j] = s
+
+    return var_obsv
+
+
+def get_kalman_gain(h, pp_node, var_obsv):
+    # Compute Kalman Gain K(t) = P(t|t-1).H^T/S(t)
+    n, m, p = len(pp_node), len(pp_node[0]), len(h)
+    kalman_gain = [[None for _ in range(p)] for _ in range(n)]
+
+    # Dot product P(t|t-1).H^T
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(pp_node[i][k], h[j][k]))
+            kalman_gain[i][j] = div_node(s, var_obsv[0][0])
+
+    return kalman_gain
+
+
+def update_hidden(kalman_gain, err_node, xp_node):
+    # Update the hidden state predictions x(t|t) = x(t|t-1) + K(t).v(t)
+    n, m, p = len(kalman_gain), len(kalman_gain[0]), len(err_node[0])
+    xu_node = [[None for _ in range(p)] for _ in range(n)]
+
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(kalman_gain[i][k], err_node[k][j]))
+            xu_node[i][j] = sum_node(xp_node[i][j], s)
+
+    return xu_node
+
+
+def update_var(kalman_gain, pp_node, h):
+    # Update the hidden state variance P(t|t) = (I - K(t).H).P(t|t-1)
+    n, m, p = len(kalman_gain), len(kalman_gain[0]), len(h[0])
+    g = [[constant_node(0.0) for _ in range(p)] for _ in range(n)]
+
+    for i in range(n):
+        g[i][i].value = 1.0
+
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(kalman_gain[i][k], h[k][j]))
+            g[i][j] = sub_node(g[i][j], s)
+
+    n, m, p = len(g), len(g[0]), len(pp_node[0])
+    pu_node = [[None for _ in range(p)] for _ in range(n)]
+
+    for i in range(n):
+        for j in range(p):
+            s = constant_node(0.0)
+            for k in range(m):
+                s = sum_node(s, prod_node(g[i][k], pp_node[k][j]))
+            pu_node[i][j] = s
+
+    return pu_node
+
+
+def get_likelihood(inp, pu_init, f, r, v, h, seq_len, n):
+    # Compute negative log likelihood
+    s = constant_node(0.5*seq_len*np.log(2*np.pi))
+
+    # Set the initial values of hidden state and variance x(0|0) and P(0|0)
+    prev_xu_node = [[constant_node(0.0)] for _ in range(n)]
+    prev_pu_node = [[constant_node(pu_init[i,j]) for j in range(n)] for i in range(n)]
+
+    pred_nodes = []
+
+    for t in range(seq_len):
+        # get hidden state predictions
+        xp_node = pred_hidden(f, prev_xu_node)
+        pred_nodes += [xp_node]
+
+        # get hidden state variance
+        pp_node = pred_var(f, r, v, prev_pu_node)
+
+        # get innovation errors
+        err_node = get_error(inp[t], h, xp_node)
+
+        # get innovation error variance
+        var_obsv = get_var_obsv(h, pp_node)
+
+        # get kalman gain
+        kalman_gain = get_kalman_gain(h, pp_node, var_obsv)
+
+        # compute negative log likelihood
+        s = sum_node(
+                s,
+                prod_node(
+                    constant_node(0.5),
+                    sum_node(
+                        log_node(var_obsv[0][0]),
+                        div_node(
+                            prod_node(
+                                err_node[0][0],
+                                err_node[0][0]
+                            ),
+                            var_obsv[0][0]
+                        )
+                    )
+                )
+            )
+
+        # update hidden state
+        prev_xu_node = update_hidden(kalman_gain, err_node, xp_node)
+
+        # update hidden state variance
+        prev_pu_node = update_var(kalman_gain, pp_node, h)
+
+    return s, pred_nodes
+```
 <br/><br/>
