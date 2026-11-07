@@ -722,3 +722,7 @@ for epoch in range(n_epochs):
     param_values = optim.optimize(param_values, indices, grads)
 ```
 <br/><br/>
+Comparing the MSE between the actual and the predicted time series using the earlier method using MSE Loss vs. using Kalman Filter, we see approximately 10-100x improvement in MSE score using Kalman Filter approach. The below plot shows the predicted time series using MSE Loss vs. Kalman Filter + Negative Log Likelihood.
+<br/><br/>
+![arima14](/docs/assets/arima21.png)
+<br/><br/>
