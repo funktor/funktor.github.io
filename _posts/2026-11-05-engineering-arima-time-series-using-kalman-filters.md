@@ -21,7 +21,7 @@ to train the model to learn the 2.5% and 97.5% quantile values without assuming 
 <br/><br/>
 Working extensively with ARIMA for the past few months and scaling training and predictions for millions of time series, made me probe in details the math and engineering behind ARIMA. Contrary to my earlier belief, ARIMA is not just a simple regression problem.
 <br/><br/>
-Let's start off by describing a simple ARIMA equation with a lag=1 i.e. the target at time T is only dependent on the observation at time T-1.
+Let's start off by describing a simple ARIMA equation (in this post we will limit ourselves to non-seasonal and non-differenced series only, so strictly speaking, we are not using ARIMA) with a lag=1 i.e. the target at time T is only dependent on the observation at time T-1.
 <br/><br/>
 ![arima1](/docs/assets/arima1.png)
 <br/><br/>
