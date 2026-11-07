@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Engineering ARIMA for Time Series using Kalman Filters"
-date:   2026-11-08 18:50:11 +0530
+date:   2026-11-07 18:50:11 +0530
 categories: ml
 ---
 As a ML engineer, when I started working with time series modelling, popularity of `ARIMA` and similar class of algorithms/models were overshadowed by `Recurrent Neural Networks (RNN)` and its variants such as `GRU` and the more popular `LSTM`. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
@@ -568,7 +568,7 @@ random_walk = np.cumsum(steps)
 inp = 1 / (1 + np.exp(-random_walk / 3))
 ```
 <br/><br/>
-Next we init the context graph and setup the parameters which we want to learn from the model. In our ARIMA model, we want to learn the lag parameters `phi` and the moving average parameters `theta`. Apart from these, we also want to learn the variance of the error terms. The transition matrix `F` contains the lag parameters in its 1st column and the column matrix `R` contains the MA parameters. Thus, we initialise F and R as parameters along with `v` which is the variance of the error terms. The matrix `H` is a row vector with 1 as its 1st entry and remaining zeros:
+Next we init the context graph and setup the parameters which we want to learn from the model. In our ARIMA model, we want to learn the lag parameters `phi` and the moving average parameters `theta`. Apart from these, we also want to learn the variance of the error terms. The transition matrix `F` contains the lag parameters in its 1st column and the column matrix `R` contains the MA parameters. Thus, we initialise `F` and `R` as parameters along with `v` which is the variance of the error terms. The matrix `H` is a row vector with 1 as its 1st entry and remaining zeros:
 <br/><br/>
 ```python
 nn_context.init()
