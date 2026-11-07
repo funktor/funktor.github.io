@@ -293,9 +293,9 @@ and
 <br/><br/>
 Expanding the matrix products and expanding the hidden state variables will give rise to the same ARIMA equation as in above:
 <br/><br/>
-![arima4](/docs/assets/arima4.png)
+![arima4](/docs/assets/arima22.png)
 <br/><br/>
-The updated Kalman filter steps for the ARIMA equation above are as follows:
+I noticed it later that the `phi` and `theta` notations are interchanged for the lag and the moving average terms as compared to the above approach, but it should not impact any calculation and analysis done in this post. The updated Kalman filter steps for the ARIMA equation above are as follows:
 <br/><br/>
 ![arima14](/docs/assets/arima17.png)
 <br/><br/>
