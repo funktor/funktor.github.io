@@ -568,7 +568,7 @@ random_walk = np.cumsum(steps)
 inp = 1 / (1 + np.exp(-random_walk / 3))
 ```
 <br/><br/>
-Next we init the context graph and setup the parameters which we want to learn from the model. In our ARIMA model, we want to learn the lag parameters phi and the moving average parameters theta. Apart from these, we also want to learn the variance of the error terms. The transition matrix F contains the lag parameters in its 1st column and the column matrix R contains the MA parameters. Thus, we initialise F and R as parameters along with v which is the variance of the error terms. The matrix H is a row vector with 1 as its 1st entry and remaining zeros:
+Next we init the context graph and setup the parameters which we want to learn from the model. In our ARIMA model, we want to learn the lag parameters `phi` and the moving average parameters `theta`. Apart from these, we also want to learn the variance of the error terms. The transition matrix `F` contains the lag parameters in its 1st column and the column matrix `R` contains the MA parameters. Thus, we initialise F and R as parameters along with `v` which is the variance of the error terms. The matrix `H` is a row vector with 1 as its 1st entry and remaining zeros:
 <br/><br/>
 ```python
 nn_context.init()
@@ -638,13 +638,13 @@ for epoch in range(n_epochs):
     param_values[indices] -= learning_rate*grads[indices]
 ```
 <br/><br/>
-Once you run the above training module, you will observe that the loss either explodes to NaN or stays constant throughout. This is because, if the innovation covariance term S(t)=H.P(t|t-1).H^T becomes arbitrarily large, the loss becomes large. Also, the gradients w.r.t. parameters have S(t) in the denominator which implies that any updates to the parameters phi and theta will be infinitesimal if S(t) is very large, thus model won't learn anything. 
+Once you run the above training module, you will observe that the loss either explodes to `NaN` or stays constant throughout. This is because, if the innovation covariance term `S(t)=H.P(t|t-1).H^T` becomes arbitrarily large, the loss becomes large. Also, the gradients w.r.t. parameters have S(t) in the denominator which implies that any updates to the parameters `phi` and `theta` will be infinitesimal if `S(t)` is very large, thus model won't learn anything. 
 <br/><br/>
-The innovation covariance term S(t) is dependent on the prediction covariance P(t|t-1) and if this term diverges across timesteps, then S(t) also diverges so do the loss. To correct this behaviour, the initial values of the prediction covariance matrix P(0|0) is chosen in such a way so as to make the series stationary i.e.
+The innovation covariance term S(t) is dependent on the prediction covariance `P(t|t-1)` and if this term diverges across timesteps, then `S(t)` also diverges so do the loss. To correct this behaviour, the initial values of the prediction covariance matrix `P(0|0)` is chosen in such a way so as to make the series stationary i.e.
 <br/><br/>
 ![arima14](/docs/assets/arima18.png)
 <br/><br/>
-The above equation is known as the Lyapunov equation and is solved using the below strategy. Below the `vec` operator is the vectorization operator that flattens a N-D tensor/vector into a 1-D tensor/vector and using the vectorization property that `vec(AXB)=(B^T kron_prod A).vec(X)` we transform the above equation into a linear solver as below:
+The above equation is known as the `Lyapunov equation` and is solved using the below strategy. The `vec` operator is the vectorization operator that flattens a N-D tensor/vector into a 1-D tensor/vector and using the vectorization property that `vec(AXB)=(B^T kron_prod A).vec(X)` we transform the above equation into a linear solver for solving with `np.linalg`:
 <br/><br/>
 ![arima14](/docs/assets/arima19.png)
 <br/><br/>
@@ -669,7 +669,7 @@ def init_pu(f:np.ndarray, r:np.ndarray, v:np.ndarray, n:int):
 
 ```
 <br/><br/>
-Apart from the above change, changing gradient descent to Adam optimizer helps stabilize the learning. Using gradient descent, the loss starts to diverge after some epoch indicating that the learning rate is too high. Adam optimizer class implementation in Python (the algorithm is pretty simple and can be implemented in few lines of python):
+Apart from the above change, changing gradient descent to `Adam` optimizer helps stabilize the learning. Using gradient descent, the loss starts to diverge after some epochs indicating that the learning rate is too high at that point. Adam optimizer implementation in Python (the algorithm is pretty simple and can be implemented in just a few lines of python):
 <br/><br/>
 ```python
 class AdamOptim:
@@ -698,7 +698,7 @@ class AdamOptim:
         return curr_values
 ```
 <br/><br/>
-The final training loop:
+The updated training loop using Adam optimizer and solving Lyapunov equation to estimate `P(0|0)`:
 <br/><br/>
 ```python
 n_epochs = 500
@@ -722,7 +722,8 @@ for epoch in range(n_epochs):
     param_values = optim.optimize(param_values, indices, grads)
 ```
 <br/><br/>
-Comparing the MSE between the actual and the predicted time series using the earlier method using MSE Loss vs. using Kalman Filter, we see approximately 10-100x improvement in MSE score using Kalman Filter approach. The below plot shows the predicted time series using MSE Loss vs. Kalman Filter + Negative Log Likelihood.
+Comparing the MSE between the actual and the predicted time series using the earlier method of MSE Loss vs. Kalman Filter, we see approximately `10-100x` improvement in MSE score using Kalman Filter approach. The below plot shows the predicted time series using MSE Loss vs. Kalman Filter + Negative Log Likelihood. The orange line is the actual time series and the green line are the Kalman Filter predictions whereas the blue line are the predictions with the MSE Loss approach. Clearly, we can see that the green line follows the orange line closely.
 <br/><br/>
-![arima14](/docs/assets/arima21.png)
+![arima21](/docs/assets/arima21.png)
 <br/><br/>
+We conclude this post here but note that we have not yet explored the engineering required to deal with differencing (both seasonal and non-seasonal) and seasonal lags and seasonal MA terms. Adding those will make the ARIMA equations more complicated but they would not change much how the parameters are solved. Also, the same approach can be extended further to include covariates as additional features. We leave those as an exercise for the reader.
