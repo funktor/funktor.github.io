@@ -177,6 +177,7 @@ Using caching, the exponential complexity gets down to a quadratic time complexi
 <br/><br/>
 ```python
 def get_predictions(inp, seq_len, p, q):
+    # Get predictions for each time step
     p_params = [param_node() for _ in range(p)]
     q_params = [param_node() for _ in range(q)]
     bias = param_node()
@@ -210,6 +211,7 @@ def get_predictions(inp, seq_len, p, q):
 nn_context.init()
 pred_nodes, err_nodes = get_predictions(inp, seq_len, p, q)
 
+# Compute the cost
 cost = constant_node(0.0)
 for err_node in err_nodes:
     cost = sum_node(cost, prod_node(constant_node(1.0/seq_len), prod_node(err_node, err_node)))
