@@ -7,7 +7,6 @@ categories: ml
 As a ML engineer, when I started working with time series modelling, popularity of `ARIMA` and similar class of algorithms/models were overshadowed by `Recurrent Neural Networks (RNN)` and its variants such as `GRU` and the more popular `LSTM`. Although, I did learn about ARIMA from various resources but mostly from the point of view of using ARIMA as a baseline for performance numbers because LSTM would outperform ARIMA on most occasions. But, while collaborating with data scientists, most DS would prefer ARIMA over LSTM/RNN for time series modelling. They usually worked on problems that were more analysis focussed for e.g. anomaly detection. And as such, simplicity and interpretability of the approach mattered more than the final performance of the model. ARIMA results are easier to interpret than that of LSTM.
 <br/><br/>
 But that does not mean that ARIMA does not have its share of problems. Some of them are:
-```
 1. ARIMA is a linear model whereas RNN/LSTM are non-linear. In ARIMA, the target variable is linearly related to the past observations and other covariates.
 But in RNN/LSTM, the RNN layers have non-linearity in the form of ReLU, Tanh etc.
 
@@ -17,8 +16,8 @@ But in RNN/LSTM, the RNN layers have non-linearity in the form of ReLU, Tanh etc
 to train the model to learn the 2.5% and 97.5% quantile values without assuming any distribution of errors.
 
 4. ARIMA needs different seasonal and non-seasonal parameters - (lag, differencing, moving average). RNN/LSTM only needs the lag parameter.
-```
 <br/><br/>
+
 Working extensively with ARIMA for the past few months and scaling training and predictions for millions of time series, made me probe in details the math and engineering behind ARIMA. Contrary to my earlier belief, ARIMA is not just a simple regression problem.
 <br/><br/>
 Let's start off by describing a simple ARIMA equation (in this post we will limit ourselves to non-seasonal and non-differenced series only, so strictly speaking, we are not using ARIMA) with a lag=1 i.e. the target at time T is only dependent on the observation at time T-1.
