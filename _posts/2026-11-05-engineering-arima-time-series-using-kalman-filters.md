@@ -176,79 +176,73 @@ class prod_node(node):
 Using caching, the exponential complexity gets down to a quadratic time complexity algorithm.  To compute the loss function and the gradient updates, we need to write the routine to build the graph as follows:
 <br/><br/>
 ```python
-def get_predictions(inp, ser_len, p, q):
-    # get the prediction nodes corresponding to each timestep
-    theta = [param_node() for _ in range(p)] # theta corresponding to lag
-    phi = [param_node() for _ in range(q)] # phi corresponding to moving averages
+def get_predictions(inp, seq_len, p, q):
+    p_params = [param_node() for _ in range(p)]
+    q_params = [param_node() for _ in range(q)]
     bias = param_node()
-
     err_nodes = []
     pred_nodes = []
 
-    for t in range(ser_len):
+    for t in range(seq_len):
         pred = sum_node(constant_node(0.0), bias)
 
-        for j in range(1, p+1): # contribution of the lagged observations.
+        for j in range(1, p+1):
             if t-j >= 0:
-                g = prod_node(theta[j-1], constant_node(inp[t-j]))
+                g = prod_node(p_params[j-1], constant_node(inp[t-j]))
                 pred = sum_node(pred, g)
             else:
                 break
 
-        for k in range(1, q+1): # contribution of the moving averages.
+        for k in range(1, q+1):
             if t-k >= 0:
-                h = prod_node(phi[k-1], err_nodes[-k])
+                h = prod_node(q_params[k-1], err_nodes[-k])
                 pred = sum_node(pred, h)
             else:
                 break
 
         pred_nodes += [pred]
-        err = sum_node(constant_node(-inp[t]), pred) # error node
+        err = sum_node(constant_node(-inp[t]), pred)
         err_nodes += [err]
 
     return pred_nodes, err_nodes
 
-nn_context.init()
-pred_nodes, err_nodes = get_predictions(inp, ser_len, p, q)
 
-# compute the cost (loss) due to all the error terms. 
+nn_context.init()
+pred_nodes, err_nodes = get_predictions(inp, seq_len, p, q)
+
 cost = constant_node(0.0)
 for err_node in err_nodes:
-    cost = sum_node(cost, prod_node(constant_node(1.0/ser_len), prod_node(err_node, err_node)))
+    cost = sum_node(cost, prod_node(constant_node(1.0/seq_len), prod_node(err_node, err_node)))
 ```
 <br/><br/>
 Let's generate a dummy time series of size 1000 and use lag=10 i.e. 10 past observations are used to predict current observation and number of moving average terms (q=3) and then run the training and predictions as follows:
 <br/><br/>
 ```python
-ser_len = 1000
+seq_len = 1000
 p = 10
 q = 3
 learning_rate = 1e-3
 num_epochs = 500
 
 # generate time series data
-steps = np.random.normal(loc=0, scale=0.5, size=ser_len)
+steps = np.random.normal(loc=0, scale=10.0, size=seq_len)
 random_walk = np.cumsum(steps)
-inp = 1 / (1 + np.exp(-random_walk / 3))
+inp = 1 / (1 + np.exp(-random_walk / 100))
 
 # training for parameters.
-theta_v = np.random.normal(0.0, 1e-3, size=(p,)) # initial theta
-phi_v = np.random.normal(0.0, 1e-3, size=(q,)) # initial phi
-bias_v = np.array([0.0]) # initial bias term
+p_val = np.random.normal(0.0, 1e-3, size=(p,))
+q_val = np.random.normal(0.0, 1e-3, size=(q,))
+b_val = np.array([0.0])
 
-for epoch in range(num_epochs):
-    # reset the fwd and bwd caches after each epoch so as to not use incorrect values.
+param_values = np.concatenate((p_val, q_val, b_val))
+
+for epoch in range(500):
     nn_context.reset_cache()
-    d = cost.forward(np.concatenate((theta_v, phi_v, bias_v)))
+    d = cost.forward(param_values)
     print(epoch, d)
-
-    # compute the gradients
     grads = cost.backward()[0]
+    param_values -= learning_rate*grads
 
-    # update the parameters
-    theta_v -= learning_rate*grads[:p]
-    phi_v -= learning_rate*grads[p:p+q]
-    bias_v -= learning_rate*grads[p+q:]
 ```
 <br/><br/>
 Our above approach to solve the ARIMA model with both lag and moving average term has a few drawbacks:
