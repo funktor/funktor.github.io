@@ -722,6 +722,6 @@ for epoch in range(n_epochs):
 <br/><br/>
 Comparing the MSE between the actual and the predicted time series using the earlier method of MSE Loss vs. Kalman Filter, we see approximately `10-100x` improvement in MSE score using Kalman Filter approach. The below plot shows the predicted time series using MSE Loss vs. Kalman Filter + Negative Log Likelihood. The orange line is the actual time series and the green line are the Kalman Filter predictions whereas the blue line are the predictions with the MSE Loss approach. Clearly, we can see that the green line follows the orange line closely.
 <br/><br/>
-![arima21](/docs/assets/arima21.png)
+![arima21](/docs/assets/arima23.png)
 <br/><br/>
 We conclude this post here but note that we have not yet explored the engineering required to deal with differencing (both seasonal and non-seasonal) and seasonal lags and seasonal MA terms. Adding those will make the ARIMA equations more complicated but they would not change much how the parameters are solved. Also, the same approach can be extended further to include covariates as additional features. We leave those as an exercise for the reader.
