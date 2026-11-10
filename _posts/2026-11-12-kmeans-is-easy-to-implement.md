@@ -1,0 +1,22 @@
+---
+layout: post
+title:  "K-Means clustering is easy to implement"
+date:   2026-11-12 18:50:11 +0530
+categories: ml
+---
+K-Means is probably one of the first standard ML algorithm that an ML engineer learns to implement from scratch. Although K-Means is a very simple and straightforward algorithm to implement but it has a wide range of applicability across different ML related domains such as customer segmentation and churn prediction in marketing, image segmentation in computer vision, grouping similar users and products in recommendation systems and so on. Discounting the scaling challenges associated with hundreds of billions of data points, a good enough implementation can be done to cluster millions of points pretty accurately on a single PC. The simplicity of the algorithm lies in the loss function.
+<br/><br/>
+![kmeans1](/docs/assets/kmeans2.png)
+<br/><br/>
+In the above loss function to minimize, each `X(i)` is a `nx1` vector and `Z(k)` is also `nx1` vector. `k` denotes the cluster index and `Z(k)` is the centroid corresponding to cluster `k`. `X(i)` are the data points. `f(ik)` is 1 is point `i` belongs to cluster `k` else 0. Thus, we minimize the distances of each point to its 'assigned' cluster or in other words, assign the points to clusters so that the total sum of distances of each point to its assigned cluster centroid is minimized. Note that we have not yet established that 'assigned' means the 'nearest' cluster.
+<br/><br/>
+Note that the optimization steps involved to minimize the above loss is an EM-algorithm (Expectation-Maximization) because to assign points to one of the clusters, I need to know the cluster centroids, but the cluster centroids are not known beforehand and also has to be estimated. In problems such as this, involving chicken-and-egg relation, EM algorithm is a suitable approach. The idea is to first assume some cluster centroids, find the best assignment and then re-estimate the cluster centroids in the next iteration and so on.
+<br/><br/>
+```
+1. Assume random cluster centroids.
+2. Solve for the above assignment problem by minimizing the loss.
+3. Re-estimate cluster centroids based on 2.
+4. Repeat steps 2 & 3 iteratively until the above loss has not moved by some epsilon.
+```
+<br/><br/>
+In step 2 above, solving for the assignment problem is pretty straightforward because the loss terms are `(X(i)-Z(k))**2` which is the distance of X(i) from Z(k). Thus, solving step 2 implies finding the nearest cluster centroid for each point.
