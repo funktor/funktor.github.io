@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "K-Means clustering is easy to implement"
+title:  "Unnecessarily complicating K-Means"
 date:   2026-11-12 18:50:11 +0530
 categories: ml
 ---
