@@ -19,4 +19,9 @@ Note that the optimization steps involved to minimize the above loss is an EM-al
 4. Repeat steps 2 & 3 iteratively until the above loss has not moved by some epsilon.
 ```
 <br/><br/>
-In step 2 above, solving for the assignment problem is pretty straightforward because the loss terms are `(X(i)-Z(k))**2` which is the distance of X(i) from Z(k). Thus, solving step 2 implies finding the nearest cluster centroid for each point.
+In step 2 above, solving for the assignment problem is pretty straightforward because the loss terms are `(X(i)-Z(k))**2` which is the distance of `X(i)` from `Z(k)`. Thus, solving step 2 implies finding the nearest cluster centroid for each point. Another way to look at it is to think of a cost matrix `C[i,k]` with entries equal to `(X(i)-Z(k))**2`. Then from each row take exactly one column such that the total sum of values is minimum. Without any constraints on the total cost or min/max cost, this is a classic greedy algorithm problem.
+<br/><br/>
+For step 3, once we know the cluster assignments based on step 2 i.e. we now know the values of `f[i,k]`, we can then solve the optimization problem for the unknowns Z(k) i.e. cluster centroids. Fortunately, we have a convex optimization problem in our hand with a global minima as follows:
+<br/><br/>
+![kmeans1](/docs/assets/kmeans5.png)
+<br/><br/>
