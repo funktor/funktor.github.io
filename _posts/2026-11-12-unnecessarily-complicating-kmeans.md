@@ -31,3 +31,4 @@ Note that the training did not go through the usual gradient descent or other su
 <br/><br/>
 ![kmeans1](/docs/assets/kmeans6.png)
 <br/><br/>
+In the above scheme, we use the DNN weights `W(s)` (shared weights between X and Z) to project the d-dimensional vectors `X` and `Z` to a reduced `d_r` dimension and then take a softmax over the dot product of the reduced `X` and reduced `Z`. Note that the DNN model needs to be re-trained for every iteration of the EM algorithm because the DNN is only used to estimate the cluster centroids Z. The assignments are done in the 
