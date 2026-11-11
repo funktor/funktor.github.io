@@ -26,3 +26,8 @@ For step 3, once we know the cluster assignments based on step 2 i.e. we now kno
 ![kmeans1](/docs/assets/kmeans5.png)
 <br/><br/>
 Thus, it is proven that the updated values for the cluster centroids in iteration `t` is nothing but the average of all the points assigned to that cluster centroid in the previous iteration. Discounting the fact that the initial random selection of cluster centroids is sub-optimal and the convergence can be made faster by using a different algorithm (`K-Means++`) and the challenges in choosing the optimal number of clusters (usually through `AIC` or `BIC` scores), this is all there is to `K-Means`.
+<br/><br/>
+Note that the training did not go through the usual gradient descent or other such optimization routines as we saw in our earlier posts. This is because we could analytically solve for `Z(k)` by setting the derivative of the loss w.r.t. `Z(k)` to 0. Now, what if we can't do that. In the below scheme, we changed the loss function. Instead of an `euclidean distance` measure as the loss function, we chose to transform this into a `multi-class classification` problem. Using some random `Z`, we predict the probabilities `f[i,k]` i.e. point i belonging to cluster k using a deep neural network + softmax operation, then move the continuous values for the probabilties to the actual 0/1 values using the categorical-cross-entropy loss function and simultaneously update `Z` as follows.
+<br/><br/>
+![kmeans1](/docs/assets/kmeans6.png)
+<br/><br/>
