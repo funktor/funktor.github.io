@@ -1,7 +1,7 @@
 ---
 layout: post
 title:  "Unnecessarily complicating K-Means"
-date:   2026-11-12 18:50:11 +0530
+date:   2026-11-30 18:50:11 +0530
 categories: ml
 ---
 K-Means is probably one of the first standard ML algorithm that an ML engineer learns to implement from scratch. Although K-Means is a very simple and straightforward algorithm to implement but it has a wide range of applicability across different ML related domains such as customer segmentation and churn prediction in marketing, image segmentation in computer vision, grouping similar users and products in recommendation systems and so on. Discounting the scaling challenges associated with hundreds of billions of data points, a good enough implementation can be done to cluster millions of points pretty accurately on a single PC. The simplicity of the algorithm lies in the loss function.
