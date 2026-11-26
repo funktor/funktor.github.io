@@ -99,7 +99,7 @@ def get_initial_centroids(inp:np.ndarray, k:int):
         non_centroid_indices = list(set(list(range(inp.shape[0])))-set(centroid_indices))
         centroids = inp[centroid_indices,:]
 
-        # find the minimum distances of each point to any cluster.
+        # find the minimum distance of each point to any cluster.
         inp_h = inp[non_centroid_indices,:]
         a = np.sum(inp_h**2, axis=1, keepdims=True)
         b = np.sum(centroids**2, axis=1, keepdims=True)
@@ -111,7 +111,7 @@ def get_initial_centroids(inp:np.ndarray, k:int):
         min_distances = min_distances/sum_min_distances
         dc = np.cumsum(min_distances)
 
-        # sample uniformly from the distribution of the distances. Higher distances has higher probabilities of getting sampled.
+        # sample uniformly from the distribution of the distances. Higher min distances has higher probabilities of getting sampled.
         u = random.uniform(0.0, 1.0)
         l,r = 0, dc.shape[0]-1
         p = -1
@@ -133,7 +133,9 @@ def get_initial_centroids(inp:np.ndarray, k:int):
 <br/><br/>
 Note that the training did not go through the usual gradient descent or other such optimization routines as we saw in our earlier posts. This is because we could analytically solve for `Z(k)` by setting the derivative of the loss w.r.t. `Z(k)` to 0. Complicating the problem and the loss function a bit here. The next problem deals with `Deep Clustering Networks`. The idea is to learn reduced dimension representations for the input vectors that would be optimized for the clustering problem i.e. learn the embeddings such that the points in the reduced dimension are better clustered around their centroids.
 <br/><br/>
-If we learn the embeddings separately, it may happen that the points in reduced dimension are "scattered everywhere". But learning the embeddings and the clusters jointly avoids this problem. A lot of problems require reducing the dimensionality of data e.g. high dimensional data (lots of features), sparse vectors etc. Learning the reduced representation through `PCA` or `SVD` does not optimize the downstream problem of clustering or classification or regression. Using our autograd framework written in earlier posts for tensors.
+If we learn the embeddings separately, it may happen that the points in reduced dimension are "scattered everywhere". But learning the embeddings and the clusters jointly avoids this problem. A lot of problems require reducing the dimensionality of data e.g. high dimensional data (lots of features), sparse vectors etc. Learning the reduced representation through `PCA` or `SVD` does not optimize the downstream problem of clustering or classification. 
+<br/><br/>
+Implementing the training using our autograd framework written in earlier posts for tensors. The full set of forward and backward operators are shared in [this gist](https://gist.github.com/funktor/729fc09db41a3db736729840b3a2dc11). An example of the forward and backward pass for the matrix dot product operation is shown below:
 <br/><br/>
 ```python
 class uDotvNode(Node):
@@ -175,405 +177,16 @@ class uDotvNode(Node):
             NNContext.bwd_cache[self] = tensor_prod(arr, out)
 
         return NNContext.bwd_cache[self]
-
-
-class SumNode(Node):
-    def __init__(self, u:Node, v:Node):
-        self.u = u
-        self.v = v
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            v_f = self.v.forward(param_vals)
-            NNContext.fwd_cache[self] = u_f + v_f
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            w_f:np.ndarray = NNContext.fwd_cache[self]
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            v_f:np.ndarray = NNContext.fwd_cache[self.v]
-
-            n = get_total_shape(w_f.shape)
-            m = get_total_shape(u_f.shape)
-            p = get_total_shape(v_f.shape)
-
-            a = np.zeros((n, m), dtype=np.float32)
-            b = np.zeros((n, p), dtype=np.float32)
-
-            u_f_shape = expand_shape(w_f.shape, u_f.shape)
-            v_f_shape = expand_shape(w_f.shape, v_f.shape)
-
-            for i in range(n):
-                indices_1 = get_indices(w_f.shape, i, n)
-                for j in range(m):
-                    indices_2 = get_indices(u_f_shape, j, m)
-                    flag = True
-                    for k in range(len(indices_1)-1, -1, -1):
-                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and u_f_shape[k] == 1))
-                    if flag:
-                        a[i,j] = 1.0
-
-                for j in range(p):
-                    indices_2 = get_indices(v_f_shape, j, p)
-                    flag = True
-                    for k in range(len(indices_1)-1, -1, -1):
-                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and v_f_shape[k] == 1))
-                    if flag:
-                        b[i,j] = 1.0
-
-            arr = [[a, b]]
-
-            u_b = self.u.backward()
-            v_b = self.v.backward()
-
-            out = u_b + v_b
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class MulNode(Node):
-    def __init__(self, u:Node, v:Node):
-        self.u = u
-        self.v = v
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            v_f = self.v.forward(param_vals)
-            NNContext.fwd_cache[self] = u_f * v_f
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            w_f:np.ndarray = NNContext.fwd_cache[self]
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            v_f:np.ndarray = NNContext.fwd_cache[self.v]
-
-            n = get_total_shape(w_f.shape)
-            m = get_total_shape(u_f.shape)
-            p = get_total_shape(v_f.shape)
-
-            a = np.zeros((n, m), dtype=np.float32)
-            b = np.zeros((n, p), dtype=np.float32)
-
-            u_f_shape = expand_shape(w_f.shape, u_f.shape)
-            v_f_shape = expand_shape(w_f.shape, v_f.shape)
-
-            u_f = u_f.reshape(u_f_shape)
-            v_f = v_f.reshape(v_f_shape)
-
-            for i in range(n):
-                indices_1 = get_indices(w_f.shape, i, n)
-                for j in range(m):
-                    indices_2 = get_indices(u_f_shape, j, m)
-                    flag = True
-                    indices_3 = []
-                    for k in range(len(indices_1)):
-                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and u_f_shape[k] == 1))
-                        q = indices_1[k] if v_f_shape[k] > 1 else 0
-                        indices_3 += [q]
-                    if flag:
-                        a[i,j] = v_f[*indices_3]
-
-                for j in range(p):
-                    indices_2 = get_indices(v_f_shape, j, p)
-                    flag = True
-                    indices_3 = []
-                    for k in range(len(indices_1)):
-                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and v_f_shape[k] == 1))
-                        q = indices_1[k] if u_f_shape[k] > 1 else 0
-                        indices_3 += [q]
-                    if flag:
-                        b[i,j] = u_f[*indices_3]
-
-            arr = [[a, b]]
-
-            u_b = self.u.backward()
-            v_b = self.v.backward()
-
-            out = u_b + v_b
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class SoftmaxNode(Node):
-    def __init__(self, u:Node):
-        self.u = u
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-
-            max_vals = np.max(u_f, axis=-1, keepdims=True)
-            u_f = np.exp(u_f - max_vals)
-            sum_vals = np.sum(u_f, axis=-1, keepdims=True)
-            out = u_f/sum_vals
-
-            NNContext.fwd_cache[self] = out
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            v:np.ndarray = NNContext.fwd_cache[self]
-            v = v.flatten()
-
-            n = get_total_shape(u_f.shape)
-
-            m = u_f.shape[-1]
-            p = int(n/m)
-
-            a = np.zeros(shape=(n, n), dtype=np.float32)
-
-            for i in range(p):
-                for j in range(m):
-                    for k in range(m):
-                        h = i*m + j
-                        g = i*m + k
-
-                        if j == k:
-                            a[h,g] = v[h]*(1.0 - v[g])
-                        else:
-                            a[h,g] = -v[h]*v[g]
-
-            arr = [[a]]
-            out = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class TransposeNode(Node):
-    def __init__(self, u:Node, i:int, j:int):
-        self.u = u
-        self.i = i
-        self.j = j
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            NNContext.fwd_cache[self] = np.swapaxes(u_f, self.i, self.j)
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-
-            n = get_total_shape(u_f.shape)
-            a = np.zeros(shape=(n,n), dtype=np.float32)
-
-            for i in range(n):
-                indices = []
-
-                m = n
-                k = 0
-                h = i
-
-                while k < len(u_f.shape):
-                    m /= u_f.shape[k]
-                    u = int(h/m)
-                    indices += [u]
-                    h = h % m
-                    k += 1
-
-                y = indices[self.i]
-                indices[self.i] = indices[self.j]
-                indices[self.j] = y
-                shp = list(u_f.shape)
-
-                z = shp[self.i]
-                shp[self.i] = shp[self.j]
-                shp[self.j] = z
-
-                m = n
-                k = 0
-                j = 0
-
-                while k < len(indices):
-                    m /= shp[k]
-                    j += int(indices[k]*m)
-                    k += 1
-
-
-                a[i,j] = 1.0
-
-            arr = [[a]]
-
-            u_b = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, u_b)
-
-        return NNContext.bwd_cache[self]
-
-
-class PowerNode(Node):
-    def __init__(self, u:Node, p:float):
-        self.u = u
-        self.p = p
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            NNContext.fwd_cache[self] = u_f**(self.p)
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-
-            n = get_total_shape(u_f.shape)
-
-            a = np.eye(n, n, dtype=np.float32)
-            b = (self.p)*(u_f**(self.p-1))
-
-            np.fill_diagonal(a, b.flatten())
-
-            arr = [[a]]
-            out = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class AxisSumNode(Node):
-    def __init__(self, u:Node, axis:int):
-        self.u = u
-        self.axis = axis
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            NNContext.fwd_cache[self] = np.sum(u_f, axis=self.axis, keepdims=True)
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            w_f:np.ndarray = NNContext.fwd_cache[self]
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-
-            n = get_total_shape(w_f.shape)
-            m = get_total_shape(u_f.shape)
-
-            a = np.zeros((n, m), dtype=np.float32)
-            for i in range(n):
-                indices_1 = get_indices(w_f.shape, i, n)
-                for j in range(m):
-                    indices_2 = get_indices(u_f.shape, j, m)
-                    flag = True
-                    for k in range(len(indices_1)):
-                        if k != self.axis:
-                            flag = flag and (indices_1[k] == indices_2[k])
-                    if flag:
-                        a[i,j] = 1.0
-
-            arr = [[a]]
-            out = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class SumReduceNode(Node):
-    def __init__(self, u:Node):
-        self.u = u
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            NNContext.fwd_cache[self] = np.sum(u_f)
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            n = get_total_shape(u_f.shape)
-
-            a = np.ones((1, n), dtype=np.float32)
-            arr = [[a]]
-            out = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class MulConstantNode(Node):
-    def __init__(self, u:Node, constant:float):
-        self.u = u
-        self.constant = constant
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            NNContext.fwd_cache[self] = self.constant*u_f
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            n = get_total_shape(u_f.shape)
-
-            a = np.eye(n, n, dtype=np.float32)*self.constant
-
-            arr = [[a]]
-            out = self.u.backward()
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
-
-
-class MSENode(Node):
-    def __init__(self, u:Node, y:Node):
-        self.u = u
-        self.y = y
-
-    def forward(self, param_vals:np.ndarray):
-        if self not in NNContext.fwd_cache:
-            u_f = self.u.forward(param_vals)
-            y_f = self.y.forward(param_vals)
-
-            NNContext.fwd_cache[self] = 0.5*np.sum((u_f-y_f)**2)
-
-        return NNContext.fwd_cache[self]
-
-    def backward(self):
-        if self not in NNContext.bwd_cache:
-            u_f:np.ndarray = NNContext.fwd_cache[self.u]
-            y_f:np.ndarray = NNContext.fwd_cache[self.y]
-
-            y_f = y_f.flatten()
-            u_f = u_f.flatten()
-
-            a = np.expand_dims(u_f - y_f, axis=0)
-            b = np.expand_dims(y_f - u_f, axis=0)
-
-            arr = [[a, b]]
-
-            u_b = self.u.backward()
-            y_b = self.y.backward()
-
-            out = u_b + y_b
-            NNContext.bwd_cache[self] = tensor_prod(arr, out)
-
-        return NNContext.bwd_cache[self]
 ```
 <br/><br/>
-and the Adam Optimizer routine extended to tensor/matrix parameters:
+The optimizer used during our training is the Adam optimizer. Here is a simple NumPy based implementation for our custom training framework:
 <br/><br/>
 ```python
 class AdamOptim:
     def __init__(self, num_params, learning_rate=0.001):
         self.num_params = num_params
+
+        # NNContext holds the training parameters in a global context
         self.m = [np.zeros(shape=node.shape) for node in NNContext.node_list]
         self.v = [np.zeros(shape=node.shape) for node in NNContext.node_list]
         self.beta_1 = 0.9
@@ -597,7 +210,7 @@ class AdamOptim:
         return curr_values
 ```
 <br/><br/>
-and then finally the training routine as follows:
+Finally the training routine for deep clustering network as follows. The example use 100 points as 16 dimensional vectors which are reduced to 4 dimensions by passing through 2 layers of a deep autoencoder network. The clustering routine clusters the points into 5 clusters:
 <br/><br/>
 ```python
 from sklearn.datasets import make_blobs
@@ -606,25 +219,33 @@ import math, collections
 
 NNContext.init()
 
-n = 100
-d = 16
-d_0 = 8
-d_1 = 4
-k = 5
+n = 100 # number of points
+d = 16 # dimensionality of each point
+d_0 = 8 # reduced dimensionality at layer 1
+d_1 = 4 # final reduced dimensionality at layer 2
+k = 5 # number of clusters
+
 learning_rate = 1e-3
 
+# parameter weights for each layer
 ws_0 = ParameterNode(shape=(d, d_0))
 ws_1 = ParameterNode(shape=(d_0, d_1))
 
 inp = ConstantNode()
 z = ConstantNode()
 
+# Autoencoder Network
+# l1 and l2 and encoders, l3 and l4 are decoders.
+
 l1 = uDotvNode(inp, ws_0) # n x d_0
 l2 = uDotvNode(l1, ws_1) # n x d_1
 l3 = uDotvNode(l2, TransposeNode(ws_1, 0, 1)) # n x d_0
 l4 = uDotvNode(l3, TransposeNode(ws_0, 0, 1)) # n x d
+
+# Autoencoder optimized using the MSE loss between actual input and output of decoder network
 recon = MSENode(inp, l4) # 1 x 1
 
+# Clustering Network
 l8 = TransposeNode(z, 0, 1) # Z^T - d_1 x k
 l9 = PowerNode(l2, 2.0) # n x d_1
 l10 = PowerNode(l8, 2.0) # d_1 x k
@@ -636,10 +257,12 @@ l15 = SumNode(l14, MulConstantNode(l13, -2.0)) # n x k
 l16 = SoftmaxNode(MulConstantNode(l15, -1e6)) # n x k
 l17 = MulNode(l16, l15) # n x k
 
+# Total cost is reconstruction loss + sum of distances of each point from its nearest centroid.
 cost_node = SumNode(recon, SumReduceNode(l17)) # 1 x 1
 
 rng = np.random.default_rng()
 
+# generate synthetic clusters and standardize them.
 input, actual_labels = make_blobs(n_samples=n, n_features=d, centers=k, cluster_std=0.6, random_state=42)
 input = (input - np.mean(input, axis=0, keepdims=True))/np.std(input, axis=0, keepdims=True)
 
@@ -655,6 +278,7 @@ z_0 = None
 decreasing_losses_count = 0
 prev_loss = float("Inf")
 
+# Pre-train the autoencoder network till the loss gets stable over time.
 for epoch in range(5000):
     NNContext.reset_cache()
     cost = recon.forward(param_values)
@@ -662,6 +286,7 @@ for epoch in range(5000):
     grads = recon.backward()[0]
     param_values = optim.optimize(param_values, grads)
 
+    # Optimize loss till the loss starts to increase for 3 or more epochs.
     if cost > prev_loss:
         decreasing_losses_count += 1
     else:
@@ -678,27 +303,32 @@ optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
 decreasing_losses_count = 0
 prev_loss = float("Inf")
 
+# Joint optimization of autoencoder network + clustering network
 for epoch in range(1000):
     NNContext.reset_cache()
 
     inp_h = l2.forward(param_values)
     if z_0 is None:
-        z_0 = kmeanspp(inp_h, k)
+        z_0 = get_initial_centroids(inp_h, k)
     z.set_value(z_0)
 
+    # for the synthetic problem, evaluate quality of clusters using normalized mutual information.
     distances = l15.forward(param_values)
     pred_labels = np.argmin(distances, axis=-1)
     score = normalized_mutual_info_score(actual_labels, pred_labels)
     cost = cost_node.forward(param_values)
     print(epoch, cost, score)
 
+    # backpropagation
     grads = cost_node.backward()[0]
     param_values = optim.optimize(param_values, grads)
 
+    # re-compute the centroids
     f = (distances == distances.min(axis=1, keepdims=True)).astype(int)
     g = np.sum(f, axis=0, keepdims=True)
     z_0 = (f.T @ inp_h)/(g.T + 1e-10)
 
+    # Optimize loss till the loss starts to increase for 3 or more epochs.
     if cost > prev_loss:
         decreasing_losses_count += 1
     else:
