@@ -236,37 +236,36 @@ k = 5 # number of clusters
 learning_rate = 1e-3
 
 # parameter weights for each layer
-ws_0 = ParameterNode(shape=(d, d_0))
-ws_1 = ParameterNode(shape=(d_0, d_1))
+H_0 = ParameterNode(shape=(d, d_0))
+H_1 = ParameterNode(shape=(d_0, d_1))
 
 inp = ConstantNode()
 z = ConstantNode()
 
 # Autoencoder Network
-# l1 and l2 and encoders, l3 and l4 are decoders.
+# L_01 and L_02 and encoders, L_03 and L_04 are decoders.
 
-l1 = uDotvNode(inp, ws_0) # n x d_0
-l2 = uDotvNode(l1, ws_1) # n x d_1
-l3 = uDotvNode(l2, TransposeNode(ws_1, 0, 1)) # n x d_0
-l4 = uDotvNode(l3, TransposeNode(ws_0, 0, 1)) # n x d
+L_01 = uDotvNode(inp, H_0)
+L_02 = uDotvNode(L_01, H_1)
+L_03 = uDotvNode(L_02, TransposeNode(H_1, 0, 1))
+L_04 = uDotvNode(L_03, TransposeNode(H_0, 0, 1))
 
 # Autoencoder optimized using the MSE loss between actual input and output of decoder network
-recon = MSENode(inp, l4) # 1 x 1
+recon = MSENode(inp, L_04) # 1 x 1
 
 # Clustering Network
-l8  = TransposeNode(z, 0, 1) # Z^T - d_1 x k
-l9  = PowerNode(l2, 2.0) # n x d_1
-l10 = PowerNode(l8, 2.0) # d_1 x k
-l11 = AxisSumNode(l9, 1) # n x 1
-l12 = AxisSumNode(l10, 0) # 1 x k
-l13 = uDotvNode(l2, l8) # n x k
-l14 = SumNode(l11, l12) # n x k
-l15 = SumNode(l14, MulConstantNode(l13, -2.0)) # n x k
-l16 = SoftmaxNode(MulConstantNode(l15, -1e6)) # n x k
-l17 = MulNode(l16, l15) # n x k
+L_05 = PowerNode(L_02, 2.0)
+L_06 = PowerNode(z, 2.0)
+L_07 = AxisSumNode(L_05, 1)
+L_08 = AxisSumNode(L_06, 1)
+L_09 = uDotvNode(L_02, TransposeNode(z, 0, 1))
+L_10 = SumNode(L_07, L_08)
+L_11 = SumNode(L_10, MulConstantNode(L_09, -2.0))
+L_12 = SoftmaxNode(MulConstantNode(L_11, -1e6))
+L_13 = MulNode(L_12, L_11)
 
 # Total cost is reconstruction loss + sum of distances of each point from its nearest centroid.
-cost_node = SumNode(recon, SumReduceNode(l17)) # 1 x 1
+cost_node = SumNode(recon, SumReduceNode(L_13)) # 1 x 1
 
 rng = np.random.default_rng()
 
@@ -274,13 +273,13 @@ rng = np.random.default_rng()
 input, actual_labels = make_blobs(n_samples=n, n_features=d, centers=k, cluster_std=0.6, random_state=42)
 input = (input - np.mean(input, axis=0, keepdims=True))/np.std(input, axis=0, keepdims=True)
 
-ws_0_ini = np.random.uniform(low=0.0, high=1.0, size=(d, d_0))
-ws_1_ini = np.random.uniform(low=0.0, high=1.0, size=(d_0, d_1))
+H_0_ini = np.random.uniform(low=0.0, high=1.0, size=(d, d_0))
+H_1_ini = np.random.uniform(low=0.0, high=1.0, size=(d_0, d_1))
 
 inp.set_value(input)
 
 optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
-param_values = [ws_0_ini, ws_1_ini]
+param_values = [H_0_ini, H_1_ini]
 z_0 = None
 
 increasing_losses_count = 0
@@ -289,6 +288,7 @@ prev_loss = float("Inf")
 # Pre-train only the autoencoder network till the loss stabilize over time.
 for epoch in range(5000):
     NNContext.reset_cache()
+
     cost = recon.forward(param_values)
     print(epoch, cost)
     grads = recon.backward()[0]
@@ -314,13 +314,13 @@ prev_loss = float("Inf")
 for epoch in range(1000):
     NNContext.reset_cache()
 
-    inp_h = l2.forward(param_values)
+    inp_h = L_02.forward(param_values)
     if z_0 is None:
         z_0 = get_initial_centroids(inp_h, k)
     z.set_value(z_0)
 
     # for the synthetic problem, evaluate quality of clusters using normalized mutual information.
-    distances = l15.forward(param_values)
+    distances = L_11.forward(param_values)
     pred_labels = np.argmin(distances, axis=-1)
     score = normalized_mutual_info_score(actual_labels, pred_labels)
     cost = cost_node.forward(param_values)
@@ -359,7 +359,8 @@ kmeans = KMeans(
     random_state=42,  # Ensures reproducible results
 )
 
-inp_h = l2.forward(param_values)
+# get reduced representation for input
+inp_h = L_02.forward(param_values)
 y_pred = kmeans.fit_predict(inp_h)
 score = normalized_mutual_info_score(actual_labels, y_pred)
 print(score)
