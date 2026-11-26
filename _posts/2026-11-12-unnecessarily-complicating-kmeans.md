@@ -131,8 +131,440 @@ def get_initial_centroids(inp:np.ndarray, k:int):
     return inp[centroid_indices,:]
 ```
 <br/><br/>
-Note that the training did not go through the usual gradient descent or other such optimization routines as we saw in our earlier posts. This is because we could analytically solve for `Z(k)` by setting the derivative of the loss w.r.t. `Z(k)` to 0. Now, what if we can't do that. In the below scheme, we changed the loss function. Instead of an `euclidean distance` measure as the loss function, we chose to transform this into a `multi-class classification` problem. Using some random `Z`, we predict the probabilities `f[i,k]` i.e. point i belonging to cluster k using a deep neural network + softmax operation, then move the continuous values for the probabilties to the actual 0/1 values using the categorical-cross-entropy loss function and simultaneously update `Z` as follows.
+Note that the training did not go through the usual gradient descent or other such optimization routines as we saw in our earlier posts. This is because we could analytically solve for `Z(k)` by setting the derivative of the loss w.r.t. `Z(k)` to 0. Complicating the problem and the loss function a bit here. The next problem deals with `Deep Clustering Networks`. The idea is to learn reduced dimension representations for the input vectors that would be optimized for the clustering problem i.e. learn the embeddings such that the points in the reduced dimension are better clustered around their centroids.
 <br/><br/>
-![kmeans1](/docs/assets/kmeans6.png)
+If we learn the embeddings separately, it may happen that the points in reduced dimension are "scattered everywhere". But learning the embeddings and the clusters jointly avoids this problem. A lot of problems require reducing the dimensionality of data e.g. high dimensional data (lots of features), sparse vectors etc. Learning the reduced representation through `PCA` or `SVD` does not optimize the downstream problem of clustering or classification or regression. Using our autograd framework written in earlier posts for tensors.
 <br/><br/>
-In the above scheme, we use the DNN weights `W(s)` (shared weights between X and Z) to project the d-dimensional vectors `X` and `Z` to a reduced `d_r` dimension and then take a softmax over the dot product of the reduced `X` and reduced `Z`. Note that the DNN model needs to be re-trained for every iteration of the EM algorithm because the DNN is only used to estimate the cluster centroids Z. In the assignment step, we do a forward pass with `X` and the estimated `Z` and compute the softmax values. For each row, assign 1 to the column with the maximum probability and set 0 to all others. This becomes the  
+```python
+class uDotvNode(Node):
+    def __init__(self, u:Node, v:Node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            v_f = self.v.forward(param_vals)
+            NNContext.fwd_cache[self] = np.dot(u_f, v_f)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f = NNContext.fwd_cache[self.u]
+            v_f = NNContext.fwd_cache[self.v]
+
+            n_u = get_total_shape(u_f.shape)
+            m_u = u_f.shape[-1]
+            p_u = int(n_u/m_u)
+
+            v_ft = np.swapaxes(v_f, -2, -1)
+            n_v = get_total_shape(v_ft.shape)
+            m_v = v_ft.shape[-1]
+            p_v = int(n_v/m_v)
+
+            a = np.kron(np.eye(p_u, p_u, dtype=np.float32), v_ft)
+            b = np.kron(u_f, np.eye(p_v, p_v, dtype=np.float32))
+
+            arr = [[a, b]]
+
+            u_b = self.u.backward()
+            v_b = self.v.backward()
+
+            out = u_b + v_b
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class SumNode(Node):
+    def __init__(self, u:Node, v:Node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            v_f = self.v.forward(param_vals)
+            NNContext.fwd_cache[self] = u_f + v_f
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            w_f:np.ndarray = NNContext.fwd_cache[self]
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            v_f:np.ndarray = NNContext.fwd_cache[self.v]
+
+            n = get_total_shape(w_f.shape)
+            m = get_total_shape(u_f.shape)
+            p = get_total_shape(v_f.shape)
+
+            a = np.zeros((n, m), dtype=np.float32)
+            b = np.zeros((n, p), dtype=np.float32)
+
+            u_f_shape = expand_shape(w_f.shape, u_f.shape)
+            v_f_shape = expand_shape(w_f.shape, v_f.shape)
+
+            for i in range(n):
+                indices_1 = get_indices(w_f.shape, i, n)
+                for j in range(m):
+                    indices_2 = get_indices(u_f_shape, j, m)
+                    flag = True
+                    for k in range(len(indices_1)-1, -1, -1):
+                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and u_f_shape[k] == 1))
+                    if flag:
+                        a[i,j] = 1.0
+
+                for j in range(p):
+                    indices_2 = get_indices(v_f_shape, j, p)
+                    flag = True
+                    for k in range(len(indices_1)-1, -1, -1):
+                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and v_f_shape[k] == 1))
+                    if flag:
+                        b[i,j] = 1.0
+
+            arr = [[a, b]]
+
+            u_b = self.u.backward()
+            v_b = self.v.backward()
+
+            out = u_b + v_b
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class MulNode(Node):
+    def __init__(self, u:Node, v:Node):
+        self.u = u
+        self.v = v
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            v_f = self.v.forward(param_vals)
+            NNContext.fwd_cache[self] = u_f * v_f
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            w_f:np.ndarray = NNContext.fwd_cache[self]
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            v_f:np.ndarray = NNContext.fwd_cache[self.v]
+
+            n = get_total_shape(w_f.shape)
+            m = get_total_shape(u_f.shape)
+            p = get_total_shape(v_f.shape)
+
+            a = np.zeros((n, m), dtype=np.float32)
+            b = np.zeros((n, p), dtype=np.float32)
+
+            u_f_shape = expand_shape(w_f.shape, u_f.shape)
+            v_f_shape = expand_shape(w_f.shape, v_f.shape)
+
+            u_f = u_f.reshape(u_f_shape)
+            v_f = v_f.reshape(v_f_shape)
+
+            for i in range(n):
+                indices_1 = get_indices(w_f.shape, i, n)
+                for j in range(m):
+                    indices_2 = get_indices(u_f_shape, j, m)
+                    flag = True
+                    indices_3 = []
+                    for k in range(len(indices_1)):
+                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and u_f_shape[k] == 1))
+                        q = indices_1[k] if v_f_shape[k] > 1 else 0
+                        indices_3 += [q]
+                    if flag:
+                        a[i,j] = v_f[*indices_3]
+
+                for j in range(p):
+                    indices_2 = get_indices(v_f_shape, j, p)
+                    flag = True
+                    indices_3 = []
+                    for k in range(len(indices_1)):
+                        flag = flag and ((indices_2[k] == indices_1[k]) or (indices_2[k] == 0 and v_f_shape[k] == 1))
+                        q = indices_1[k] if u_f_shape[k] > 1 else 0
+                        indices_3 += [q]
+                    if flag:
+                        b[i,j] = u_f[*indices_3]
+
+            arr = [[a, b]]
+
+            u_b = self.u.backward()
+            v_b = self.v.backward()
+
+            out = u_b + v_b
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class SoftmaxNode(Node):
+    def __init__(self, u:Node):
+        self.u = u
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+
+            max_vals = np.max(u_f, axis=-1, keepdims=True)
+            u_f = np.exp(u_f - max_vals)
+            sum_vals = np.sum(u_f, axis=-1, keepdims=True)
+            out = u_f/sum_vals
+
+            NNContext.fwd_cache[self] = out
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            v:np.ndarray = NNContext.fwd_cache[self]
+            v = v.flatten()
+
+            n = get_total_shape(u_f.shape)
+
+            m = u_f.shape[-1]
+            p = int(n/m)
+
+            a = np.zeros(shape=(n, n), dtype=np.float32)
+
+            for i in range(p):
+                for j in range(m):
+                    for k in range(m):
+                        h = i*m + j
+                        g = i*m + k
+
+                        if j == k:
+                            a[h,g] = v[h]*(1.0 - v[g])
+                        else:
+                            a[h,g] = -v[h]*v[g]
+
+            arr = [[a]]
+            out = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class TransposeNode(Node):
+    def __init__(self, u:Node, i:int, j:int):
+        self.u = u
+        self.i = i
+        self.j = j
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            NNContext.fwd_cache[self] = np.swapaxes(u_f, self.i, self.j)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+
+            n = get_total_shape(u_f.shape)
+            a = np.zeros(shape=(n,n), dtype=np.float32)
+
+            for i in range(n):
+                indices = []
+
+                m = n
+                k = 0
+                h = i
+
+                while k < len(u_f.shape):
+                    m /= u_f.shape[k]
+                    u = int(h/m)
+                    indices += [u]
+                    h = h % m
+                    k += 1
+
+                y = indices[self.i]
+                indices[self.i] = indices[self.j]
+                indices[self.j] = y
+                shp = list(u_f.shape)
+
+                z = shp[self.i]
+                shp[self.i] = shp[self.j]
+                shp[self.j] = z
+
+                m = n
+                k = 0
+                j = 0
+
+                while k < len(indices):
+                    m /= shp[k]
+                    j += int(indices[k]*m)
+                    k += 1
+
+
+                a[i,j] = 1.0
+
+            arr = [[a]]
+
+            u_b = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, u_b)
+
+        return NNContext.bwd_cache[self]
+
+
+class PowerNode(Node):
+    def __init__(self, u:Node, p:float):
+        self.u = u
+        self.p = p
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            NNContext.fwd_cache[self] = u_f**(self.p)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+
+            n = get_total_shape(u_f.shape)
+
+            a = np.eye(n, n, dtype=np.float32)
+            b = (self.p)*(u_f**(self.p-1))
+
+            np.fill_diagonal(a, b.flatten())
+
+            arr = [[a]]
+            out = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class AxisSumNode(Node):
+    def __init__(self, u:Node, axis:int):
+        self.u = u
+        self.axis = axis
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            NNContext.fwd_cache[self] = np.sum(u_f, axis=self.axis, keepdims=True)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            w_f:np.ndarray = NNContext.fwd_cache[self]
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+
+            n = get_total_shape(w_f.shape)
+            m = get_total_shape(u_f.shape)
+
+            a = np.zeros((n, m), dtype=np.float32)
+            for i in range(n):
+                indices_1 = get_indices(w_f.shape, i, n)
+                for j in range(m):
+                    indices_2 = get_indices(u_f.shape, j, m)
+                    flag = True
+                    for k in range(len(indices_1)):
+                        if k != self.axis:
+                            flag = flag and (indices_1[k] == indices_2[k])
+                    if flag:
+                        a[i,j] = 1.0
+
+            arr = [[a]]
+            out = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class SumReduceNode(Node):
+    def __init__(self, u:Node):
+        self.u = u
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            NNContext.fwd_cache[self] = np.sum(u_f)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            n = get_total_shape(u_f.shape)
+
+            a = np.ones((1, n), dtype=np.float32)
+            arr = [[a]]
+            out = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class MulConstantNode(Node):
+    def __init__(self, u:Node, constant:float):
+        self.u = u
+        self.constant = constant
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            NNContext.fwd_cache[self] = self.constant*u_f
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            n = get_total_shape(u_f.shape)
+
+            a = np.eye(n, n, dtype=np.float32)*self.constant
+
+            arr = [[a]]
+            out = self.u.backward()
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+
+
+class MSENode(Node):
+    def __init__(self, u:Node, y:Node):
+        self.u = u
+        self.y = y
+
+    def forward(self, param_vals:np.ndarray):
+        if self not in NNContext.fwd_cache:
+            u_f = self.u.forward(param_vals)
+            y_f = self.y.forward(param_vals)
+
+            NNContext.fwd_cache[self] = 0.5*np.sum((u_f-y_f)**2)
+
+        return NNContext.fwd_cache[self]
+
+    def backward(self):
+        if self not in NNContext.bwd_cache:
+            u_f:np.ndarray = NNContext.fwd_cache[self.u]
+            y_f:np.ndarray = NNContext.fwd_cache[self.y]
+
+            y_f = y_f.flatten()
+            u_f = u_f.flatten()
+
+            a = np.expand_dims(u_f - y_f, axis=0)
+            b = np.expand_dims(y_f - u_f, axis=0)
+
+            arr = [[a, b]]
+
+            u_b = self.u.backward()
+            y_b = self.y.backward()
+
+            out = u_b + y_b
+            NNContext.bwd_cache[self] = tensor_prod(arr, out)
+
+        return NNContext.bwd_cache[self]
+```
+<br/><br/>
