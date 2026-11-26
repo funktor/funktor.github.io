@@ -150,6 +150,9 @@ class uDotvNode(Node):
         self.v = v
 
     def forward(self, param_vals:np.ndarray):
+        """
+        Forward pass of u @ v
+        """
         # check forward cache
         if self not in NNContext.fwd_cache:
             u_f = self.u.forward(param_vals)
@@ -159,6 +162,10 @@ class uDotvNode(Node):
         return NNContext.fwd_cache[self]
 
     def backward(self):
+        """
+        Backward pass of w = u @ v
+        [dw/du dw/dv]
+        """
         # check backward cache
         if self not in NNContext.bwd_cache:
             u_f = NNContext.fwd_cache[self.u]
@@ -204,6 +211,9 @@ class AdamOptim:
         self.alpha = learning_rate
 
     def optimize(self, curr_values, gradients):
+        """
+        Update the curr_values using the Adam optimization algorithm
+        """
         for i in range(self.num_params):
             grad = gradients[i].reshape(self.m[i].shape)
             self.m[i] = self.beta_1*self.m[i] + (1-self.beta_1)*grad
@@ -227,6 +237,9 @@ import math, collections
 
 NNContext.init()
 
+"""
+Define run parameters
+"""
 n = 100 # number of points
 d = 16 # dimensionality of each point
 d_0 = 8 # reduced dimensionality at layer 1
@@ -235,13 +248,22 @@ k = 5 # number of clusters
 
 learning_rate = 1e-3
 
+"""
+Define model parameters
+"""
 # parameter weights for each layer
 H_0 = ParameterNode(shape=(d, d_0))
 H_1 = ParameterNode(shape=(d_0, d_1))
 
+"""
+Define model inputs
+"""
 inp = ConstantNode()
 z = ConstantNode()
 
+"""
+Define model layers
+"""
 # Autoencoder Network
 # L_01 and L_02 and encoders, L_03 and L_04 are decoders.
 
@@ -264,6 +286,9 @@ L_11 = SumNode(L_10, MulConstantNode(L_09, -2.0))
 L_12 = SoftmaxNode(MulConstantNode(L_11, -1e6))
 L_13 = MulNode(L_12, L_11)
 
+"""
+Define loss to minimize
+"""
 # Total cost is reconstruction loss + sum of distances of each point from its nearest centroid.
 cost_node = SumNode(recon, SumReduceNode(L_13)) # 1 x 1
 
@@ -273,6 +298,9 @@ rng = np.random.default_rng()
 input, actual_labels = make_blobs(n_samples=n, n_features=d, centers=k, cluster_std=0.6, random_state=42)
 input = (input - np.mean(input, axis=0, keepdims=True))/np.std(input, axis=0, keepdims=True)
 
+"""
+Initialize parameters
+"""
 H_0_ini = np.random.uniform(low=0.0, high=1.0, size=(d, d_0))
 H_1_ini = np.random.uniform(low=0.0, high=1.0, size=(d_0, d_1))
 
@@ -285,6 +313,9 @@ z_0 = None
 increasing_losses_count = 0
 prev_loss = float("Inf")
 
+"""
+Pre-Training
+"""
 # Pre-train only the autoencoder network till the loss stabilize over time.
 for epoch in range(5000):
     NNContext.reset_cache()
@@ -305,8 +336,11 @@ for epoch in range(5000):
 
     prev_loss = cost
 
-optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
 
+"""
+Fine Tuning
+"""
+optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
 increasing_losses_count = 0
 prev_loss = float("Inf")
 
