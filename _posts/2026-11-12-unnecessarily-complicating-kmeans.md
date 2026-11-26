@@ -568,3 +568,145 @@ class MSENode(Node):
         return NNContext.bwd_cache[self]
 ```
 <br/><br/>
+and the Adam Optimizer routine extended to tensor/matrix parameters:
+<br/><br/>
+```python
+class AdamOptim:
+    def __init__(self, num_params, learning_rate=0.001):
+        self.num_params = num_params
+        self.m = [np.zeros(shape=node.shape) for node in NNContext.node_list]
+        self.v = [np.zeros(shape=node.shape) for node in NNContext.node_list]
+        self.beta_1 = 0.9
+        self.beta_2 = 0.999
+        self.epsilon = 1e-8
+        self.iter = 1
+        self.alpha = learning_rate
+
+    def optimize(self, curr_values, gradients):
+        for i in range(self.num_params):
+            grad = gradients[i].reshape(self.m[i].shape)
+            self.m[i] = self.beta_1*self.m[i] + (1-self.beta_1)*grad
+            self.v[i] = self.beta_2*self.v[i] + (1-self.beta_2)*grad*grad
+
+            m_alt = self.m[i]/(1-self.beta_1**self.iter)
+            v_alt = self.v[i]/(1-self.beta_2**self.iter)
+
+            curr_values[i] -= (self.alpha*m_alt)/(np.sqrt(v_alt) + self.epsilon)
+
+        self.iter += 1
+        return curr_values
+```
+<br/><br/>
+and then finally the training routine as follows:
+<br/><br/>
+```python
+from sklearn.datasets import make_blobs
+from sklearn.metrics import normalized_mutual_info_score
+import math, collections
+
+NNContext.init()
+
+n = 100
+d = 16
+d_0 = 8
+d_1 = 4
+k = 5
+learning_rate = 1e-3
+
+ws_0 = ParameterNode(shape=(d, d_0))
+ws_1 = ParameterNode(shape=(d_0, d_1))
+
+inp = ConstantNode()
+z = ConstantNode()
+
+l1 = uDotvNode(inp, ws_0) # n x d_0
+l2 = uDotvNode(l1, ws_1) # n x d_1
+l3 = uDotvNode(l2, TransposeNode(ws_1, 0, 1)) # n x d_0
+l4 = uDotvNode(l3, TransposeNode(ws_0, 0, 1)) # n x d
+recon = MSENode(inp, l4) # 1 x 1
+
+l8 = TransposeNode(z, 0, 1) # Z^T - d_1 x k
+l9 = PowerNode(l2, 2.0) # n x d_1
+l10 = PowerNode(l8, 2.0) # d_1 x k
+l11 = AxisSumNode(l9, 1) # n x 1
+l12 = AxisSumNode(l10, 0) # 1 x k
+l13 = uDotvNode(l2, l8) # n x k
+l14 = SumNode(l11, l12) # n x k
+l15 = SumNode(l14, MulConstantNode(l13, -2.0)) # n x k
+l16 = SoftmaxNode(MulConstantNode(l15, -1e6)) # n x k
+l17 = MulNode(l16, l15) # n x k
+
+cost_node = SumNode(recon, SumReduceNode(l17)) # 1 x 1
+
+rng = np.random.default_rng()
+
+input, actual_labels = make_blobs(n_samples=n, n_features=d, centers=k, cluster_std=0.6, random_state=42)
+input = (input - np.mean(input, axis=0, keepdims=True))/np.std(input, axis=0, keepdims=True)
+
+ws_0_ini = np.random.uniform(low=0.0, high=1.0, size=(d, d_0))
+ws_1_ini = np.random.uniform(low=0.0, high=1.0, size=(d_0, d_1))
+
+inp.set_value(input)
+
+optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
+param_values = [ws_0_ini, ws_1_ini]
+z_0 = None
+
+decreasing_losses_count = 0
+prev_loss = float("Inf")
+
+for epoch in range(5000):
+    NNContext.reset_cache()
+    cost = recon.forward(param_values)
+    print(epoch, cost)
+    grads = recon.backward()[0]
+    param_values = optim.optimize(param_values, grads)
+
+    if cost > prev_loss:
+        decreasing_losses_count += 1
+    else:
+        decreasing_losses_count = 0
+
+    if decreasing_losses_count >= 3:
+        break
+
+    prev_loss = cost
+
+print()
+optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
+
+decreasing_losses_count = 0
+prev_loss = float("Inf")
+
+for epoch in range(1000):
+    NNContext.reset_cache()
+
+    inp_h = l2.forward(param_values)
+    if z_0 is None:
+        z_0 = kmeanspp(inp_h, k)
+    z.set_value(z_0)
+
+    distances = l15.forward(param_values)
+    pred_labels = np.argmin(distances, axis=-1)
+    score = normalized_mutual_info_score(actual_labels, pred_labels)
+    cost = cost_node.forward(param_values)
+    print(epoch, cost, score)
+
+    grads = cost_node.backward()[0]
+    param_values = optim.optimize(param_values, grads)
+
+    f = (distances == distances.min(axis=1, keepdims=True)).astype(int)
+    g = np.sum(f, axis=0, keepdims=True)
+    z_0 = (f.T @ inp_h)/(g.T + 1e-10)
+
+    if cost > prev_loss:
+        decreasing_losses_count += 1
+    else:
+        decreasing_losses_count = 0
+
+    if decreasing_losses_count >= 3:
+        break
+
+    prev_loss = cost
+```
+<br/><br/>
