@@ -6,7 +6,7 @@ categories: ml
 ---
 K-Means is probably one of the first standard ML algorithm that an ML engineer learns to implement from scratch. Although K-Means is a very simple and straightforward algorithm to implement but it has a wide range of applicability across different ML related domains such as customer segmentation and churn prediction in marketing, image segmentation in computer vision, grouping similar users and products in recommendation systems and so on. 
 <br/><br/>
-Discounting the scaling challenges associated with hundreds of billions of data points, a good enough implementation can be done to cluster millions of points pretty accurately on a single PC. The simplicity of the algorithm lies in its loss function.
+Ignoring the scaling challenges associated with hundreds of billions of data points, a good enough implementation can be done to cluster millions of points pretty accurately on a single PC. The simplicity of the algorithm lies in its loss function.
 <br/><br/>
 ![kmeans1](/docs/assets/kmeans2.png)
 <br/><br/>
@@ -33,34 +33,102 @@ For step 3, once we know the cluster assignments based on step 2 i.e. we now kno
 <br/><br/>
 ![kmeans1](/docs/assets/kmeans5.png)
 <br/><br/>
-Thus, it is proven that the updated values for the cluster centroids in iteration `t` is nothing but the average of all the points assigned to that cluster centroid in the previous iteration. Ignoring the fact that the initial random selection of cluster centroids is sub-optimal and the convergence can be made faster by using a different algorithm (`K-Means++`) and the subtle challenges in choosing the optimal number of clusters (usually through `AIC` or `BIC` scores), this is all there is to `K-Means`.
-<br/><br/>
-Here is a Python implementation using vectorised NumPy operations:
+Thus, it is proven that the updated values for the cluster centroids in iteration `t` is nothing but the average of all the points assigned to that cluster centroid in the previous iteration. Here is a simple Python implementation using vectorised NumPy operations:
 <br/><br/>
 ```python
 import numpy as np
+
+def get_initial_centroids(inp:np.ndarray, k:int):
+    """
+    Get initial centroids.
+    """
+    rng = np.random.default_rng()
+    z = rng.choice(inp, size=k, replace=False, axis=0)
+    return z
+ 
 def kmeans(inp:np.ndarray, k:int, num_iters:int):
     """
     Returns cluster centroids and assignments.
     """
-    rng = np.random.default_rng()
-    z = rng.choice(inp, size=k, replace=False, axis=0)
+    z = get_initial_centroids(inp, k)
     f = None
 
     for iter in range(num_iters):
-        zT = z.T
+        # sum[i,j] (inp[i]-z[j])^T.(inp[i]-z[j])
         a = np.sum(inp**2, axis=1, keepdims=True)
-        b = np.sum(zT**2, axis=0, keepdims=True)
-        c = inp @ zT
+        b = np.sum(z**2, axis=1, keepdims=True)
+        c = inp @ z.T
+
+        # d[i,j] - distance of point i from centroid j.
         d = a + b - 2*c
-        loss = np.min(d, axis=1, keepdims=True).sum()
+
+        # loss is the sum of the minimum distances for each point.
+        loss = np.min(d, axis=1).sum()
         print(f"Loss at epoch={iter} : {loss}")
 
+        # f is 1 for centroid with minimum distance from point else 0
         f = (d == d.min(axis=1, keepdims=True)).astype(int)
-        g = np.sum(f, axis=0, keepdims=True)    
+
+        # g gives the number of points assigned to each centroid
+        g = np.sum(f, axis=0, keepdims=True)
+
+        # centroids are the mean of the points assigned to cluster.
+        # g.T + 1e-10 small constant added to avoid division by 0.
         z = (f.T @ inp)/(g.T + 1e-10)
 
     return z, f
+```
+<br/><br/>
+The initial centroids are selected randomly from the existing points but it may not be an optimal approach as the chosen points may all belong to the same cluster. `K-Means++` is a preferred algorithm for selection of initial centroids. The algorithm iteratively selects the centroids such that the next point to select is sampled from points which are far away from existing centroids. A simple Python implementation for K-Means++.
+<br/><br/>
+```python
+import numpy as np
+import random
+
+def get_initial_centroids(inp:np.ndarray, k:int):
+    """
+    Get initial centroids using K-Means++
+    """
+    centroid_indices = []
+
+    # select 1st point randomly
+    centroid_indices += [random.randint(0, inp.shape[0]-1)]
+
+    while len(centroid_indices) < k:
+        # select next centroids from remaining points
+        non_centroid_indices = list(set(list(range(inp.shape[0])))-set(centroid_indices))
+        centroids = inp[centroid_indices,:]
+
+        # find the minimum distances of each point to any cluster.
+        inp_h = inp[non_centroid_indices,:]
+        a = np.sum(inp_h**2, axis=1, keepdims=True)
+        b = np.sum(centroids**2, axis=1, keepdims=True)
+        c = inp_h @ centroids.T
+        d = a + b - 2*c
+
+        min_distances = np.min(d, axis=1).reshape((d.shape[0],))
+        sum_min_distances = np.sum(min_distances)
+        min_distances = min_distances/sum_min_distances
+        dc = np.cumsum(min_distances)
+
+        # sample uniformly from the distribution of the distances. Higher distances has higher probabilities of getting sampled.
+        u = random.uniform(0.0, 1.0)
+        l,r = 0, dc.shape[0]-1
+        p = -1
+        while l <= r:
+            m = int((l+r)/2)
+            if u <= dc[m]:
+                p = m
+                r = m-1
+            else:
+                l = m+1
+
+        if p == -1:
+            break
+
+        centroid_indices += [non_centroid_indices[p]]
+
+    return inp[centroid_indices,:]
 ```
 <br/><br/>
 Note that the training did not go through the usual gradient descent or other such optimization routines as we saw in our earlier posts. This is because we could analytically solve for `Z(k)` by setting the derivative of the loss w.r.t. `Z(k)` to 0. Now, what if we can't do that. In the below scheme, we changed the loss function. Instead of an `euclidean distance` measure as the loss function, we chose to transform this into a `multi-class classification` problem. Using some random `Z`, we predict the probabilities `f[i,k]` i.e. point i belonging to cluster k using a deep neural network + softmax operation, then move the continuous values for the probabilties to the actual 0/1 values using the categorical-cross-entropy loss function and simultaneously update `Z` as follows.
