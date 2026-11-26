@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Unnecessarily complicating K-Means"
+title:  "Unnecessarily complicating K-Means..."
 date:   2026-11-30 18:50:11 +0530
 categories: ml
 ---
@@ -254,8 +254,8 @@ l4 = uDotvNode(l3, TransposeNode(ws_0, 0, 1)) # n x d
 recon = MSENode(inp, l4) # 1 x 1
 
 # Clustering Network
-l8 = TransposeNode(z, 0, 1) # Z^T - d_1 x k
-l9 = PowerNode(l2, 2.0) # n x d_1
+l8  = TransposeNode(z, 0, 1) # Z^T - d_1 x k
+l9  = PowerNode(l2, 2.0) # n x d_1
 l10 = PowerNode(l8, 2.0) # d_1 x k
 l11 = AxisSumNode(l9, 1) # n x 1
 l12 = AxisSumNode(l10, 0) # 1 x k
@@ -286,7 +286,7 @@ z_0 = None
 increasing_losses_count = 0
 prev_loss = float("Inf")
 
-# Pre-train the autoencoder network till the loss stabilize over time.
+# Pre-train only the autoencoder network till the loss stabilize over time.
 for epoch in range(5000):
     NNContext.reset_cache()
     cost = recon.forward(param_values)
