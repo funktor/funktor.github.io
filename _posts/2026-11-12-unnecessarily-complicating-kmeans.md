@@ -135,7 +135,13 @@ Note that the training did not go through the usual gradient descent or other su
 <br/><br/>
 If we learn the embeddings separately, it may happen that the points in reduced dimension are "scattered everywhere". But learning the embeddings and the clusters jointly avoids this problem. A lot of problems require reducing the dimensionality of data e.g. high dimensional data (lots of features), sparse vectors etc. Learning the reduced representation through `PCA` or `SVD` does not optimize the downstream problem of clustering or classification. 
 <br/><br/>
-Implementing the training using our autograd framework written in earlier posts for tensors. The full set of forward and backward operators are shared in [this gist](https://gist.github.com/funktor/729fc09db41a3db736729840b3a2dc11). An example of the forward and backward pass for the matrix dot product operation is shown below:
+![kmeans1](/docs/assets/kmeans8.png)
+<br/><br/>
+The loss function is composed of two terms 1. reconstruction loss from input vectors and decoder outputs 2. k-means loss same as before. Note that the gradients of the loss w.r.t. the centroids is similar as before, but instead of the original inputs, now the centroids are computed as means over the reduced representations and still do not require gradient descent to compute given the encoder weights. Thus, the centroids can be learnt without backpropagation.
+<br/><br/>
+![kmeans1](/docs/assets/kmeans9.png)
+<br/><br/>
+Common strategy to train such a network is to pre-train the encoder-decoder network first and then fine-tune the encoder-decoder weights based on the centroids. Implementing the training using our autograd framework written in earlier posts for tensors. The full set of forward and backward operators are shared in [this gist](https://gist.github.com/funktor/729fc09db41a3db736729840b3a2dc11). An example of the forward and backward pass for the matrix dot product operation is shown below:
 <br/><br/>
 ```python
 class uDotvNode(Node):
@@ -144,6 +150,7 @@ class uDotvNode(Node):
         self.v = v
 
     def forward(self, param_vals:np.ndarray):
+        # check forward cache
         if self not in NNContext.fwd_cache:
             u_f = self.u.forward(param_vals)
             v_f = self.v.forward(param_vals)
@@ -152,6 +159,7 @@ class uDotvNode(Node):
         return NNContext.fwd_cache[self]
 
     def backward(self):
+        # check backward cache
         if self not in NNContext.bwd_cache:
             u_f = NNContext.fwd_cache[self.u]
             v_f = NNContext.fwd_cache[self.v]
@@ -210,7 +218,7 @@ class AdamOptim:
         return curr_values
 ```
 <br/><br/>
-Finally the training routine for deep clustering network as follows. The example use 100 points as 16 dimensional vectors which are reduced to 4 dimensions by passing through 2 layers of a deep autoencoder network. The clustering routine clusters the points into 5 clusters:
+Finally the training routine for deep clustering network as follows. The example use 100 points as 16 dimensional vectors which are reduced to 4 dimensions by passing through 2 layers of a deep autoencoder network. The clustering routine clusters the points into 5 clusters. The quality of clusters are evaluated using both the k-means loss function as well as the normalised mutual information score after each epoch. The clusters are generated synthetically with an actual cluster label attached to each point:
 <br/><br/>
 ```python
 from sklearn.datasets import make_blobs
@@ -275,10 +283,10 @@ optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
 param_values = [ws_0_ini, ws_1_ini]
 z_0 = None
 
-decreasing_losses_count = 0
+increasing_losses_count = 0
 prev_loss = float("Inf")
 
-# Pre-train the autoencoder network till the loss gets stable over time.
+# Pre-train the autoencoder network till the loss stabilize over time.
 for epoch in range(5000):
     NNContext.reset_cache()
     cost = recon.forward(param_values)
@@ -288,19 +296,18 @@ for epoch in range(5000):
 
     # Optimize loss till the loss starts to increase for 3 or more epochs.
     if cost > prev_loss:
-        decreasing_losses_count += 1
+        increasing_losses_count += 1
     else:
-        decreasing_losses_count = 0
+        increasing_losses_count = 0
 
-    if decreasing_losses_count >= 3:
+    if increasing_losses_count >= 3:
         break
 
     prev_loss = cost
 
-print()
 optim = AdamOptim(NNContext.num_params, learning_rate=learning_rate)
 
-decreasing_losses_count = 0
+increasing_losses_count = 0
 prev_loss = float("Inf")
 
 # Joint optimization of autoencoder network + clustering network
@@ -330,13 +337,32 @@ for epoch in range(1000):
 
     # Optimize loss till the loss starts to increase for 3 or more epochs.
     if cost > prev_loss:
-        decreasing_losses_count += 1
+        increasing_losses_count += 1
     else:
-        decreasing_losses_count = 0
+        increasing_losses_count = 0
 
-    if decreasing_losses_count >= 3:
+    if increasing_losses_count >= 3:
         break
 
     prev_loss = cost
 ```
 <br/><br/>
+One can experimentally verify that the reduced representations after pre-training alone is sub-optimal for clustering by computing the `normalized_mutual_info_score` after pre-training vs. after fine-tuning with the updated centroids. The above implementation can also be compared against the K-Means library in scikit-learn package with the same input vectors as the deep clustering network's encoder representations.
+<br/><br/>
+```python
+from sklearn.cluster import KMeans
+
+kmeans = KMeans(
+    n_clusters=k,
+    init="k-means++",
+    n_init="auto",  # Runs algorithm multiple times to pick best centroids
+    random_state=42,  # Ensures reproducible results
+)
+
+inp_h = l2.forward(param_values)
+y_pred = kmeans.fit_predict(inp_h)
+score = normalized_mutual_info_score(actual_labels, y_pred)
+print(score)
+```
+<br/><br/>
+Based on the results from the K-Means library and the custom deep clustering network, the final `NMI` score seems to agree.
