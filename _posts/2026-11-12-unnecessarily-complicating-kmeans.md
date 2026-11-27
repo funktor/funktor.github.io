@@ -420,3 +420,9 @@ print(score)
 Based on the results from the K-Means library and the custom deep clustering network, the final `NMI` score seems to agree. One caveat to highlight is that the reduced representations has been optimized for clustering using euclidean distances and may not work well against other downstream objectives for e.g. classification using the reduced representations or using cosine similarities instead of euclidean distances. For that, we need to fine-tune network against multiple different objectives.
 <br/><br/>
 Thus, so far we have used our custom autograd framework to build a deep clustering network from scratch. Note that the scale of the problem shown here is pretty small as the autograd has not yet been optimized. Usually the deep clustering network is relevant for problems where the initial dimensions for the inputs are in several thousands or in millions. In the next few posts we will deep dive into performance engineering of ML systems.
+<br/><br/>
+We will conclude this post by implementing another problem related to clustering form scratch that uses our autograd framework but a different distance metric other than the euclidean distances between points. The problem is more relevant for time series clustering.
+<br/><br/>
+Given different time series possibly of different lengths which are not time aligned, the problem is to find the similarities between each pair or series or cluster them. Given that they need not have same lengths, thus we cannot use euclidean distance or cosine similarities for comparing time series against each other or with centroids. Such problems exists for time series corresponding to voice recognition, wave patterns for searching similar songs, financial data for different stock markets etc. The distance metric used to solve such problems is known as `Dynamic Time Warping` or `DTW`.
+<br/><br/>
+Here is a simple Python implementation for DTW:
