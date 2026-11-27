@@ -55,9 +55,10 @@ def kmeans(inp:np.ndarray, k:int, num_iters:int):
 
     for iter in range(num_iters):
         # sum[i,j] (inp[i]-z[j])^T.(inp[i]-z[j])
+        zT = z.T
         a = np.sum(inp**2, axis=1, keepdims=True)
-        b = np.sum(z**2, axis=1, keepdims=True)
-        c = inp @ z.T
+        b = np.sum(zT**2, axis=0, keepdims=True)
+        c = inp @ zT
 
         # d[i,j] - distance of point i from centroid j.
         d = a + b - 2*c
@@ -78,6 +79,10 @@ def kmeans(inp:np.ndarray, k:int, num_iters:int):
 
     return z, f
 ```
+<br/><br/>
+Each element of the distance matrix `NxC` can be computed by the following vectorized operations. Note that the first two terms we are adding are of dimensions `Nx1` and `1xC` respectively and thus addition may look incompatible, but actually each column in the 1st matrix is repeated C times and each rows in the 2nd matrix is repeated N times before addition, so that the final addition takes place between 2 `NxC` matrices. But in NumPy, we do not need to explicitly repeat the columns or the rows and its internally taken care of. The 3rd matrix is already an `NxC` matrix.
+<br/><br/>
+![kmeans1](/docs/assets/kmeans10.png)
 <br/><br/>
 The initial centroids are selected randomly from the existing points but it may not be an optimal approach as the chosen points may all belong to the same cluster. `K-Means++` is a preferred algorithm for selection of initial centroids. The algorithm iteratively selects the centroids such that the next point to select is sampled from points which are far away from existing centroids. A simple Python implementation for K-Means++.
 <br/><br/>
@@ -101,9 +106,10 @@ def get_initial_centroids(inp:np.ndarray, k:int):
 
         # find the minimum distance of each point to any cluster.
         inp_h = inp[non_centroid_indices,:]
+        zT = centroids.T
         a = np.sum(inp_h**2, axis=1, keepdims=True)
-        b = np.sum(centroids**2, axis=1, keepdims=True)
-        c = inp_h @ centroids.T
+        b = np.sum(zT**2, axis=0, keepdims=True)
+        c = inp_h @ zT
         d = a + b - 2*c
 
         min_distances = np.min(d, axis=1).reshape((d.shape[0],))
