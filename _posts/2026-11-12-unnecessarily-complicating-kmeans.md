@@ -286,21 +286,28 @@ L_04 = uDotvNode(L_03, TransposeNode(H_0, 0, 1))
 recon = MSENode(inp, L_04) # 1 x 1
 
 # Clustering Network
-L_05 = PowerNode(L_02, 2.0)
-L_06 = PowerNode(z, 2.0)
-L_07 = AxisSumNode(L_05, 1)
+L_05 = TransposeNode(z, 0, 1)
+L_06 = PowerNode(L_02, 2.0)
+L_07 = PowerNode(L_05, 2.0)
 L_08 = AxisSumNode(L_06, 1)
-L_09 = uDotvNode(L_02, TransposeNode(z, 0, 1))
-L_10 = SumNode(L_07, L_08)
-L_11 = SumNode(L_10, MulConstantNode(L_09, -2.0))
-L_12 = SoftmaxNode(MulConstantNode(L_11, -1e6))
-L_13 = MulNode(L_12, L_11)
+L_09 = AxisSumNode(L_07, 0)
+L_10 = uDotvNode(L_02, L_05)
+L_11 = SumNode(L_08, L_09)
+L_12 = SumNode(L_11, MulConstantNode(L_10, -2.0))
+
+# Convert each row into a softmax s.t. cell corresponding to min distance is 1 rest all 0.
+# If more than one same min distance, the cell value 1.0 is distributed equally.
+# Multiplying distances by a large negative number does that trick.
+L_13 = SoftmaxNode(MulConstantNode(L_12, -1e6))
+
+# Multiplying distances by L_13 keeps only the min distance per row as non-zero.
+L_14 = MulNode(L_13, L_12)
 
 """
 Define loss to minimize
 """
 # Total cost is reconstruction loss + sum of distances of each point from its nearest centroid.
-cost_node = SumNode(recon, SumReduceNode(L_13)) # 1 x 1
+cost_node = SumNode(recon, SumReduceNode(L_14)) # 1 x 1
 
 rng = np.random.default_rng()
 
@@ -410,4 +417,6 @@ score = normalized_mutual_info_score(actual_labels, y_pred)
 print(score)
 ```
 <br/><br/>
-Based on the results from the K-Means library and the custom deep clustering network, the final `NMI` score seems to agree.
+Based on the results from the K-Means library and the custom deep clustering network, the final `NMI` score seems to agree. One caveat to highlight is that the reduced representations has been optimized for clustering using euclidean distances and may not work well against other downstream objectives for e.g. classification using the reduced representations or using cosine similarities instead of euclidean distances. For that, we need to fine-tune network against multiple different objectives.
+<br/><br/>
+Thus, so far we have used our custom autograd framework to build a deep clustering network from scratch. Note that the scale of the problem shown here is pretty small as the autograd has not yet been optimized. Usually the deep clustering network is relevant for problems where the initial dimensions for the inputs are in several thousands or in millions. In the next few posts we will deep dive into performance engineering of ML systems.
