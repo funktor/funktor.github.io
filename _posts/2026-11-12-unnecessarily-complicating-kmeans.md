@@ -421,8 +421,45 @@ Based on the results from the K-Means library and the custom deep clustering net
 <br/><br/>
 Thus, so far we have used our custom autograd framework to build a deep clustering network from scratch. Note that the scale of the problem shown here is pretty small as the autograd has not yet been optimized. Usually the deep clustering network is relevant for problems where the initial dimensions for the inputs are in several thousands or in millions. In the next few posts we will deep dive into performance engineering of ML systems.
 <br/><br/>
-We will conclude this post by implementing another problem related to clustering form scratch that uses our autograd framework but a different distance metric other than the euclidean distances between points. The problem is more relevant for time series clustering.
+We will conclude this post by implementing another problem related to clustering, from scratch that uses our autograd framework but a different distance metric other than the euclidean distances between points. The problem is more relevant for time series clustering.
 <br/><br/>
 Given different time series possibly of different lengths which are not time aligned, the problem is to find the similarities between each pair or series or cluster them. Given that they need not have same lengths, thus we cannot use euclidean distance or cosine similarities for comparing time series against each other or with centroids. Such problems exists for time series corresponding to voice recognition, wave patterns for searching similar songs, financial data for different stock markets etc. The distance metric used to solve such problems is known as `Dynamic Time Warping` or `DTW`.
 <br/><br/>
-Here is a simple Python implementation for DTW:
+The idea behind DTW is pretty simple and is similar to `Levenshtein Distance` algorithm for string similarity and is similarly solved using Dynamic Programming approach. Here is a simple Python implementation for DTW:
+<br/><br/>
+```python
+def dtw_distance(ser_1:np.ndarray, ser_2:np.ndarray):
+    """
+    DTW distance between ser_1 and ser_2
+    """
+    n = ser_1.shape[0]
+    m = ser_2.shape[0]
+    d = np.zeros((n+1, m+1))
+
+    d[0,0] = 0
+    d[0,1:] = float("Inf")
+    d[1:,0] = float("Inf")
+
+    for i in range(1, n+1):
+        for j in range(1, m+1):
+            x, y = i-1, j-1
+            g = (ser_1[x-1]-ser_2[y-1])**2
+            d[i,j] = g + min(d[x-1,y-1], d[x-1,y], d[x,y-1])
+
+    return d[n,m]
+
+def get_ts(n):
+    """
+    Get synthetic time series
+    """
+    steps = np.random.normal(loc=0, scale=10.0, size=n)
+    random_walk = np.cumsum(steps)
+    ser = 1 / (1 + np.exp(-random_walk / 100))
+    return ser
+
+ser_1 = get_ts(n=1000)
+ser_2 = get_ts(n=2000)
+
+print(dtw_distance(ser_1, ser_2))
+```
+<br/><br/>
