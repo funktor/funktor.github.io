@@ -80,11 +80,15 @@ def kmeans(inp:np.ndarray, k:int, num_iters:int):
     return z, f
 ```
 <br/><br/>
-Each element of the distance matrix `NxC` can be computed by the following vectorized operations. Note that the first two terms we are adding are of dimensions `Nx1` and `1xC` respectively and thus addition may look incompatible, but actually each column in the 1st matrix is repeated C times and each rows in the 2nd matrix is repeated N times before addition, so that the final addition takes place between 2 `NxC` matrices. But in NumPy, we do not need to explicitly repeat the columns or the rows and its internally taken care of. The 3rd matrix is already an `NxC` matrix.
+Each element of the distance matrix `NxC` can be computed by the following vectorized operations. Note that the first two terms we are adding are of dimensions `Nx1` and `1xC` respectively and thus addition may look incompatible, but actually each column in the 1st matrix is repeated C times and each rows in the 2nd matrix is repeated N times before addition, so that the final addition takes place between 2 `NxC` matrices.
+<br/><br/>
+But in NumPy, we do not need to explicitly repeat the columns or the rows and its internally taken care of. The 3rd matrix is already an `NxC` matrix.
 <br/><br/>
 ![kmeans1](/docs/assets/kmeans10.png)
 <br/><br/>
-The initial centroids are selected randomly from the existing points but it may not be an optimal approach as the chosen points may all belong to the same cluster. `K-Means++` is a preferred algorithm for selection of initial centroids. The algorithm iteratively selects the centroids such that the next point to select is sampled from points which are far away from existing centroids. A simple Python implementation for K-Means++.
+The initial centroids are selected randomly from the existing points but it may not be an optimal approach as the chosen points may all belong to the same cluster. `K-Means++` is a preferred algorithm for selection of initial centroids. The algorithm iteratively selects the centroids such that the next point to select is sampled from points which are far away from existing centroids. 
+<br/><br/>
+A simple Python implementation for K-Means++.
 <br/><br/>
 ```python
 import numpy as np
@@ -147,7 +151,7 @@ The loss function is composed of two terms 1. reconstruction loss from input vec
 <br/><br/>
 ![kmeans1](/docs/assets/kmeans9.png)
 <br/><br/>
-Common strategy to train such a network is to pre-train the encoder-decoder network first and then fine-tune the encoder-decoder weights based on the centroids. Implementing the training using our autograd framework written in earlier posts for tensors. The full set of forward and backward operators are shared in [this gist](https://gist.github.com/funktor/729fc09db41a3db736729840b3a2dc11). An example of the forward and backward pass for the matrix dot product operation is shown below:
+A common strategy to train such a network is to pre-train the encoder-decoder network first and then fine-tune the encoder-decoder weights based on the centroids. Implementing the training using our autograd framework written in earlier posts for tensors. The full set of forward and backward operators are shared in [this gist](https://gist.github.com/funktor/729fc09db41a3db736729840b3a2dc11). An example of the forward and backward pass for the matrix dot product operation is shown below:
 <br/><br/>
 ```python
 class uDotvNode(Node):
